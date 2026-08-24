@@ -1,7 +1,10 @@
 #include "companion.hpp"
 
+#include "libmisterplex/gdm_filter.hpp"
+
 #include <arpa/inet.h>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -28,6 +31,35 @@ void setCloexec(int fd) {
     int fl = fcntl(fd, F_GETFD);
     if (fl >= 0)
         fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+}
+
+int openGdmListenFd(uint16_t port, std::string* err) {
+    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        if (err)
+            *err = "socket failed errno=" + std::to_string(errno);
+        return -1;
+    }
+    setReuse(fd);
+    setCloexec(fd);
+    int on = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on)) != 0) {
+        if (err)
+            *err = "SO_BROADCAST failed errno=" + std::to_string(errno);
+        close(fd);
+        return -1;
+    }
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        if (err)
+            *err = "bind failed errno=" + std::to_string(errno);
+        close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 std::string queryParam(const std::string& req, const char* key) {
@@ -505,7 +537,7 @@ bool Companion::start() {
         return true;
     gdmThr_ = std::thread([this] { gdmLoop(); });
     httpThr_ = std::thread([this] { httpLoop(); });
-    log("companion: GDM + HTTP :" + std::to_string(port_) + " name=" + name_);
+    log("companion: GDM 32412+32414 + HTTP :" + std::to_string(port_) + " name=" + name_);
     return true;
 }
 
@@ -529,58 +561,79 @@ void Companion::stop() {
 }
 
 void Companion::gdmLoop() {
-    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        log("GDM: socket failed");
+    std::vector<int> fds;
+    fds.reserve(sizeof(kGdmListenPorts) / sizeof(kGdmListenPorts[0]));
+    int advFd = -1;
+    for (uint16_t port : kGdmListenPorts) {
+        std::string err;
+        int fd = openGdmListenFd(port, &err);
+        if (fd < 0) {
+            log("GDM: port " + std::to_string(port) + " " + err);
+            continue;
+        }
+        log("GDM: listening UDP " + std::to_string(port));
+        if (port == 32412)
+            advFd = fd;
+        fds.push_back(fd);
+    }
+    if (fds.empty()) {
+        log("GDM: no listen sockets — discovery disabled");
         return;
     }
-    setReuse(fd);
-    setCloexec(fd);
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(32412);
-    if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
-        log("GDM: bind 32412 failed — broadcast-only advertise");
-    else
-        log("GDM: listening UDP 32412");
+    if (advFd < 0)
+        advFd = fds.front();
 
     auto lastAdv = std::chrono::steady_clock::now();
     while (running_.load()) {
         fd_set rfds;
         FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
+        int maxfd = -1;
+        for (int fd : fds) {
+            FD_SET(fd, &rfds);
+            if (fd > maxfd)
+                maxfd = fd;
+        }
         timeval tv{0, 200000};
-        int r = select(fd + 1, &rfds, nullptr, nullptr, &tv);
-        if (r > 0 && FD_ISSET(fd, &rfds)) {
-            char buf[2048];
-            sockaddr_in peer{};
-            socklen_t plen = sizeof(peer);
-            ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
-            if (n > 0) {
+        int r = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r < 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
+        if (r > 0) {
+            for (int fd : fds) {
+                if (!FD_ISSET(fd, &rfds))
+                    continue;
+                char buf[2048];
+                sockaddr_in peer{};
+                socklen_t plen = sizeof(peer);
+                ssize_t n =
+                    recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
+                if (n <= 0)
+                    continue;
                 buf[n] = 0;
-                if (std::strstr(buf, "M-SEARCH") || std::strstr(buf, "plex")) {
-                    auto payload = gdmPayload();
-                    sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&peer),
-                           plen);
-                }
+                if (!gdmShouldReply(buf, static_cast<size_t>(n)))
+                    continue;
+                auto payload = gdmPayload();
+                const ssize_t sn = sendto(fd, payload.data(), payload.size(), 0,
+                                          reinterpret_cast<sockaddr*>(&peer), plen);
+                if (sn < 0)
+                    log("GDM: reply sendto failed errno=" + std::to_string(errno));
             }
         }
         auto now = std::chrono::steady_clock::now();
         if (now - lastAdv > std::chrono::seconds(5)) {
             lastAdv = now;
-            int on = 1;
-            setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
             sockaddr_in bcast{};
             bcast.sin_family = AF_INET;
             bcast.sin_port = htons(32412);
             bcast.sin_addr.s_addr = INADDR_BROADCAST;
             auto payload = gdmPayload();
-            sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&bcast),
+            sendto(advFd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&bcast),
                    sizeof(bcast));
         }
     }
-    close(fd);
+    for (int fd : fds)
+        close(fd);
 }
 
 void Companion::httpLoop() {
@@ -595,8 +648,20 @@ void Companion::httpLoop() {
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port_);
-    if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        log("HTTP: bind :" + std::to_string(port_) + " failed");
+    // Restart races (supervise + leftover TIME_WAIT) used to fail once and leave
+    // GDM advertising Port 3005 with nothing listening — iOS then finds us and
+    // dies on /resources. Retry briefly; log errno so the next miss is diagnosable.
+    bool bound = false;
+    for (int attempt = 0; attempt < 15; ++attempt) {
+        if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+            bound = true;
+            break;
+        }
+        log("HTTP: bind :" + std::to_string(port_) + " failed errno=" + std::to_string(errno) +
+            " attempt=" + std::to_string(attempt + 1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    if (!bound) {
         close(fd);
         return;
     }

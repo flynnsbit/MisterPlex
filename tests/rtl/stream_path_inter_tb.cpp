@@ -73,7 +73,7 @@ public:
         if (top.fs_wr_en) {
             if (pxY >= 4 && pxY < 16 && pxX >= 16 && pxX < 32) {
                 const int band = (pxX - 16) / 4;
-                const uint8_t sigs[4] = {0x22, 0x69, 0x63, 0x5e};
+                const uint8_t sigs[4] = {0x02, 0x69, 0x63, 0x5e};
                 const uint16_t want = rgb565(0x10, 0xf0, sigs[band]);
                 if (top.fs_wr_pixel == want) {
                     interBandSamples[band]++;
@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
             }
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                if (!sim.waitForFrames(expectedFrames, std::max(200000, kFrameW * kFrameH * 3))) {
+                if (!sim.waitForFrames(expectedFrames, 160000)) {
                     return fail("decode_stub did not return idle after VCL frame " + std::to_string(expectedFrames)) ? 0 : 1;
                 }
             } else {

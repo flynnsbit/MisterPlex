@@ -1,6 +1,6 @@
 // Phase 3.3l-3: H.264 intra prediction helpers.
-// Behaviour matches host/libmisterplex/h264_recon.hpp for the measured all-intra
-// Plex vector. I16 Plane is deliberately detected as unsupported for this rung.
+// Behaviour matches host/libmisterplex/h264_recon.hpp. I16 V/H/DC/Plane are
+// sequential (one selected mode, one row/cycle). Guard may still flag Plane.
 
 module h264_intra4x4_pred (
 	input  wire [3:0] mode,
@@ -141,48 +141,327 @@ module h264_intra4x4_pred (
 endmodule
 
 module h264_intra16x16_pred (
-	input  wire [1:0] mode,
-	input  wire [7:0] above [0:15],
-	input  wire [7:0] left [0:15],
-	input  wire [7:0] top_left,
-	input  wire       has_above,
-	input  wire       has_left,
-	output reg        unsupported,
-	output reg  [7:0] pred [0:255]
+	input  wire        clk,
+	input  wire        reset,
+	input  wire        start,
+	input  wire [1:0]  mode,
+	input  wire [7:0]  above [0:15],
+	input  wire [7:0]  left [0:15],
+	input  wire [7:0]  top_left,
+	input  wire        has_above,
+	input  wire        has_left,
+	output reg         busy,
+	output reg         done,
+	output reg         unsupported,
+	output reg  [7:0]  pred [0:255]
 );
-	function automatic [7:0] clip8;
-		input integer v;
+	// Sequential selected-mode I16 (V/H/DC/Plane). One neighbor-prep
+	// then one MB row/cycle. No 4-mode parallel engines, no 256-wide
+	// combo generate. 0 DSP: shift-add for 5*H and bb*(x-7).
+	localparam [1:0] ST_IDLE = 2'd0;
+	localparam [1:0] ST_HV   = 2'd1;
+	localparam [1:0] ST_COEF = 2'd2;
+	localparam [1:0] ST_FILL = 2'd3;
+
+	reg [1:0]  st;
+	reg [1:0]  mode_r;
+	reg        ha_r, hl_r;
+	reg [7:0]  above_r [0:15];
+	reg [7:0]  left_r [0:15];
+	reg [7:0]  tl_r;
+	reg [3:0]  ii;
+	reg [3:0]  ry;
+	reg signed [15:0] Hp, Vp;
+	reg signed [13:0] aa;
+	reg signed [12:0] bb, cc;
+	reg [7:0]  dc_v;
+	reg        plane_ok;
+
+	reg [7:0] a_hi, a_lo, l_hi, l_lo;
+	reg [7:0] left_row;
+	reg signed [9:0] da, dl;
+	reg signed [15:0] term_a, term_l;
+	reg signed [4:0] dy;
+	reg signed [16:0] row_c;
+	reg signed [16:0] valv0, valv1, valv2, valv3;
+	reg signed [16:0] valv4, valv5, valv6, valv7;
+	reg signed [16:0] valv8, valv9, valva, valvb;
+	reg signed [16:0] valvc, valvd, valve, valvf;
+	integer si;
+	integer sum_i;
+
+	function automatic [7:0] clip8s;
+		input signed [16:0] v;
+		reg signed [16:0] t;
 		begin
-			if (v < 0) clip8 = 8'd0;
-			else if (v > 255) clip8 = 8'd255;
-			else clip8 = v[7:0];
+			t = v;
+			if (t < 17'sd0) clip8s = 8'd0;
+			else if (t > 17'sd255) clip8s = 8'd255;
+			else clip8s = t[7:0];
 		end
 	endfunction
 
-	integer x, y, i;
-	integer sum;
-	reg [7:0] dc_v;
+	function automatic signed [16:0] kmul;
+		input signed [12:0] k;
+		input signed [4:0] d;
+		reg signed [16:0] acc;
+		reg signed [4:0] ad;
+		reg neg;
+		begin
+			neg = (d < 5'sd0);
+			ad  = neg ? -d : d;
+			acc = 17'sd0;
+			if (ad[0]) acc = acc + k;
+			if (ad[1]) acc = acc + (k <<< 1);
+			if (ad[2]) acc = acc + (k <<< 2);
+			if (ad[3]) acc = acc + (k <<< 3);
+			kmul = neg ? -acc : acc;
+		end
+	endfunction
+
+	function automatic signed [15:0] scale_d;
+		input [3:0] n; // 1..8
+		input signed [9:0] d;
+		begin
+			case (n)
+			4'd1: scale_d = d;
+			4'd2: scale_d = d <<< 1;
+			4'd3: scale_d = (d <<< 1) + d;
+			4'd4: scale_d = d <<< 2;
+			4'd5: scale_d = (d <<< 2) + d;
+			4'd6: scale_d = (d <<< 2) + (d <<< 1);
+			4'd7: scale_d = (d <<< 3) - d;
+			default: scale_d = d <<< 3;
+			endcase
+		end
+	endfunction
+
+	// Latch-then-slice neighbor picks (no variable 2D window).
 	always @* begin
-		unsupported = 1'b0;
-		sum = 0;
-		dc_v = 8'd128;
-		for (i = 0; i < 256; i = i + 1) pred[i] = 8'd128;
-		if (mode == 2'd3) begin
-			unsupported = 1'b1;
-		end else if (mode == 2'd0 && has_above) begin
-			for (y = 0; y < 16; y = y + 1)
-				for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] = above[x];
-		end else if (mode == 2'd1 && has_left) begin
-			for (y = 0; y < 16; y = y + 1)
-				for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] = left[y];
+		a_hi = 8'd0; a_lo = 8'd0; l_hi = 8'd0; l_lo = 8'd0;
+		case (ii)
+		4'd0: begin a_hi = above_r[8];  a_lo = above_r[6]; l_hi = left_r[8];  l_lo = left_r[6]; end
+		4'd1: begin a_hi = above_r[9];  a_lo = above_r[5]; l_hi = left_r[9];  l_lo = left_r[5]; end
+		4'd2: begin a_hi = above_r[10]; a_lo = above_r[4]; l_hi = left_r[10]; l_lo = left_r[4]; end
+		4'd3: begin a_hi = above_r[11]; a_lo = above_r[3]; l_hi = left_r[11]; l_lo = left_r[3]; end
+		4'd4: begin a_hi = above_r[12]; a_lo = above_r[2]; l_hi = left_r[12]; l_lo = left_r[2]; end
+		4'd5: begin a_hi = above_r[13]; a_lo = above_r[1]; l_hi = left_r[13]; l_lo = left_r[1]; end
+		4'd6: begin a_hi = above_r[14]; a_lo = above_r[0]; l_hi = left_r[14]; l_lo = left_r[0]; end
+		default: begin a_hi = above_r[15]; a_lo = tl_r;    l_hi = left_r[15]; l_lo = tl_r;     end
+		endcase
+		da = $signed({1'b0, a_hi}) - $signed({1'b0, a_lo});
+		dl = $signed({1'b0, l_hi}) - $signed({1'b0, l_lo});
+		term_a = scale_d(ii + 4'd1, da);
+		term_l = scale_d(ii + 4'd1, dl);
+
+		left_row = 8'd128;
+		case (ry)
+		4'd0:  left_row = left_r[0];
+		4'd1:  left_row = left_r[1];
+		4'd2:  left_row = left_r[2];
+		4'd3:  left_row = left_r[3];
+		4'd4:  left_row = left_r[4];
+		4'd5:  left_row = left_r[5];
+		4'd6:  left_row = left_r[6];
+		4'd7:  left_row = left_r[7];
+		4'd8:  left_row = left_r[8];
+		4'd9:  left_row = left_r[9];
+		4'd10: left_row = left_r[10];
+		4'd11: left_row = left_r[11];
+		4'd12: left_row = left_r[12];
+		4'd13: left_row = left_r[13];
+		4'd14: left_row = left_r[14];
+		default: left_row = left_r[15];
+		endcase
+
+		dy = $signed({1'b0, ry}) - 5'sd7;
+		row_c = kmul(cc, dy);
+		valv0 = (aa + kmul(bb, -5'sd7) + row_c + 17'sd16) >>> 5;
+		valv1 = (aa + kmul(bb, -5'sd6) + row_c + 17'sd16) >>> 5;
+		valv2 = (aa + kmul(bb, -5'sd5) + row_c + 17'sd16) >>> 5;
+		valv3 = (aa + kmul(bb, -5'sd4) + row_c + 17'sd16) >>> 5;
+		valv4 = (aa + kmul(bb, -5'sd3) + row_c + 17'sd16) >>> 5;
+		valv5 = (aa + kmul(bb, -5'sd2) + row_c + 17'sd16) >>> 5;
+		valv6 = (aa + kmul(bb, -5'sd1) + row_c + 17'sd16) >>> 5;
+		valv7 = (aa + kmul(bb,  5'sd0) + row_c + 17'sd16) >>> 5;
+		valv8 = (aa + kmul(bb,  5'sd1) + row_c + 17'sd16) >>> 5;
+		valv9 = (aa + kmul(bb,  5'sd2) + row_c + 17'sd16) >>> 5;
+		valva = (aa + kmul(bb,  5'sd3) + row_c + 17'sd16) >>> 5;
+		valvb = (aa + kmul(bb,  5'sd4) + row_c + 17'sd16) >>> 5;
+		valvc = (aa + kmul(bb,  5'sd5) + row_c + 17'sd16) >>> 5;
+		valvd = (aa + kmul(bb,  5'sd6) + row_c + 17'sd16) >>> 5;
+		valve = (aa + kmul(bb,  5'sd7) + row_c + 17'sd16) >>> 5;
+		valvf = (aa + kmul(bb,  5'sd8) + row_c + 17'sd16) >>> 5;
+	end
+
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			st          <= ST_IDLE;
+			busy        <= 1'b0;
+			done        <= 1'b0;
+			unsupported <= 1'b0;
+			mode_r      <= 2'd0;
+			ha_r        <= 1'b0;
+			hl_r        <= 1'b0;
+			tl_r        <= 8'd0;
+			ii          <= 4'd0;
+			ry          <= 4'd0;
+			Hp          <= 16'sd0;
+			Vp          <= 16'sd0;
+			aa          <= 14'sd0;
+			bb          <= 13'sd0;
+			cc          <= 13'sd0;
+			dc_v        <= 8'd128;
+			plane_ok    <= 1'b0;
+			for (si = 0; si < 256; si = si + 1)
+				pred[si] <= 8'd128;
+			for (si = 0; si < 16; si = si + 1) begin
+				above_r[si] <= 8'd0;
+				left_r[si]  <= 8'd0;
+			end
+		end else if (start) begin
+			busy        <= 1'b1;
+			done        <= 1'b0;
+			unsupported <= 1'b0;
+			mode_r      <= mode;
+			ha_r        <= has_above;
+			hl_r        <= has_left;
+			tl_r        <= top_left;
+			for (si = 0; si < 16; si = si + 1) begin
+				above_r[si] <= above[si];
+				left_r[si]  <= left[si];
+			end
+			sum_i = 0;
+			if (has_above)
+				sum_i = sum_i + above[0] + above[1] + above[2] + above[3]
+				              + above[4] + above[5] + above[6] + above[7]
+				              + above[8] + above[9] + above[10] + above[11]
+				              + above[12] + above[13] + above[14] + above[15];
+			if (has_left)
+				sum_i = sum_i + left[0] + left[1] + left[2] + left[3]
+				              + left[4] + left[5] + left[6] + left[7]
+				              + left[8] + left[9] + left[10] + left[11]
+				              + left[12] + left[13] + left[14] + left[15];
+			if (mode == 2'd3) begin
+				plane_ok <= (has_above && has_left);
+				if (has_above && has_left)
+					dc_v <= 8'd128;
+				else if (has_above || has_left)
+					dc_v <= (sum_i + 8) >> 4;
+				else
+					dc_v <= 8'd128;
+			end else if (has_above && has_left)
+				dc_v <= (sum_i + 16) >> 5;
+			else if (has_above || has_left)
+				dc_v <= (sum_i + 8) >> 4;
+			else
+				dc_v <= 8'd128;
+			Hp       <= 16'sd0;
+			Vp       <= 16'sd0;
+			ii       <= 4'd0;
+			ry       <= 4'd0;
+			if ((mode == 2'd3) && has_above && has_left)
+				st <= ST_HV;
+			else
+				st <= ST_FILL;
 		end else begin
-			sum = 0;
-			if (has_above) for (i = 0; i < 16; i = i + 1) sum = sum + above[i];
-			if (has_left)  for (i = 0; i < 16; i = i + 1) sum = sum + left[i];
-			if (has_above && has_left) dc_v = (sum + 16) >>> 5;
-			else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
-			else dc_v = 8'd128;
-			for (i = 0; i < 256; i = i + 1) pred[i] = dc_v;
+			case (st)
+			ST_HV: begin
+				Hp <= Hp + term_a;
+				Vp <= Vp + term_l;
+				if (ii == 4'd7)
+					st <= ST_COEF;
+				else
+					ii <= ii + 4'd1;
+			end
+			ST_COEF: begin
+				// bb=(5*Hp+32)>>>6, cc=(5*Vp+32)>>>6 — extend then shift-add, 0 DSP
+				aa <= ($signed({6'd0, above_r[15]}) + $signed({6'd0, left_r[15]})) <<< 4;
+				bb <= ($signed({{2{Hp[15]}}, Hp}) + $signed({Hp, 2'b00}) + 18'sd32) >>> 6;
+				cc <= ($signed({{2{Vp[15]}}, Vp}) + $signed({Vp, 2'b00}) + 18'sd32) >>> 6;
+				ry <= 4'd0;
+				st <= ST_FILL;
+			end
+			ST_FILL: begin
+				if (mode_r == 2'd0 && ha_r) begin
+					pred[{ry, 4'd0}]  <= above_r[0];
+					pred[{ry, 4'd1}]  <= above_r[1];
+					pred[{ry, 4'd2}]  <= above_r[2];
+					pred[{ry, 4'd3}]  <= above_r[3];
+					pred[{ry, 4'd4}]  <= above_r[4];
+					pred[{ry, 4'd5}]  <= above_r[5];
+					pred[{ry, 4'd6}]  <= above_r[6];
+					pred[{ry, 4'd7}]  <= above_r[7];
+					pred[{ry, 4'd8}]  <= above_r[8];
+					pred[{ry, 4'd9}]  <= above_r[9];
+					pred[{ry, 4'd10}] <= above_r[10];
+					pred[{ry, 4'd11}] <= above_r[11];
+					pred[{ry, 4'd12}] <= above_r[12];
+					pred[{ry, 4'd13}] <= above_r[13];
+					pred[{ry, 4'd14}] <= above_r[14];
+					pred[{ry, 4'd15}] <= above_r[15];
+				end else if (mode_r == 2'd1 && hl_r) begin
+					pred[{ry, 4'd0}]  <= left_row;
+					pred[{ry, 4'd1}]  <= left_row;
+					pred[{ry, 4'd2}]  <= left_row;
+					pred[{ry, 4'd3}]  <= left_row;
+					pred[{ry, 4'd4}]  <= left_row;
+					pred[{ry, 4'd5}]  <= left_row;
+					pred[{ry, 4'd6}]  <= left_row;
+					pred[{ry, 4'd7}]  <= left_row;
+					pred[{ry, 4'd8}]  <= left_row;
+					pred[{ry, 4'd9}]  <= left_row;
+					pred[{ry, 4'd10}] <= left_row;
+					pred[{ry, 4'd11}] <= left_row;
+					pred[{ry, 4'd12}] <= left_row;
+					pred[{ry, 4'd13}] <= left_row;
+					pred[{ry, 4'd14}] <= left_row;
+					pred[{ry, 4'd15}] <= left_row;
+				end else if ((mode_r == 2'd3) && plane_ok) begin
+					pred[{ry, 4'd0}]  <= clip8s(valv0);
+					pred[{ry, 4'd1}]  <= clip8s(valv1);
+					pred[{ry, 4'd2}]  <= clip8s(valv2);
+					pred[{ry, 4'd3}]  <= clip8s(valv3);
+					pred[{ry, 4'd4}]  <= clip8s(valv4);
+					pred[{ry, 4'd5}]  <= clip8s(valv5);
+					pred[{ry, 4'd6}]  <= clip8s(valv6);
+					pred[{ry, 4'd7}]  <= clip8s(valv7);
+					pred[{ry, 4'd8}]  <= clip8s(valv8);
+					pred[{ry, 4'd9}]  <= clip8s(valv9);
+					pred[{ry, 4'd10}] <= clip8s(valva);
+					pred[{ry, 4'd11}] <= clip8s(valvb);
+					pred[{ry, 4'd12}] <= clip8s(valvc);
+					pred[{ry, 4'd13}] <= clip8s(valvd);
+					pred[{ry, 4'd14}] <= clip8s(valve);
+					pred[{ry, 4'd15}] <= clip8s(valvf);
+				end else begin
+					pred[{ry, 4'd0}]  <= dc_v;
+					pred[{ry, 4'd1}]  <= dc_v;
+					pred[{ry, 4'd2}]  <= dc_v;
+					pred[{ry, 4'd3}]  <= dc_v;
+					pred[{ry, 4'd4}]  <= dc_v;
+					pred[{ry, 4'd5}]  <= dc_v;
+					pred[{ry, 4'd6}]  <= dc_v;
+					pred[{ry, 4'd7}]  <= dc_v;
+					pred[{ry, 4'd8}]  <= dc_v;
+					pred[{ry, 4'd9}]  <= dc_v;
+					pred[{ry, 4'd10}] <= dc_v;
+					pred[{ry, 4'd11}] <= dc_v;
+					pred[{ry, 4'd12}] <= dc_v;
+					pred[{ry, 4'd13}] <= dc_v;
+					pred[{ry, 4'd14}] <= dc_v;
+					pred[{ry, 4'd15}] <= dc_v;
+				end
+				if (ry == 4'd15) begin
+					st   <= ST_IDLE;
+					busy <= 1'b0;
+					done <= 1'b1;
+				end else
+					ry <= ry + 4'd1;
+			end
+			default: st <= ST_IDLE;
+			endcase
 		end
 	end
 endmodule

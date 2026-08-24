@@ -1,0 +1,4 @@
+# HEVC bank only. Do NOT source from Plex.qsf / files.qip.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_nalu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_slice_hdr.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_cabac.sv

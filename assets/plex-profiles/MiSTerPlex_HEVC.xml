@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- UNUSED DRAFT. Later bank when the HEVC RBF exists.
+     Do not install over Profiles/MiSTerPlex.xml. Do not point resolve here yet.
+     PMS → MPEG-TS/Annex-B → F3. No host remux. -->
+<Client name="MiSTerPlex_HEVC">
+  <DirectPlayProfiles>
+    <VideoProfile container="mpegts" codec="hevc,h265" audioCodec="aac" />
+  </DirectPlayProfiles>
+
+  <TranscodeTargets>
+    <VideoProfile protocol="http" container="mpegts" codec="hevc" audioCodec="aac" context="streaming">
+      <!-- Main 8-bit 4:2:0, I/P only (no B), 720p. -->
+      <Setting name="VideoEncodeFlags" value="-profile:v main -pix_fmt yuv420p -x265-params bframes=0:keyint=50:min-keyint=25:open-gop=0" />
+      <Setting name="SubtitleSize" value="100" />
+    </VideoProfile>
+    <MusicProfile container="mp3" codec="mp3" />
+    <PhotoProfile container="jpeg" />
+  </TranscodeTargets>
+
+  <CodecProfiles>
+    <VideoCodec name="*">
+      <Limitations>
+        <UpperBound name="video.width" value="1280" isRequired="true" />
+        <UpperBound name="video.height" value="720" isRequired="true" />
+        <UpperBound name="video.frameRate" value="30" isRequired="true" />
+        <UpperBound name="video.bitDepth" value="8" isRequired="true" />
+      </Limitations>
+    </VideoCodec>
+    <VideoCodec name="hevc">
+      <Limitations>
+        <Match name="video.profile" list="main" isRequired="true" />
+        <UpperBound name="video.bitDepth" value="8" isRequired="true" />
+      </Limitations>
+    </VideoCodec>
+    <VideoAudioCodec name="aac">
+      <Limitations>
+        <UpperBound name="audio.channels" value="2" isRequired="true" />
+      </Limitations>
+    </VideoAudioCodec>
+  </CodecProfiles>
+
+  <TranscodeTargetProfiles>
+    <VideoTranscodeTarget protocol="http" context="streaming">
+      <VideoCodec name="hevc">
+        <Limitations>
+          <Match name="video.profile" list="main" onlyTranscodes="true" isRequired="true" />
+          <UpperBound name="video.bitDepth" value="8" onlyTranscodes="true" isRequired="true" />
+        </Limitations>
+      </VideoCodec>
+      <VideoAudioCodec name="aac">
+        <Limitations>
+          <UpperBound name="audio.channels" value="2" onlyTranscodes="true" isRequired="true" />
+        </Limitations>
+      </VideoAudioCodec>
+    </VideoTranscodeTarget>
+  </TranscodeTargetProfiles>
+</Client>

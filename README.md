@@ -220,7 +220,7 @@ Full reference: [`assets/misterplex.conf.example`](assets/misterplex.conf.exampl
 ```bash
 git clone https://github.com/flynnsbit/MisterPlex.git
 cd MisterPlex
-make unit        # serialized host unit tests with resource preflight/backoff
+make unit        # host unit tests
 make arm-plexd   # cross-compile the ARM daemon
 make package     # release tarball in dist/
 ```
@@ -228,35 +228,14 @@ make package     # release tarball in dist/
 The ARM build needs an `arm-none-linux-gnueabihf` (or `arm-linux-gnueabihf`) cross compiler on
 `PATH`, or point `ARM_TOOLCHAIN_BIN` at one.
 
-`make unit` is intentionally serialized through
-`scripts/run_with_resource_preflight.sh`. The wrapper waits and retries when the
-resource preflight correctly refuses active paging, low memory, or exhausted
-swap; it never sets `MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1` and never treats a
-refusal as a pass. Use `make unit-unlocked` only when an outer orchestrator
-already owns the heavy-validation slot.
-
 ### FPGA core
 
 `Plex.rbf` is built with Quartus 17.0.2 (the MiSTer standard):
 
 ```bash
 export MISTER_DEV=$HOME/Projects/misterfpga-dev
-make define-parity       # Quartus product macros match Verilator/lint macros
-make quartus-sv-subset   # curated Quartus SV subset guard; no fit/RBF
 make build-rbf
-make post-fit-hierarchy FIT_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.fit.rpt \
-  MAP_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.map.rpt \
-  COMPILE_LOG=fpga/Plex_MiSTer/remote_out/<slot>/compile.log
-make post-fit-timing STA_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.sta.rpt
 ```
-
-`make rtl-lint` is a Verilator parse/lint regression gate, not a Quartus
-buildability proof, but it now injects the product Quartus macro set. `make
-define-parity` refuses undeclared macro drift. `make quartus-sv-subset` catches
-the known Quartus subset syntax hazards but is still static and does not replace
-Analysis & Elaboration. `make post-fit-hierarchy` refuses a fit where critical
-modules such as `ddr_frame_store` disappear or collapse to trivial resource
-usage. `make post-fit-timing` refuses negative Quartus STA slack.
 
 Built cores are not tracked in git; each release ships one as an asset.
 

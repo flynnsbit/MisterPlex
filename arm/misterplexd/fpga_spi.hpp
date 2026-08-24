@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "libmisterplex/ddr_frame_layout.hpp"
-#include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
 namespace misterplex {
@@ -76,29 +75,36 @@ public:
     static bool mainAlive();
 
     // Push a complete raw buffer as an ioctl download (index = OSD F# entry).
-    // F1 frame presentation is not accepted here: the product frame-store
-    // contract is DDR YUV420p only.
+    // For Plex core F1 frame store, index is typically 1.
     bool sendFileTx(const uint8_t* data, size_t len, uint8_t index = 1);
 
-    // Convenience for non-F1 legacy/debug slots: RGB24 WxH → RGB565 LE then sendFileTx.
+    // Convenience: RGB24 WxH → RGB565 LE then sendFileTx.
     bool sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index = 1);
 
-    // Push packed RGB565 LE to non-F1 legacy/debug slots. len must be w*h*2.
+    // Push packed RGB565 LE (host word order: lo,hi per pixel). len must be w*h*2.
     bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
     bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
 
-    // C3 DDR frame-store path: planar I420/YUV420p via HPS DDR
-    // (/dev/mem @ 0x30000000) plus format-tagged doorbell. RGB565 is not a
-    // valid F1 frame-store payload for this RTL.
+    // Phase 3.1b+: bulk RGB565 via DDR3 (/dev/mem @ 0x30000000).
+    // Product path: mmap frame + doorbell (no SPI kick).
+    // Fallback: status[12]/[13] SPI kick if doorbell fails first verify.
+    // Waits for !ddr_busy and !swap_pending so next write bank is free after vsync.
+    // Default frame geometry is 320×240. The 480p contract is coded 624×480,
+    // display 618×480, pillarboxed into the 640×480 VGA output.
     bool setDdrFrameLayout(const DdrFrameGeometry& geometry,
-                           DdrFrameFormat format = DdrFrameFormat::Yuv420p);
+                           DdrFrameFormat format = DdrFrameFormat::Rgb565);
     bool setDdrFrameLayout(int width, int height,
-                           DdrFrameFormat format = DdrFrameFormat::Yuv420p);
+                           DdrFrameFormat format = DdrFrameFormat::Rgb565);
+    bool setDdrFrameSize(int width, int height) {
+        return setDdrFrameLayout(width, height, DdrFrameFormat::Rgb565);
+    }
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
+    bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                              const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
+    bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -112,16 +118,8 @@ public:
         int64_t doorbell_us = 0;
         int64_t post_wait_us = 0;
         int64_t total_us = 0;
-        int64_t bank_reuse_wait_us = 0;
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
-    struct DdrDoorbellStatus {
-        uint32_t seq = 0;
-        int bank = 0;
-        DdrFrameFormat format = DdrFrameFormat::Yuv420p;
-    };
-    bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
-    bool readFrameStoreStatus(FrameStoreStatus& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
@@ -157,25 +155,6 @@ public:
 
     // Push elementary bitstream (H.264 annex-B) to F3 bitstream_fifo. Appends.
     bool sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index = 3);
-    // Product path: copy complete Annex-B NAL records into the HPS DDR ring.
-    // pushBitstreamNal() copies before returning, so the caller may immediately
-    // reuse/free Nal::annexb. Full is transient; Desync/Fatal require a session
-    // reset. begin while active is rejected by contract: end the old session first.
-    using BitstreamNal = ddr_bitstream_ring::Nal;
-    using BitstreamStatus = ddr_bitstream_ring::Status;
-    using BitstreamPushResult = ddr_bitstream_ring::PushResult;
-    bool beginBitstreamSession(uint64_t session_id, int timeout_ms = 250);
-    BitstreamPushResult pushBitstreamNal(const BitstreamNal& nal, int timeout_ms = 250);
-    bool flushBitstreamSession(uint64_t session_id, int timeout_ms = 250);
-    bool endBitstreamSession(uint64_t session_id, int timeout_ms = 250);
-    bool pauseBitstreamSession(uint64_t session_id, int timeout_ms = 250);
-    bool resumeBitstreamSession(uint64_t session_id, int timeout_ms = 250);
-    bool readBitstreamStatus(BitstreamStatus& status);
-    // Legacy byte-chunk entry point: wraps each chunk in a default-session NAL
-    // record so older call sites keep working while source-demux moves to the
-    // explicit record API above.
-    bool sendBitstreamChunkDdr(const uint8_t* data, size_t len);
-    bool flushBitstreamDdr();
 
     // Pulse status bit 10 to flush present-domain audio FIFO.
     bool flushAudioFifo();
@@ -239,8 +218,7 @@ public:
         // Legacy alias: high/low of previous wr_count field (now idr|stub)
         uint16_t wr_count_lo = 0;
         uint32_t stream_bytes_seen = 0; // not in status anymore; kept for API compat (=0)
-        uint32_t stream_nalus = 0; // status liveness mirror of nalu_count, not bytes
-        uint32_t stream_bytes_in = 0; // deprecated alias of stream_nalus for API compat
+        uint32_t stream_bytes_in = 0; // legacy API compat; no longer byte-accurate in status
     };
     // Parse getCoreStatus raw bytes into fields.
     static CoreStatus parseCoreStatus(const uint8_t raw[16]);
@@ -268,7 +246,6 @@ private:
     // Caller holds SpiExclusive + user mode.
     void writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
-    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;
@@ -285,7 +262,6 @@ private:
     DdrTiming lastDdrTiming_{};
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
-    double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
@@ -294,18 +270,6 @@ private:
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     bool ensureDdrMap();
     void releaseDdrMap();
-    bool ensureBitstreamDdrMap();
-    void releaseBitstreamDdrMap();
-    bool readBitstreamFpgaCount(uint32_t& readCount);
-    bool waitBitstreamReadCount(uint32_t target, int timeout_ms);
-    BitstreamPushResult writeBitstreamRecord(ddr_bitstream_ring::Event event,
-                                             uint64_t session_id,
-                                             uint32_t seq,
-                                             uint8_t nal_type,
-                                             const uint8_t* payload,
-                                             size_t len,
-                                             int timeout_ms);
-    void publishBitstreamCtrl();
     bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
     bool kickDdrDoorbell(int bank);
@@ -321,15 +285,6 @@ private:
     static constexpr uint32_t SSPI_FPGA_EN = (1u << 18);
     static constexpr uint32_t SSPI_IO_EN = (1u << 20);
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
-
-    int bitstreamMemFd_ = -1;
-    uint8_t* bitstreamMap_ = nullptr;
-    size_t bitstreamMapLen_ = 0;
-    uint32_t bitstreamWriteCount_ = 0;
-    uint64_t bitstreamLegacySessionId_ = 1;
-    uint32_t bitstreamLegacySeq_ = 0;
-    bool bitstreamLegacyActive_ = false;
-    bool bitstreamResetEpoch_ = false;
 };
 
 } // namespace misterplex

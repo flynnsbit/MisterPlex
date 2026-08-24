@@ -72,6 +72,15 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
     return weak;
 }
 
+misterplex::DdrFrameFormat parseDdrFrameFormat(const std::string& v,
+                                               misterplex::DdrFrameFormat fallback) {
+    if (v == "yuv420p" || v == "yuv420" || v == "i420")
+        return misterplex::DdrFrameFormat::Yuv420p;
+    if (v == "rgb565" || v == "rgb565le" || v == "rgb")
+        return misterplex::DdrFrameFormat::Rgb565;
+    return fallback;
+}
+
 } // namespace
 
 namespace {
@@ -221,13 +230,17 @@ int main(int argc, char** argv) {
         }
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
-            presentMode = v; // fb0 | fpga | both | none(test/lab)
+            presentMode = v; // fb0 | fpga | both
         v = loadConf(confPath, "DDR_FRAME_FORMAT");
-        if (!v.empty() && v != "yuv420p" && v != "yuv420" && v != "i420") {
-            std::fprintf(stderr,
-                         "misterplexd: DDR_FRAME_FORMAT=%s ignored; DDR frame store is "
-                         "fixed to yuv420p\n",
-                         v.c_str());
+        if (!v.empty()) {
+            auto parsed = parseDdrFrameFormat(v, ddrFrameFormat);
+            if (parsed == ddrFrameFormat && v != "rgb565" && v != "rgb565le" && v != "rgb" &&
+                v != "yuv420p" && v != "yuv420" && v != "i420") {
+                std::fprintf(stderr,
+                             "misterplexd: unknown DDR_FRAME_FORMAT=%s (keeping yuv420p)\n",
+                             v.c_str());
+            }
+            ddrFrameFormat = parsed;
         }
         v = loadConf(confPath, "DDR_MEM_SYNC");
         if (!v.empty())
@@ -362,12 +375,6 @@ int main(int argc, char** argv) {
         player.setSubtitleStreamIndex(subtitleStreamId);
     bool osdControl = false;
     {
-        auto audio = loadConf(confPath, "AUDIO");
-        if (!audio.empty())
-            player.setAudioEnabled(confTruthy(audio));
-        auto audioDev = loadConf(confPath, "AUDIO_DEVICE");
-        if (!audioDev.empty())
-            player.setAudioPath(audioDev);
         // Default 0 — no hardcoded audio lag. Conf AUDIO_DELAY_MS only.
         int audioDelayMs = 0;
         auto adv = loadConf(confPath, "AUDIO_DELAY_MS");
@@ -426,7 +433,8 @@ int main(int argc, char** argv) {
     }
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
-    std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
+    std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=%s\n",
+                 ddrFrameFormat == misterplex::DdrFrameFormat::Yuv420p ? "yuv420p" : "rgb565");
     std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
@@ -461,28 +469,7 @@ int main(int argc, char** argv) {
         }
         player.stop();
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        const auto summary = player.lastPlaybackSummary();
-        if (summary.deliveredFrames() <= 0) {
-            std::fprintf(stderr,
-                         "misterplexd: LAB play-file ERROR zero frames delivered "
-                         "(raw=%lld presented=%lld recon=%lld totalBytes=%lld short_read=%d "
-                         "got=%zu/%zu eof=%d stream=%d skip_rgb=%d). Check FFmpeg stderr/log, "
-                         "source streams, and DDR/F1 delivery before grading captures.\n",
-                         static_cast<long long>(summary.rawFrames),
-                         static_cast<long long>(summary.presentedFrames),
-                         static_cast<long long>(summary.reconFrames),
-                         static_cast<long long>(summary.totalBytes), summary.shortRead ? 1 : 0,
-                         summary.shortReadGot, summary.shortReadWant, summary.videoEof ? 1 : 0,
-                         summary.streamEnabled ? 1 : 0, summary.skipRgb ? 1 : 0);
-            return 2;
-        }
-        std::fprintf(stderr,
-                     "misterplexd: LAB play-file done frames=%lld presented=%lld recon=%lld "
-                     "totalBytes=%lld\n",
-                     static_cast<long long>(summary.rawFrames),
-                     static_cast<long long>(summary.presentedFrames),
-                     static_cast<long long>(summary.reconFrames),
-                     static_cast<long long>(summary.totalBytes));
+        std::fprintf(stderr, "misterplexd: LAB play-file done\n");
         return 0;
     }
 

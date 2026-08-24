@@ -1,0 +1,12 @@
+# HEVC RBF only — sourced from Plex_HEVC.qsf, NOT from product Plex.qsf.
+# H264 Expert: replace these stubs. Do not instantiate m2 DDR master here.
+# Unconnected modules DCE to ~0 ALM until Plex.sv wires hevc_decode_top.
+
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_decode_top.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_cabac.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_iq_idct.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_intra.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_inter_mc.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_deblock.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_sao.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/hevc/hevc_dpb.sv

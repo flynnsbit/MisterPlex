@@ -71,6 +71,7 @@ localparam CONF_STR = {
 	"O[1],A/V auto resync,On,Off;",
 	"O[3],Audio clock trim,On,Off;",
 	"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;",
+	"O[16],FPGA present,Off,On;",
 	"-;",
 	"T[10],Flush audio FIFO;",
 	"T[11],Flush bitstream FIFO;",
@@ -79,7 +80,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,7;", // reset OSD: v7 clears stale pre-480p status[4] before content-res owns it
+	"v,8;", // reset OSD: v8 so saved v7 menus do not surprise-enable O[16]
 	"V,v",`BUILD_DATE
 };
 
@@ -119,6 +120,8 @@ wire [7:0]   recon_sig;
 wire [7:0]   recon_dbg;
 wire         recon_dbg_valid;
 wire         recon_valid;
+wire [15:0]  frames_out;
+wire         product_recon_ok;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [31:0]  wr_count;
@@ -426,12 +429,6 @@ sdram #(
 );
 `endif
 
-`ifdef DDR_FRAME_STORE
-wire present_reset = reset;
-`else
-wire present_reset = reset | sdram_startup_busy;
-`endif
-
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
 // F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
@@ -553,38 +550,9 @@ wire        stub_wr_en;
 wire [15:0] stub_wr_pixel;
 wire        stub_wr_reset;
 wire        stub_swap;
-wire        stream_ddr_active;
-wire [31:0] stream_ddr_bytes_out;
-wire [15:0] stream_ddr_underruns;
-wire [15:0] stream_ddr_overruns;
-wire [31:0] stream_ddr_host_write;
-wire [31:0] stream_ddr_fpga_read;
-wire        stream_ddr_bus_want;
-wire        stream_ddr_busy;
-wire  [7:0] stream_ddr_burstcnt;
-wire [28:0] stream_ddr_addr;
-wire [63:0] stream_ddr_dout;
-wire        stream_ddr_dout_ready;
-wire        stream_ddr_rd;
-wire [63:0] stream_ddr_din;
-wire  [7:0] stream_ddr_be;
-wire        stream_ddr_we;
-`ifdef DDR_FRAME_STORE
-wire        stream_ddr_enable = 1'b1;
-`else
-wire        stream_ddr_enable = 1'b0;
-`endif
 
-`ifndef DDR_FRAME_STORE
-assign stream_ddr_busy = 1'b1;
-assign stream_ddr_dout = 64'd0;
-assign stream_ddr_dout_ready = 1'b0;
-`endif
-
-stream_path #(
-	.FRAME_W(FRAME_W),
-	.FRAME_H(FRAME_H)
-) spath (
+// CoS: coded path is pinned 320x240. Do not pass product FRAME_W (640).
+stream_path spath (
 	.clk(clk_sys),
 	.reset(reset),
 	.ioctl_download(ioctl_download),
@@ -592,29 +560,12 @@ stream_path #(
 	.ioctl_dout(ioctl_dout),
 	.enable(is_stream_dl),
 	.flush(status[11]),
-	.ddr_stream_enable(stream_ddr_enable),
-	.ddr_bus_want(stream_ddr_bus_want),
-	.ddr_busy(stream_ddr_busy),
-	.ddr_burstcnt(stream_ddr_burstcnt),
-	.ddr_addr(stream_ddr_addr),
-	.ddr_dout(stream_ddr_dout),
-	.ddr_dout_ready(stream_ddr_dout_ready),
-	.ddr_rd(stream_ddr_rd),
-	.ddr_din(stream_ddr_din),
-	.ddr_be(stream_ddr_be),
-	.ddr_we(stream_ddr_we),
 	.has_stream(has_stream),
 	.nalu_count(nalu_count),
 	.last_nal_type(last_nal_type),
 	.bytes_in(stream_bytes_in),
 	.bytes_seen(stream_bytes_seen),
 	.fifo_level(stream_fifo_level),
-	.stream_ddr_active(stream_ddr_active),
-	.stream_ddr_bytes_out(stream_ddr_bytes_out),
-	.stream_ddr_underruns(stream_ddr_underruns),
-	.stream_ddr_overruns(stream_ddr_overruns),
-	.stream_ddr_host_write(stream_ddr_host_write),
-	.stream_ddr_fpga_read(stream_ddr_fpga_read),
 	.has_idr(has_idr),
 	.idr_count(idr_count),
 	.sps_count(sps_count),
@@ -647,17 +598,21 @@ stream_path #(
 	.recon_dbg(recon_dbg),
 	.recon_dbg_valid(recon_dbg_valid),
 	.recon_valid(recon_valid),
+	.frames_out(frames_out),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
-	.fs_swap(stub_swap)
+	.fs_swap(stub_swap),
+	.product_recon_ok(product_recon_ok)
 );
 
-// Phase 3.3j / 3.1b hybrid present:
+// Phase 3.3j / 3.1b hybrid present + Phase-1 FPGA third writer:
 //   Host F1 SPI or DDR bulk owns product frame_store once any host frame has
 //   swapped. decode_stub F3 diagnostic paint is suppressed after that.
-//   Priority while writing: F1 ioctl download > DDR DMA > stub.
+//   Priority while writing: F1 ioctl download > host DDR present > FPGA recon > stub.
+//   T[11] / Reset clear the FPGA claim only — host_owns_fs stays until Reset.
 reg host_owns_fs;
+reg fpga_claim;
 always @(posedge clk_sys) begin
 	if (reset)
 		host_owns_fs <= 1'b0;
@@ -666,15 +621,29 @@ always @(posedge clk_sys) begin
 end
 
 wire        stub_allow  = ~host_owns_fs & ~ingest_dl & ~ddr_busy;
+// product_recon_ok / clip_gold_match is TB status only. Never 1'b1. Not a present gate.
+wire decode_frame_valid = recon_valid | (frames_out != 16'd0);
+wire fpga_allow = status[16] & decode_frame_valid & ~ingest_dl & ~ddr_busy;
+always @(posedge clk_sys) begin
+	if (reset | status[11])
+		fpga_claim <= 1'b0;
+	else if (fpga_allow & recon_valid & ~host_owns_fs)
+		fpga_claim <= 1'b1;
+end
+// FPGA recon owns glass only with O[16], decode_frame_valid, completed-frame
+// recon_valid, and no host F1/DDR claim. host_owns_fs still blocks FPGA.
+wire        fpga_wr     = fpga_allow & ~host_owns_fs & (fpga_claim | recon_valid);
 wire        host_wr     = ingest_dl | f1_wr_en | ddr_wr_en;
 wire        fs_wr_en    = ingest_dl ? f1_wr_en
 	                      : ddr_busy  ? ddr_wr_en
+	                      : fpga_wr   ? stub_wr_en
 	                      : (stub_allow ? (stub_wr_en | f1_wr_en) : f1_wr_en);
 wire [15:0] fs_wr_pixel = ingest_dl ? f1_wr_pixel
 	                      : ddr_wr_en ? ddr_wr_pixel
+	                      : fpga_wr   ? stub_wr_pixel
 	                      : (f1_wr_en ? f1_wr_pixel : stub_wr_pixel);
-wire        fs_wr_reset = f1_wr_reset | ddr_wr_reset | (stub_wr_reset & stub_allow);
-wire        fs_swap     = f1_swap | ddr_swap | (stub_swap & stub_allow);
+wire        fs_wr_reset = f1_wr_reset | ddr_wr_reset | (stub_wr_reset & (fpga_wr | stub_allow));
+wire        fs_swap     = f1_swap | ddr_swap | (stub_swap & (fpga_wr | stub_allow));
 wire        _host_wr_unused = host_wr;
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
@@ -683,18 +652,6 @@ wire [15:0] al, ar_audio;
 wire [31:0] disp_i, cont_i;
 wire advance;
 // swap_pending declared above (fed back into ddram_frame_rd hold-off)
-
-`ifdef DDR_FRAME_STORE
-wire        present_ddr_busy;
-wire  [7:0] present_ddr_burstcnt;
-wire [28:0] present_ddr_addr;
-wire [63:0] present_ddr_dout;
-wire        present_ddr_dout_ready;
-wire        present_ddr_rd;
-wire [63:0] present_ddr_din;
-wire  [7:0] present_ddr_be;
-wire        present_ddr_we;
-`endif
 
 present_core #(
 	.FRAME_W(FRAME_W),
@@ -705,7 +662,7 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
-	.reset(present_reset),
+	.reset(reset | sdram_startup_busy),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),
@@ -741,15 +698,15 @@ present_core #(
 	.ddr_sdram_error_count(sdram_error_count),
 	.clk_ddr(clk_ddr),
 	.DDRAM_CLK(DDRAM_CLK),
-	.DDRAM_BUSY(present_ddr_busy),
-	.DDRAM_BURSTCNT(present_ddr_burstcnt),
-	.DDRAM_ADDR(present_ddr_addr),
-	.DDRAM_DOUT(present_ddr_dout),
-	.DDRAM_DOUT_READY(present_ddr_dout_ready),
-	.DDRAM_RD(present_ddr_rd),
-	.DDRAM_DIN(present_ddr_din),
-	.DDRAM_BE(present_ddr_be),
-	.DDRAM_WE(present_ddr_we),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE),
 	.ddr_frames_done(ddr_frames),
 	.ddr_doorbell_ok(ddr_doorbell_ok),
 `endif
@@ -778,41 +735,6 @@ present_core #(
 	.stat_frame_underruns(frame_underruns),
 	.stat_frame_sdram_state(frame_sdram_state)
 );
-
-`ifdef DDR_FRAME_STORE
-ddr_bus_arbiter ddr_arb (
-	.clk(clk_sys),
-	.reset(reset),
-	.m1_want(stream_ddr_bus_want),
-	.m0_busy(present_ddr_busy),
-	.m0_burstcnt(present_ddr_burstcnt),
-	.m0_addr(present_ddr_addr),
-	.m0_dout(present_ddr_dout),
-	.m0_dout_ready(present_ddr_dout_ready),
-	.m0_rd(present_ddr_rd),
-	.m0_din(present_ddr_din),
-	.m0_be(present_ddr_be),
-	.m0_we(present_ddr_we),
-	.m1_busy(stream_ddr_busy),
-	.m1_burstcnt(stream_ddr_burstcnt),
-	.m1_addr(stream_ddr_addr),
-	.m1_dout(stream_ddr_dout),
-	.m1_dout_ready(stream_ddr_dout_ready),
-	.m1_rd(stream_ddr_rd),
-	.m1_din(stream_ddr_din),
-	.m1_be(stream_ddr_be),
-	.m1_we(stream_ddr_we),
-	.DDRAM_BUSY(DDRAM_BUSY),
-	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
-	.DDRAM_ADDR(DDRAM_ADDR),
-	.DDRAM_DOUT(DDRAM_DOUT),
-	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
-	.DDRAM_RD(DDRAM_RD),
-	.DDRAM_DIN(DDRAM_DIN),
-	.DDRAM_BE(DDRAM_BE),
-	.DDRAM_WE(DDRAM_WE)
-);
-`endif
 
 assign CLK_VIDEO = clk_sys;
 assign CE_PIXEL  = ce_pix;
@@ -938,7 +860,7 @@ wire [127:0] status_telem_masked = {
 	status_telem_r[95:0]
 };
 
-// Preserve Aspect ratio OSD bits (may stomp recon_dbg bits [2:1] — OK)
+// Preserve Aspect ratio OSD bits (may stomp stream_bytes high bits — OK)
 // status_set replaces entire word in Main; residual bits stay below AR splice.
 assign status_in = {
 	status_telem_masked[127:123],
@@ -996,9 +918,6 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	residual_coeff[8], residual_coeff[9], residual_coeff[10], residual_coeff[11],
 	residual_coeff[12], residual_coeff[13], residual_coeff[14], residual_coeff[15],
 	stub_frames, slice_valid, slice_is_i, sps_mb_w, sps_mb_h, has_mb_type, idr_count,
-	stream_fifo_level, ddr_frames, stream_ddr_active, stream_ddr_bytes_out,
-	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
-	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
-	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused};
+	stream_fifo_level, ddr_frames, _host_wr_unused, product_recon_ok};
 
 endmodule

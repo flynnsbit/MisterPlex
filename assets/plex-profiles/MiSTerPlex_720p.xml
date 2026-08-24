@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- UNUSED DRAFT. Not live. Do not install over Profiles/MiSTerPlex.xml.
+     Do not point X-Plex-Client-Profile-Name here until the 720p H.264 FPGA is real.
+     Live product: MiSTerPlex.xml (640x480 Baseline). PMS → MPEG-TS/Annex-B → F3.
+     No host ffmpeg remux. -->
+<Client name="MiSTerPlex_720p">
+  <DirectPlayProfiles>
+    <VideoProfile container="mpegts" codec="h264" audioCodec="aac" />
+  </DirectPlayProfiles>
+
+  <TranscodeTargets>
+    <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+      <Setting name="VideoEncodeFlags" value="-profile:v baseline -level 3.1 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=50:min-keyint=25:scenecut=0" />
+      <Setting name="SubtitleSize" value="100" />
+    </VideoProfile>
+    <MusicProfile container="mp3" codec="mp3" />
+    <PhotoProfile container="jpeg" />
+  </TranscodeTargets>
+
+  <CodecProfiles>
+    <VideoCodec name="*">
+      <Limitations>
+        <UpperBound name="video.width" value="1280" isRequired="true" />
+        <UpperBound name="video.height" value="720" isRequired="true" />
+        <UpperBound name="video.frameRate" value="30" isRequired="true" />
+        <UpperBound name="video.bitDepth" value="8" isRequired="true" />
+      </Limitations>
+    </VideoCodec>
+    <VideoCodec name="h264">
+      <Limitations>
+        <Match name="video.profile" list="baseline,constrained baseline" isRequired="true" />
+        <UpperBound name="video.level" value="31" isRequired="true" />
+        <UpperBound name="video.refFrames" value="1" isRequired="true" />
+      </Limitations>
+    </VideoCodec>
+    <VideoAudioCodec name="aac">
+      <Limitations>
+        <UpperBound name="audio.channels" value="2" isRequired="true" />
+      </Limitations>
+    </VideoAudioCodec>
+  </CodecProfiles>
+
+  <TranscodeTargetProfiles>
+    <VideoTranscodeTarget protocol="http" context="streaming">
+      <VideoCodec name="h264">
+        <Limitations>
+          <Match name="video.profile" list="baseline,constrained baseline" onlyTranscodes="true" isRequired="true" />
+          <UpperBound name="video.level" value="31" onlyTranscodes="true" isRequired="true" />
+          <UpperBound name="video.refFrames" value="1" onlyTranscodes="true" isRequired="true" />
+        </Limitations>
+      </VideoCodec>
+      <VideoAudioCodec name="aac">
+        <Limitations>
+          <UpperBound name="audio.channels" value="2" onlyTranscodes="true" isRequired="true" />
+        </Limitations>
+      </VideoAudioCodec>
+    </VideoTranscodeTarget>
+  </TranscodeTargetProfiles>
+</Client>

@@ -1,8 +1,8 @@
-// Phase 3.1b: HPS → DDR3 bulk YUV420p → RGB565 frame_store.
+// Phase 3.1b: HPS → DDR3 bulk RGB565 → frame_store (bypass SPI F1).
 //
 // Physical layout (HPS /dev/mem view):
 //   Bank 0: 0x30000000
-//   Bank 1: phys_base + bank_stride.
+//   Bank 1: phys_base + bank_stride. Legacy 320x240 RGB565 uses 0x40000.
 //           The measured 480p contract is coded 624x480/display 618x480/
 //           presented 640x480; see ddr_frame_layout_params.svh and the host
 //           ddr_frame_layout.hpp guard for its RGB/YUV strides and doorbells.
@@ -38,11 +38,6 @@
 //     [39:32] seq
 //     [47:40] frame-store SDRAM debug state
 //     [63:48] saturated line-buffer underrun count
-//   Continuous H.264 bitstream ring (HPS DDR3, independent of SDRAM stick):
-//     Data ring:       0x30100000..0x3013FFFF (256 KiB)
-//     HPS->FPGA CTRL:  0x30140000 ("PLXB", write_count[30:0], reset epoch)
-//     FPGA->HPS READ:  0x30140008 ("PLXR", read_count[31:0])
-//     FPGA->HPS ERR:   0x30140010 ("PLXE", seq, active, underrun/overrun sticky/counts)
 //
 // Why the mailbox exists: misterplexd used to read the OSD word back over the
 // HPS<->FPGA SPI bus (UIO_GET_STATUS). That bus is a single GPO register owned

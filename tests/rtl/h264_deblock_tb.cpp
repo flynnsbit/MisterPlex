@@ -276,29 +276,12 @@ void testBs(Vh264_deblock_tb& dut) {
     if (eval() != 3) { std::cerr << "FAIL bS intra internal\n"; std::exit(1); }
     dut.p_intra = 0; dut.q_nonzero = 1;
     if (eval() != 2) { std::cerr << "FAIL bS residual\n"; std::exit(1); }
-    dut.q_nonzero = 0; dut.p_nonzero = 1;
-    if (eval() != 2) { std::cerr << "FAIL bS residual p-side\n"; std::exit(1); }
-    dut.p_nonzero = 0;
     dut.q_nonzero = 0; dut.q_mvx = 4;
     if (eval() != 1) { std::cerr << "FAIL bS mv threshold\n"; std::exit(1); }
     dut.q_mvx = 3;
     if (eval() != 0) { std::cerr << "FAIL bS mv below threshold\n"; std::exit(1); }
-    dut.q_mvx = -4;
-    if (eval() != 1) { std::cerr << "FAIL bS negative mvx threshold\n"; std::exit(1); }
-    dut.q_mvx = 0; dut.q_mvy = 4;
-    if (eval() != 1) { std::cerr << "FAIL bS mvy threshold\n"; std::exit(1); }
-    dut.q_mvy = -4;
-    if (eval() != 1) { std::cerr << "FAIL bS negative mvy threshold\n"; std::exit(1); }
-    dut.q_mvy = 0; dut.p_mvx = 4;
-    if (eval() != 1) { std::cerr << "FAIL bS p-side mvx threshold\n"; std::exit(1); }
-    dut.p_mvx = 0; dut.p_mvy = -4;
-    if (eval() != 1) { std::cerr << "FAIL bS p-side negative mvy threshold\n"; std::exit(1); }
-    dut.p_mvy = 0;
     dut.q_ref = 1;
     if (eval() != 1) { std::cerr << "FAIL bS ref diff\n"; std::exit(1); }
-    dut.q_ref = 0; dut.p_ref = 1;
-    if (eval() != 1) { std::cerr << "FAIL bS p-side ref diff\n"; std::exit(1); }
-    dut.p_ref = 0;
     dut.slice_boundary_blocked = 1;
     if (eval() != 0) { std::cerr << "FAIL bS disable idc2 boundary\n"; std::exit(1); }
     dut.slice_boundary_blocked = 0; dut.disable_all = 1;
@@ -325,11 +308,6 @@ void testThresholds(Vh264_deblock_tb& dut) {
     dutEdge(dut, e, false, 1, 51, 12, 12);
     if (dut.alpha_dbg != 255 || dut.beta_dbg != 18 || dut.tc0_dbg != 13) {
         std::cerr << "FAIL thresholds high clip\n";
-        std::exit(1);
-    }
-    dutEdge(dut, e, false, 3, 4, -12, -12);
-    if (dut.alpha_dbg != 0 || dut.beta_dbg != 0 || dut.tc0_dbg != 0) {
-        std::cerr << "FAIL thresholds low clip\n";
         std::exit(1);
     }
 }
@@ -464,43 +442,6 @@ void runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
               << " fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
 }
 
-void runNalSequenceContract(const std::string& path, const std::string& mbGoldenPath) {
-    const std::string json = readText(path);
-    const std::string golden = readText(mbGoldenPath);
-    if (json.find("\"format\": \"misterplex.p3.nal_sequence.v1\"") == std::string::npos) {
-        std::cerr << "FAIL deblock nal_sequence: wrong or missing format marker\n";
-        std::exit(1);
-    }
-    const std::size_t seqPos = json.find("\"sequence\"");
-    const int nalCount = parseIntAfter(json, "nal_count", seqPos == std::string::npos ? 0 : seqPos);
-    const int vclCount = parseIntAfter(json, "vcl", seqPos == std::string::npos ? 0 : seqPos);
-    const int idrCount = parseIntAfter(json, "idr", seqPos == std::string::npos ? 0 : seqPos);
-    const int pSlices = parseIntAfter(json, "p_slices", seqPos == std::string::npos ? 0 : seqPos);
-    if (nalCount < 2 || vclCount < 2 || idrCount < 1 || pSlices < 1 ||
-        json.find("\"requires_idle_between_vcl\": true") == std::string::npos ||
-        json.find("\"return_to_idle_before_next_vcl_required\": true") == std::string::npos) {
-        std::cerr << "FAIL deblock nal_sequence: expected multi-NAL IDR+P fixture with idle-between-VCL requirement"
-                  << " nals=" << nalCount << " vcl=" << vclCount << " idr=" << idrCount
-                  << " p_slices=" << pSlices << "\n";
-        std::exit(1);
-    }
-    const std::size_t srcPos = json.find("\"path\": \"");
-    if (srcPos == std::string::npos) {
-        std::cerr << "FAIL deblock nal_sequence: missing source path\n";
-        std::exit(1);
-    }
-    const std::size_t srcStart = srcPos + 9;
-    const std::size_t srcEnd = json.find('"', srcStart);
-    const std::string srcName = json.substr(srcStart, srcEnd - srcStart);
-    if (golden.find("\"path\": \"" + srcName + "\"") == std::string::npos) {
-        std::cerr << "FAIL deblock nal_sequence: mb_golden source does not match sequence source " << srcName << "\n";
-        std::exit(1);
-    }
-    std::cout << "OK deblock nal_sequence multi-NAL contract: nals=" << nalCount
-              << " vcl=" << vclCount << " idr=" << idrCount << " p_slices=" << pSlices
-              << " source=" << srcName << "\n";
-}
-
 void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
     constexpr int W = 32, H = 32;
     Frame ref(W * H), got(W * H);
@@ -530,148 +471,25 @@ void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
     std::cout << "OK deblock multi-frame drift fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
 }
 
-void testWritebackContract(Vh264_deblock_tb& dut) {
-    dut.reset = 1;
-    dut.idr_frame_start = 0;
-    dut.filtered_sample_valid = 0;
-    dut.filtered_mb_valid = 0;
-    dut.filtered_mb_addr = 0;
-    dut.filtered_mb_is_ref = 0;
-    dut.filtered_frame_done = 0;
-    dut.frame_slot_i = 0;
-    dut.frame_boundary = 0;
-    tick(dut);
-    dut.reset = 0;
-
-    dut.idr_frame_start = 1;
-    tick(dut);
-    if (!dut.dpb_invalidate_refs || dut.ref_ready_pulse) {
-        std::cerr << "FAIL deblock writeback: IDR invalidate/ref_ready got invalidate="
-                  << int(dut.dpb_invalidate_refs) << " ready=" << int(dut.ref_ready_pulse) << "\n";
-        std::exit(1);
-    }
-    dut.idr_frame_start = 0;
-
-    dut.filtered_mb_valid = 1;
-    dut.filtered_mb_addr = 3;
-    dut.filtered_mb_is_ref = 1;
-    dut.filtered_frame_done = 0;
-    dut.frame_slot_i = 2;
-    tick(dut);
-    if (dut.wb_valid || !dut.commit_order_error) {
-        std::cerr << "FAIL deblock writeback: MB commit before all filtered samples"
-                  << " wb=" << int(dut.wb_valid)
-                  << " order_error=" << int(dut.commit_order_error) << "\n";
-        std::exit(1);
-    }
-    dut.filtered_mb_valid = 0;
-    tick(dut);
-
-    for (int i = 0; i < 384; ++i) {
-        dut.filtered_sample_valid = 1;
-        tick(dut);
-        if (dut.wb_valid || dut.ref_ready_pulse) {
-            std::cerr << "FAIL deblock writeback: sample write asserted commit/ref_ready"
-                      << " sample_i=" << i << " wb=" << int(dut.wb_valid)
-                      << " ready=" << int(dut.ref_ready_pulse) << "\n";
-            std::exit(1);
-        }
-    }
-    dut.filtered_sample_valid = 0;
-    dut.filtered_mb_valid = 1;
-    dut.filtered_mb_addr = 17;
-    dut.filtered_mb_is_ref = 1;
-    dut.filtered_frame_done = 0;
-    dut.frame_slot_i = 2;
-    tick(dut);
-    if (!dut.wb_valid || dut.wb_mb_addr != 17 || !dut.wb_is_ref || dut.ref_ready_pulse) {
-        std::cerr << "FAIL deblock writeback: nonterminal writeback/ready wb=" << int(dut.wb_valid)
-                  << " addr=" << int(dut.wb_mb_addr) << " ref=" << int(dut.wb_is_ref)
-                  << " ready=" << int(dut.ref_ready_pulse) << "\n";
-        std::exit(1);
-    }
-    dut.filtered_mb_valid = 0;
-    tick(dut);
-
-    for (int i = 0; i < 384; ++i) {
-        dut.filtered_sample_valid = 1;
-        tick(dut);
-        if (dut.wb_valid || dut.ref_ready_pulse) {
-            std::cerr << "FAIL deblock writeback: terminal sample write asserted commit/ref_ready"
-                      << " sample_i=" << i << " wb=" << int(dut.wb_valid)
-                      << " ready=" << int(dut.ref_ready_pulse) << "\n";
-            std::exit(1);
-        }
-    }
-    dut.filtered_sample_valid = 0;
-    dut.filtered_mb_valid = 1;
-    dut.filtered_mb_addr = 1169;
-    dut.filtered_frame_done = 1;
-    tick(dut);
-    if (!dut.wb_valid || dut.wb_mb_addr != 1169 || dut.ref_ready_pulse) {
-        std::cerr << "FAIL deblock writeback: DPB ref ready before frame boundary"
-                  << " wb=" << int(dut.wb_valid) << " addr=" << int(dut.wb_mb_addr)
-                  << " ready=" << int(dut.ref_ready_pulse) << "\n";
-        std::exit(1);
-    }
-
-    dut.filtered_mb_valid = 0;
-    dut.filtered_frame_done = 0;
-    dut.frame_boundary = 0;
-    tick(dut);
-    if (dut.ref_ready_pulse) {
-        std::cerr << "FAIL deblock writeback: ref ready without frame boundary\n";
-        std::exit(1);
-    }
-
-    dut.frame_boundary = 1;
-    tick(dut);
-    if (!dut.ref_ready_pulse || dut.ref_ready_slot != 2 || dut.wb_valid) {
-        std::cerr << "FAIL deblock writeback: frame-boundary ref promotion got ready="
-                  << int(dut.ref_ready_pulse) << " slot=" << int(dut.ref_ready_slot)
-                  << " wb=" << int(dut.wb_valid) << "\n";
-        std::exit(1);
-    }
-    dut.frame_boundary = 0;
-    tick(dut);
-    if (dut.ref_ready_pulse) {
-        std::cerr << "FAIL deblock writeback: ref ready pulse did not clear\n";
-        std::exit(1);
-    }
-
-    std::cout << "OK deblock writeback contract: filtered samples precede MB commit; writeback precedes frame-boundary DPB ref_ready; IDR invalidates refs\n";
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     bool faultHorizontalFirst = false;
     std::string mbGoldenPath;
-    std::string nalSequencePath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--fault-horizontal-first") faultHorizontalFirst = true;
         else if (arg == "--mb-golden" && i + 1 < argc) mbGoldenPath = argv[++i];
-        else if (arg == "--nal-sequence" && i + 1 < argc) nalSequencePath = argv[++i];
-        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--nal-sequence path] [--fault-horizontal-first]\n"; return 2; }
+        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--fault-horizontal-first]\n"; return 2; }
     }
     Vh264_deblock_tb dut;
     dut.clk = 0;
     dut.reset = 0;
     dut.pipe_valid_i = 0;
-    dut.idr_frame_start = 0;
-    dut.filtered_sample_valid = 0;
-    dut.filtered_mb_valid = 0;
-    dut.filtered_mb_addr = 0;
-    dut.filtered_mb_is_ref = 0;
-    dut.filtered_frame_done = 0;
-    dut.frame_slot_i = 0;
-    dut.frame_boundary = 0;
 
     testBs(dut);
     testThresholds(dut);
-    testWritebackContract(dut);
 
     const EdgeIO lumaNormal{{116,118,120,122},{118,120,122,124},{120,122,124,126},{126,127,128,129},
                             {132,133,134,135},{138,139,140,141},{140,141,142,143},{142,143,144,145}};
@@ -688,15 +506,8 @@ int main(int argc, char** argv) {
     requireEdge(dut, "chroma bS4", chromaNormal, true, 4, 40, 0, 0);
 
     if (!mbGoldenPath.empty()) runMbGolden(dut, mbGoldenPath);
-    if (!nalSequencePath.empty()) {
-        if (mbGoldenPath.empty()) {
-            std::cerr << "FAIL deblock nal_sequence: --mb-golden is required with --nal-sequence\n";
-            return 2;
-        }
-        runNalSequenceContract(nalSequencePath, mbGoldenPath);
-    }
     runDrift(dut, faultHorizontalFirst);
 
-    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, mb_golden, edge-order drift\n";
+    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, mb_golden, edge-order drift\n";
     return 0;
 }

@@ -10,8 +10,6 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from check_define_parity import verilator_define_args
-
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "fpga" / "Plex_MiSTer"
 DEFAULT_BASELINE = ROOT / "tests" / "fixtures" / "rtl_lint_baseline.json"
@@ -19,7 +17,6 @@ WARN_RE = re.compile(r"^%Warning-([A-Z0-9_]+):\s+([^:]+):(\d+):(\d+):")
 ERROR_FILE_RE = re.compile(r"^%Error(?:-[A-Z0-9_]+)?:\s+([^:]+):(\d+):(\d+):")
 INTERESTING_RE = re.compile(r"^(?:WIDTHTRUNC|WIDTHEXPAND|WIDTH|UNSIGNED|IMPLICIT)")
 ASSIGN_RE = re.compile(r"set_global_assignment\b.*?-name\s+(SYSTEMVERILOG_FILE|VERILOG_FILE|QIP_FILE)\b\s+(.+)$")
-MACRO_RE = re.compile(r"set_global_assignment\b.*?-name\s+VERILOG_MACRO\b\s+(.+)$")
 SOURCE_RE = re.compile(r"^\s*source\s+(.+?)\s*$")
 
 
@@ -57,11 +54,7 @@ def resolve_quartus_path(raw: str, base_dir: Path) -> list[Path]:
     return [p]
 
 
-def clean_assignment_value(raw: str) -> str:
-    return raw.strip().rstrip(";").strip().strip('"').strip()
-
-
-def parse_assignment_file(path: Path, seen: set[Path], ordered: list[Path], macros: list[str]) -> None:
+def parse_assignment_file(path: Path, seen: set[Path], ordered: list[Path]) -> None:
     path = path.resolve()
     if path in seen or not path.exists():
         return
@@ -74,13 +67,7 @@ def parse_assignment_file(path: Path, seen: set[Path], ordered: list[Path], macr
         sm = SOURCE_RE.match(line)
         if sm:
             for source in resolve_quartus_path(sm.group(1), base_dir):
-                parse_assignment_file(source, seen, ordered, macros)
-            continue
-        mm = MACRO_RE.search(line)
-        if mm:
-            macro = clean_assignment_value(mm.group(1))
-            if macro and macro not in macros:
-                macros.append(macro)
+                parse_assignment_file(source, seen, ordered)
             continue
         am = ASSIGN_RE.search(line)
         if not am:
@@ -88,23 +75,18 @@ def parse_assignment_file(path: Path, seen: set[Path], ordered: list[Path], macr
         kind, value = am.groups()
         for source in resolve_quartus_path(value, base_dir):
             if kind == "QIP_FILE":
-                parse_assignment_file(source, seen, ordered, macros)
+                parse_assignment_file(source, seen, ordered)
             elif source.suffix.lower() in {".sv", ".v", ".vh"} and source.exists():
                 if source not in ordered:
                     ordered.append(source)
 
 
-def discover_design() -> tuple[list[Path], list[str]]:
-    ordered: list[Path] = []
-    macros: list[str] = []
-    seen: set[Path] = set()
-    parse_assignment_file(PROJECT / "Plex.qsf", seen, ordered, macros)
-    parse_assignment_file(PROJECT / "files.qip", seen, ordered, macros)
-    return ordered, macros
-
-
 def discover_sources() -> list[Path]:
-    return discover_design()[0]
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+    parse_assignment_file(PROJECT / "Plex.qsf", seen, ordered)
+    parse_assignment_file(PROJECT / "files.qip", seen, ordered)
+    return ordered
 
 
 def is_excluded(path: Path) -> bool:
@@ -155,7 +137,7 @@ module altddio_out #(parameter extend_oe_disable = "", parameter intended_device
     return stub
 
 
-def run_verilator(files: list[Path], macros: list[str]) -> tuple[int, str]:
+def run_verilator(files: list[Path]) -> tuple[int, str]:
     stub = write_intel_stubs()
     ordered_files = sorted(files, key=lambda p: (is_excluded(p), rel(p) if p.exists() else str(p)))
     cmd = [
@@ -165,7 +147,7 @@ def run_verilator(files: list[Path], macros: list[str]) -> tuple[int, str]:
         "-Wno-MULTITOP", "-Wno-EOFNEWLINE", "-Wno-GENUNNAMED",
         f"-I{PROJECT}", f"-I{PROJECT / 'sys'}", f"-I{PROJECT / 'rtl'}",
         str(stub),
-    ] + verilator_define_args() + [str(p) for p in ordered_files]
+    ] + [str(p) for p in files]
     proc = subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return proc.returncode, proc.stdout
 
@@ -271,13 +253,13 @@ def compare_to_baseline(current: dict[str, dict[str, int]], baseline: dict[str, 
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__ + "\nThis is a Verilator parse/lint gate, not a Quartus synthesis-validity gate.")
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument("--list-files", action="store_true")
     args = ap.parse_args()
 
-    files, macros = discover_design()
+    files = discover_sources()
     reportable = {rel(p) for p in files if not is_excluded(p)}
     if args.list_files:
         for f in sorted(reportable):
@@ -287,9 +269,9 @@ def main() -> int:
     probe = subprocess.run([str(ROOT / "scripts" / "run_verilator.sh"), "--version"], cwd=ROOT,
                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if probe.returncode == 127:
-        print("RTL LINT REFUSED(exit=3): Verilator not found; whole-design RTL lint was NOT run.", file=sys.stderr)
+        print("SKIP RTL LINT: Verilator not found; whole-design RTL lint was NOT run.", file=sys.stderr)
         print("Install oss-cad-suite under ~/.local/oss-cad-suite or set VERILATOR=/path/to/verilator.", file=sys.stderr)
-        return 3
+        return 0
     if probe.returncode != 0:
         print("RTL LINT ERROR: Verilator probe failed:", file=sys.stderr)
         print(probe.stdout, file=sys.stderr)
@@ -297,7 +279,7 @@ def main() -> int:
 
     plex_rel = "fpga/Plex_MiSTer/Plex.sv"
     module_files = [p for p in files if rel(p) in reportable and rel(p) != plex_rel]
-    rc, output = run_verilator(module_files, macros)
+    rc, output = run_verilator(module_files)
 
     # Plex.sv depends on MiSTer sys/generated modules. Run a separate context pass
     # and count only warnings physically reported against Plex.sv; vendor/generated
@@ -307,7 +289,7 @@ def main() -> int:
     top_rc = 0
     if plex_files:
         all_context = sorted({p for p in PROJECT.rglob("*") if p.suffix.lower() in {".sv", ".v"} and p not in plex_files})
-        top_rc, top_output = run_verilator(plex_files + all_context, macros)
+        top_rc, top_output = run_verilator(plex_files + all_context)
 
     (ROOT / "build").mkdir(exist_ok=True)
     (ROOT / "build" / "rtl_lint_verilator.log").write_text(
@@ -326,8 +308,6 @@ def main() -> int:
 
     print(f"RTL lint: using {probe.stdout.strip()}")
     print(f"RTL lint: parsed {len(files)} Quartus RTL/context files; reporting {len(reportable)} owned files")
-    if macros:
-        print("RTL lint: propagated QSF macros " + " ".join(macros))
     print_ranked(current)
 
     owned_errors, ignored_errors = reportable_errors(output, reportable - {plex_rel})

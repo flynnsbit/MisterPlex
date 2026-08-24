@@ -21,6 +21,12 @@
 #                 recovery is a soft reboot. MiSTer.ini is left untouched; after the
 #                 reboot the core is loaded normally and re-verified.
 #   DEPLOY_REBOOT_WAIT_S seconds to wait for the device to come back (default 150)
+#   DEPLOY_START_DAEMON  1 (default) | 0
+#                 After Plex enumerates, start misterplexd if it is not running.
+#                 Pattern=None cores scan black until ARM paints + doorbell.
+#                 Soft-stop around load_core is still required (mid-SPI + FPGA
+#                 reload lockups). "Daemon first" means: presenter armed / back
+#                 the instant CORENAME=Plex — not SPI into Menu.
 set -euo pipefail
 
 HOST="${MISTER_HOST:-192.168.1.183}"
@@ -30,6 +36,7 @@ DEPLOY_LOAD="${DEPLOY_LOAD:-none}"
 DEPLOY_WAIT_S="${DEPLOY_WAIT_S:-5}"
 DEPLOY_RECOVER="${DEPLOY_RECOVER:-reboot}"
 DEPLOY_REBOOT_WAIT_S="${DEPLOY_REBOOT_WAIT_S:-150}"
+DEPLOY_START_DAEMON="${DEPLOY_START_DAEMON:-1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 RBF="${1:-}"
@@ -52,30 +59,38 @@ SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12)
 
 LOCAL_MD5=$(md5sum "$RBF" | awk '{print $1}')
 echo "Deploy $RBF (md5=$LOCAL_MD5)"
-echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+echo "  host=$USER@$HOST  load=$DEPLOY_LOAD  start_daemon=$DEPLOY_START_DAEMON"
 
-# --- remote prep: release SPI, soft-stop companion (never -9 first) ---
-"${SSH[@]}" 'bash -s' <<'REMOTE'
+# FPGA reload only: pause SPI + companion. Copy-only leaves the presenter running
+# so glass does not go black for a file replace.
+WILL_RELOAD=0
+case "$DEPLOY_LOAD" in
+  menu|bounce|core|plex|1) WILL_RELOAD=1 ;;
+esac
+
+# --- remote prep: release SPI; soft-stop companion only if we will load_core ---
+"${SSH[@]}" "bash -s" <<REMOTE
 set +e
 # Drop any SPI flock holders gently
 if [ -f /tmp/misterplex_spi.lock ]; then
   # processes blocking on flock — TERM only
-  for p in $(ps | grep -E '[s]et_status|[p]ush_frame' | awk '{print $1}'); do
-    kill "$p" 2>/dev/null
+  for p in \$(ps | grep -E '[s]et_status|[p]ush_frame' | awk '{print \$1}'); do
+    kill "\$p" 2>/dev/null
   done
   sleep 0.3
   rm -f /tmp/misterplex_spi.lock
 fi
-# Soft-stop misterplexd so it is not mid-SPI when FPGA reloads
-if ps | grep -v grep | grep -q '[m]isterplexd'; then
-  killall misterplexd 2>/dev/null
-  for i in 1 2 3 4 5 6 7 8; do
-    ps | grep -v grep | grep -q '[m]isterplexd' || break
-    sleep 0.25
-  done
-  # only if still up
+if [ "$WILL_RELOAD" = "1" ]; then
+  # Soft-stop misterplexd so it is not mid-SPI when FPGA reloads
   if ps | grep -v grep | grep -q '[m]isterplexd'; then
-    killall -9 misterplexd 2>/dev/null
+    killall misterplexd 2>/dev/null
+    for i in 1 2 3 4 5 6 7 8; do
+      ps | grep -v grep | grep -q '[m]isterplexd' || break
+      sleep 0.25
+    done
+    if ps | grep -v grep | grep -q '[m]isterplexd'; then
+      killall -9 misterplexd 2>/dev/null
+    fi
   fi
 fi
 # Ensure Main is not left SIGSTOP'd from a crashed SpiExclusive
@@ -83,6 +98,36 @@ killall -CONT MiSTer 2>/dev/null
 killall -CONT MiSTer_groovy 2>/dev/null
 sync
 REMOTE
+
+# Presenter must be live the moment Plex enumerates. Pattern=None + no doorbell = black.
+start_companion_after_plex() {
+  if [ "$DEPLOY_START_DAEMON" != "1" ]; then
+    echo "DEPLOY_START_DAEMON=$DEPLOY_START_DAEMON — leaving companion as-is"
+    return 0
+  fi
+  echo "Start companion (Plex must already be CORENAME)"
+  "${SSH[@]}" 'bash -s' <<'REMOTE'
+set +e
+if ps | grep -v grep | grep -q '[m]isterplexd'; then
+  echo "misterplexd already running: $(ps | grep -v grep | grep '[m]isterplexd' | head -2)"
+  exit 0
+fi
+if [ -x /media/fat/misterplex/bin/misterplexd_supervise.sh ]; then
+  nohup /media/fat/misterplex/bin/misterplexd_supervise.sh >/dev/null 2>&1 &
+  echo "started misterplexd_supervise pid=$!"
+elif [ -x /media/fat/misterplex/bin/misterplexd ]; then
+  nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005 \
+    --conf /media/fat/misterplex/misterplex.conf \
+    >>/media/fat/misterplex/misterplexd.log 2>&1 &
+  echo "started misterplexd pid=$!"
+else
+  echo "WARN: no misterplexd on box — scanout stays black until the companion starts" >&2
+  exit 0
+fi
+sleep 0.8
+ps | grep -v grep | grep misterplexd | head -3 || true
+REMOTE
+}
 
 REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
 if [[ -n "${REMOTE_MD5:-}" && "$REMOTE_MD5" == "$LOCAL_MD5" ]]; then
@@ -212,6 +257,7 @@ REMOTE
     elif [ "$rc" != "0" ]; then
       exit "$rc"
     fi
+    start_companion_after_plex
     ;;
   core|plex|1)
     echo "Reload Plex only (prefer when already on Menu)"
@@ -226,6 +272,7 @@ for i in \$(seq 1 $DEPLOY_WAIT_S); do
   sleep 1
 done
 REMOTE
+    start_companion_after_plex
     ;;
   *)
     echo "Unknown DEPLOY_LOAD=$DEPLOY_LOAD (use none|menu|core)" >&2

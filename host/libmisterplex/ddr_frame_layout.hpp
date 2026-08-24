@@ -33,8 +33,6 @@ constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
 constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
 constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
-constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK
-constexpr uint32_t kDdrFrameDoorbellSeqMask = 0x1FFFFFFFu;
 constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
@@ -47,7 +45,8 @@ enum class DdrFramePlacement {
 // HPS DDR frame-store contract shared by misterplexd and RTL:
 // - Two banks start at phys_base and phys_base+bank_stride.
 // - Doorbell is the final 4 KiB page of the mapped window.
-// - Banks contain planar I420: Y at y_offset, U at u_offset,
+// - RGB565 banks contain one packed little-endian plane at offset 0.
+// - YUV420p banks contain planar I420: Y at y_offset, U at u_offset,
 //   V at v_offset. Luma stride is line_bytes; chroma stride is
 //   chroma_line_bytes. The RTL reader schedules line_qwords for luma bursts and
 //   chroma_line_qwords for U/V bursts.
@@ -60,14 +59,21 @@ enum class DdrFramePlacement {
 //   (Y=16,U=128,V=128) for those columns. The ARM writer also clears cropped
 //   padding inside the coded frame to the same black.
 // - Doorbell high word is [31]=bank, [30:29]=format, [28:0]=sequence.
-//   C3 RTL consumes format 1=YUV420p only; the ARM must never ring this doorbell
-//   with an RGB565 payload.
+//   Format 0=RGB565, 1=YUV420p. RGB565 preserves the historical bank bit and
+//   still presents a monotonically changing sequence to older readers.
 enum class DdrFrameFormat {
+    Rgb565,
     Yuv420p,
 };
 
-inline uint32_t ddrFrameFormatCode(DdrFrameFormat) {
-    return 1;
+inline uint32_t ddrFrameFormatCode(DdrFrameFormat f) {
+    switch (f) {
+    case DdrFrameFormat::Yuv420p:
+        return 1;
+    case DdrFrameFormat::Rgb565:
+    default:
+        return 0;
+    }
 }
 
 struct DdrFrameGeometry {
@@ -115,7 +121,7 @@ struct DdrFrameLayout {
     int present_x = 0;
     int present_y = 0;
     DdrFramePlacement placement = DdrFramePlacement::None;
-    DdrFrameFormat format = DdrFrameFormat::Yuv420p;
+    DdrFrameFormat format = DdrFrameFormat::Rgb565;
 };
 
 inline uint32_t alignUpU32(uint32_t v, uint32_t align) {
@@ -175,7 +181,7 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
                                          uint32_t physBase = kDdrFramePhysBase,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
-                                         DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+                                         DdrFrameFormat format = DdrFrameFormat::Rgb565) {
     DdrFrameLayout out{};
     if (geom.coded_width <= 0 || geom.coded_height <= 0 || geom.display_width <= 0 ||
         geom.display_height <= 0 || geom.presented_width <= 0 || geom.presented_height <= 0)
@@ -187,12 +193,20 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
     if (geom.presented_width < geom.display_width || geom.presented_height < geom.display_height)
         return out;
 
-    if ((geom.coded_width & 1) || (geom.coded_height & 1))
-        return out;
-    const uint64_t lineBytes = static_cast<uint64_t>(geom.coded_width);
-    const uint64_t frameBytes = static_cast<uint64_t>(geom.coded_width) *
-                                static_cast<uint64_t>(geom.coded_height) * 3u / 2u;
-    const uint64_t chromaLineBytes = static_cast<uint64_t>(geom.coded_width / 2);
+    uint64_t lineBytes = 0;
+    uint64_t frameBytes = 0;
+    uint64_t chromaLineBytes = 0;
+    if (format == DdrFrameFormat::Yuv420p) {
+        if ((geom.coded_width & 1) || (geom.coded_height & 1))
+            return out;
+        lineBytes = static_cast<uint64_t>(geom.coded_width);
+        chromaLineBytes = static_cast<uint64_t>(geom.coded_width / 2);
+        frameBytes = static_cast<uint64_t>(geom.coded_width) *
+                     static_cast<uint64_t>(geom.coded_height) * 3u / 2u;
+    } else {
+        lineBytes = static_cast<uint64_t>(geom.coded_width) * 2u;
+        frameBytes = lineBytes * static_cast<uint64_t>(geom.coded_height);
+    }
     if (lineBytes > 0xFFFFFFFFull || frameBytes > 0xFFFFFFFFull)
         return out;
 
@@ -219,11 +233,13 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
     out.chroma_line_bytes = static_cast<int>(chromaLineBytes);
     out.chroma_line_qwords = static_cast<int>(chromaLineBytes / 8u);
     out.frame_bytes = static_cast<size_t>(frameBytes);
-    const uint32_t yBytes = static_cast<uint32_t>(geom.coded_width * geom.coded_height);
-    const uint32_t cBytes = yBytes / 4u;
-    out.y_offset = 0;
-    out.u_offset = yBytes;
-    out.v_offset = yBytes + cBytes;
+    if (format == DdrFrameFormat::Yuv420p) {
+        const uint32_t yBytes = static_cast<uint32_t>(geom.coded_width * geom.coded_height);
+        const uint32_t cBytes = yBytes / 4u;
+        out.y_offset = 0;
+        out.u_offset = yBytes;
+        out.v_offset = yBytes + cBytes;
+    }
     out.bank_stride = alignUpU32(static_cast<uint32_t>(frameBytes), strideAlign);
     out.doorbell_phys = physBase + out.bank_stride * 2u - 0x1000u;
     out.map_bytes = out.bank_stride * 2u;
@@ -233,7 +249,7 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
 inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
                                          uint32_t physBase = kDdrFramePhysBase,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
-                                         DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+                                         DdrFrameFormat format = DdrFrameFormat::Rgb565) {
     return makeDdrFrameLayout(makeDdrFrameGeometry(width, height), physBase, strideAlign, format);
 }
 
@@ -266,19 +282,7 @@ inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
 
 inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format) {
     return (static_cast<uint32_t>(bank & 1) << 31) |
-           ((ddrFrameFormatCode(format) & 0x3u) << 29) | (seq & kDdrFrameDoorbellSeqMask);
-}
-
-inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedFormat,
-                              uint32_t& seq, int& bank) {
-    if (lo != kDdrFrameDoorbellMagic)
-        return false;
-    const uint32_t format = (hi >> 29) & 0x3u;
-    if (format != ddrFrameFormatCode(expectedFormat))
-        return false;
-    bank = static_cast<int>((hi >> 31) & 0x1u);
-    seq = hi & kDdrFrameDoorbellSeqMask;
-    return true;
+           ((ddrFrameFormatCode(format) & 0x3u) << 29) | (seq & 0x1FFFFFFFu);
 }
 
 } // namespace misterplex

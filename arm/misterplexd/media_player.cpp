@@ -3,8 +3,9 @@
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
-#include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
+#include "libmisterplex/pixel_format.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -77,6 +78,38 @@ inline size_t annexBStartLen(const uint8_t* p, size_t n, size_t i) {
     if (i + 2 < n && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1)
         return 3;
     return 0;
+}
+
+// Nearest-neighbor scale RGB565 → fixed frame_store size (default 320×240).
+inline void scaleRgb565(const uint16_t* src, int sw, int sh, uint16_t* dst, int dw, int dh) {
+    if (sw == dw && sh == dh) {
+        std::memcpy(dst, src, static_cast<size_t>(dw) * static_cast<size_t>(dh) * sizeof(uint16_t));
+        return;
+    }
+    for (int y = 0; y < dh; ++y) {
+        const int sy = (sh > 0) ? (y * sh) / dh : 0;
+        for (int x = 0; x < dw; ++x) {
+            const int sx = (sw > 0) ? (x * sw) / dw : 0;
+            dst[y * dw + x] = src[sy * sw + sx];
+        }
+    }
+}
+
+// RGB565 host words → packed RGB24 for fb0 blit.
+inline void rgb565ToRgb24(const uint16_t* src, int w, int h, std::vector<uint8_t>& out) {
+    out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
+    for (int i = 0; i < w * h; ++i) {
+        uint8_t r = 0, g = 0, b = 0;
+        pixel::expandRgb565(src[i], r, g, b);
+        out[static_cast<size_t>(i) * 3 + 0] = r;
+        out[static_cast<size_t>(i) * 3 + 1] = g;
+        out[static_cast<size_t>(i) * 3 + 2] = b;
+    }
+}
+
+inline void packRgb24ToRgb565Le(const uint8_t* rgb, int w, int h, std::vector<uint8_t>& out) {
+    out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 2);
+    pixel::rgb24ToRgb565Le(rgb, out.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
 }
 
 // Local annex-B elementary H.264 (skip remux BSF when possible).
@@ -207,213 +240,6 @@ inline int64_t threadCpuMicros() {
     return static_cast<int64_t>(ts.tv_sec) * 1000000 + static_cast<int64_t>(ts.tv_nsec) / 1000;
 }
 
-bool ffmpegHasAudioStream(const std::string& ffmpeg, const std::string& url,
-                          const std::string& headers, int64_t startMs) {
-    std::vector<std::string> args;
-    args.push_back(ffmpeg);
-    args.push_back("-hide_banner");
-    args.push_back("-loglevel");
-    args.push_back("error");
-    args.push_back("-nostdin");
-    if (startMs > 0 && !urlHasUniversalOffset(url)) {
-        char ss[32];
-        std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
-        args.push_back("-ss");
-        args.push_back(ss);
-    }
-    if (!headers.empty()) {
-        std::string h = headers;
-        if (h.size() < 2 || h[h.size() - 1] != '\n')
-            h += "\r\n";
-        args.push_back("-headers");
-        args.push_back(h);
-        args.push_back("-reconnect");
-        args.push_back("1");
-        args.push_back("-reconnect_streamed");
-        args.push_back("1");
-        args.push_back("-reconnect_delay_max");
-        args.push_back("5");
-    }
-    args.push_back("-i");
-    args.push_back(url);
-    args.push_back("-map");
-    args.push_back("0:a:0");
-    args.push_back("-frames:a");
-    args.push_back("1");
-    args.push_back("-f");
-    args.push_back("null");
-    args.push_back("-");
-
-    pid_t pid = fork();
-    if (pid < 0)
-        return true; // fail open: do not suppress product audio just because probe fork failed
-    if (pid == 0) {
-        int devnull = ::open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            if (devnull != STDOUT_FILENO && devnull != STDERR_FILENO)
-                ::close(devnull);
-        }
-        for (int fd = 3; fd < 256; ++fd)
-            ::close(fd);
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 1);
-        for (const auto& s : args)
-            argv.push_back(const_cast<char*>(s.c_str()));
-        argv.push_back(nullptr);
-        execv(args[0].c_str(), argv.data());
-        _exit(127);
-    }
-    int st = 0;
-    while (waitpid(pid, &st, 0) < 0) {
-        if (errno == EINTR)
-            continue;
-        return true;
-    }
-    return WIFEXITED(st) && WEXITSTATUS(st) == 0;
-}
-class FpgaBitstreamProducer final : public h264stream::IBitstreamProducer {
-public:
-    explicit FpgaBitstreamProducer(FpgaSpi& fpga) : fpga_(fpga) {}
-
-    h264stream::ControlResult begin(uint64_t session_id) override {
-        if (active_)
-            return h264stream::ControlResult::ActiveSession;
-        if (!fpga_.ok() || !fpga_.beginBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
-        session_id_ = session_id;
-        producer_seq_ = 0;
-        consumer_seq_ = 0;
-        bytes_accepted_ = 0;
-        nal_accepted_ = 0;
-        desync_count_ = 0;
-        last_bad_seq_ = 0;
-        active_ = true;
-        paused_ = false;
-        return h264stream::ControlResult::Ok;
-    }
-
-    h264stream::PushResult pushNal(const h264stream::NalView& nal) override {
-        if (!active_ || nal.session_id != session_id_ || !nal.annexb || nal.len == 0)
-            return h264stream::PushResult::Fatal;
-        if (nal.seq != producer_seq_) {
-            ++desync_count_;
-            last_bad_seq_ = nal.seq;
-            return h264stream::PushResult::Desync;
-        }
-        // Contract: copy-on-push. The caller may reuse the demux accumulator as
-        // soon as this function returns, even if a future transport is DMA-backed.
-        std::vector<uint8_t> copy(nal.annexb, nal.annexb + nal.len);
-        FpgaSpi::BitstreamNal fpgaNal;
-        fpgaNal.session_id = nal.session_id;
-        fpgaNal.seq = nal.seq;
-        fpgaNal.nal_type = nal.nal_type;
-        fpgaNal.annexb = copy.data();
-        fpgaNal.len = copy.size();
-        const auto r = fpga_.pushBitstreamNal(fpgaNal, 0);
-        if (r == FpgaSpi::BitstreamPushResult::Full)
-            return h264stream::PushResult::Full;
-        if (r == FpgaSpi::BitstreamPushResult::Desync) {
-            syncStatus();
-            return h264stream::PushResult::Desync;
-        }
-        if (r != FpgaSpi::BitstreamPushResult::Ok)
-            return h264stream::PushResult::Fatal;
-        ++producer_seq_;
-        bytes_accepted_ += copy.size();
-        ++nal_accepted_;
-        return h264stream::PushResult::Ok;
-    }
-
-    h264stream::ControlResult flush(uint64_t session_id) override {
-        if (!active_ || session_id != session_id_)
-            return h264stream::ControlResult::NoSession;
-        if (!fpga_.flushBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
-        consumer_seq_ = producer_seq_;
-        return h264stream::ControlResult::Ok;
-    }
-
-    h264stream::ControlResult end(uint64_t session_id) override {
-        if (!active_ || session_id != session_id_)
-            return h264stream::ControlResult::NoSession;
-        if (!fpga_.endBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
-        active_ = false;
-        paused_ = false;
-        return h264stream::ControlResult::Ok;
-    }
-
-    h264stream::ControlResult pause(uint64_t session_id) override {
-        if (!active_ || session_id != session_id_)
-            return h264stream::ControlResult::NoSession;
-        if (!fpga_.pauseBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
-        paused_ = true;
-        return h264stream::ControlResult::Ok;
-    }
-
-    h264stream::ControlResult resume(uint64_t session_id) override {
-        if (!active_ || session_id != session_id_)
-            return h264stream::ControlResult::NoSession;
-        if (!fpga_.resumeBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
-        paused_ = false;
-        return h264stream::ControlResult::Ok;
-    }
-
-    h264stream::Telemetry status() const override {
-        h264stream::Telemetry t;
-        t.session_id = session_id_;
-        t.bytes_accepted = bytes_accepted_;
-        t.nal_accepted = nal_accepted_;
-        t.producer_seq = producer_seq_;
-        t.consumer_seq = consumer_seq_;
-        t.desync_count = desync_count_;
-        t.last_bad_seq = last_bad_seq_;
-        t.active = active_;
-        t.paused = paused_;
-        FpgaSpi::BitstreamStatus s;
-        if (fpga_.readBitstreamStatus(s)) {
-            t.session_id = s.session_id ? s.session_id : t.session_id;
-            t.ring_level_bytes = s.ring_level;
-            t.ring_capacity_bytes = s.ring_capacity;
-            t.consumer_seq = s.consumer_seq;
-            t.underrun_count = s.underrun_count;
-            t.overrun_count = s.overrun_count;
-            t.desync_count = s.desync_count;
-            t.last_bad_seq = s.last_bad_seq;
-            t.active = s.active;
-            t.paused = s.paused;
-        }
-        return t;
-    }
-
-private:
-    void syncStatus() {
-        FpgaSpi::BitstreamStatus s;
-        if (!fpga_.readBitstreamStatus(s))
-            return;
-        consumer_seq_ = s.consumer_seq;
-        desync_count_ = s.desync_count;
-        last_bad_seq_ = s.last_bad_seq;
-        paused_ = s.paused;
-        active_ = s.active;
-    }
-
-    FpgaSpi& fpga_;
-    uint64_t session_id_ = 0;
-    uint32_t producer_seq_ = 0;
-    uint32_t consumer_seq_ = 0;
-    uint64_t bytes_accepted_ = 0;
-    uint64_t nal_accepted_ = 0;
-    uint64_t desync_count_ = 0;
-    uint32_t last_bad_seq_ = 0;
-    bool active_ = false;
-    bool paused_ = false;
-};
-
 } // namespace
 
 void MediaPlayer::log(const std::string& s) const {
@@ -421,11 +247,6 @@ void MediaPlayer::log(const std::string& s) const {
         log_(s);
     else
         std::fprintf(stderr, "%s\n", s.c_str());
-}
-
-PlaybackSummary MediaPlayer::lastPlaybackSummary() const {
-    std::lock_guard<std::mutex> lock(summaryMu_);
-    return lastSummary_;
 }
 
 void MediaPlayer::setContentFpsRational(int num, int den) {
@@ -594,27 +415,20 @@ void MediaPlayer::paintIdle() {
     renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
 
     std::lock_guard<std::mutex> lk(presentMu_);
-    if (fb_.ok() && !fb_.blitRgb24(buf.data(), w, h))
-        log("media: idle fb0 blit failed");
-    // F1 latches the last frame written, so the frame store must be repainted too.
-    // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
-    // instead of ringing the doorbell with an RGB payload.
+    if (fb_.ok())
+        fb_.blitRgb24(buf.data(), w, h);
+    // F1 latches the last frame written, so the frame store must be repainted too —
+    // clearing only fb0 leaves the stale frame visible when PRESENT=fpga. Use the
+    // same DDR-bulk-then-SPI ladder as the present loop; the SPI path alone does
+    // not reliably land a frame on a core that has been running the DDR path.
     if (fpga_.ok()) {
         bool ok = false;
         if (useDdrF1_) {
-            const DdrFrameGeometry g = plex480pDdrFrameGeometry();
-            const DdrFrameLayout layout =
-                makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
-                                   DdrFrameFormat::Yuv420p);
-            std::vector<uint8_t> yuv(layout.frame_bytes);
-            if (renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
-                                  idlePhase_.load())) {
-                ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
-            }
+            ok = fpga_.sendRgb24FrameDdr(buf.data(), w, h, ddrBank_);
             ddrBank_ ^= 1;
         }
         if (!ok)
-            log("media: idle paint refused legacy RGB F1 path; frame store requires DDR YUV420p");
+            ok = fpga_.sendRgb24Frame(buf.data(), w, h, /*F1*/ 1);
         if (!ok) {
             if (!idleWarned_.exchange(true))
                 log("media: idle paint failed (will retry): " + fpga_.lastError());
@@ -710,11 +524,6 @@ bool MediaPlayer::wantSkipRgbVideo() const {
 }
 
 bool MediaPlayer::initPresent() {
-    if (presentMode_ == "none") {
-        log("media: PRESENT=none decode-only path (test/lab; no fb0 or FPGA writes)");
-        return true;
-    }
-
     bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both" || presentMode_.empty());
     bool wantFpga = (presentMode_ == "fpga" || presentMode_ == "both");
 
@@ -731,9 +540,9 @@ bool MediaPlayer::initPresent() {
     }
     if (wantFpga) {
         if (fpga_.open()) {
-            useDdrF1_ = true;
+            useDdrF1_ = true; // try DDR bulk first; falls back to SPI on first fail
             ddrBank_ = 0;
-            log("media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)");
+            log("media: FPGA frame path OK (PRESENT=fpga → DDR bulk 3.1b, SPI F1 fallback)");
             // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
             // cannot steal cast frames. On a v3 core those same bits ARE the A/V
             // offset menu item, so zeroing them would silently reset the user's
@@ -768,15 +577,12 @@ bool MediaPlayer::initPresent() {
 }
 
 void MediaPlayer::signalChildren(int sig) {
-    // Pause/resume RGB/audio FFmpeg. STREAM demux stays alive on pause.
+    // Pause/resume both RGB/audio FFmpeg and STREAM demux process groups.
     pid_t p = childPid_.load();
     if (p > 0)
         kill(-p, sig);
     pid_t sp = streamPid_.load();
-    // Do not SIGSTOP the H.264 source demux on pause: PMS can tear down an HTTP
-    // transcode session that stops being consumed. streamPump keeps reading and
-    // drops NALs while paused; the FPGA freezes on the last decoded frame.
-    if (sp > 0 && sig != SIGSTOP && sig != SIGCONT)
+    if (sp > 0)
         kill(-sp, sig);
 }
 
@@ -963,10 +769,6 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         reconFrames_.store(0);
         reconPresentOk_.store(false);
         cabacSkip_.store(false);
-        {
-            std::lock_guard<std::mutex> lock(summaryMu_);
-            lastSummary_ = PlaybackSummary{};
-        }
         // Mark playing before thr_ starts so callers (e.g. lab --play-file) that
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
@@ -1135,8 +937,8 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
 }
 
 void MediaPlayer::streamPump(int sfd) {
-    // Phase 3.3i/product: demux annex-B → host I-slice recon → YUV420 F1 (+ optional fb0).
-    // Also feed the FPGA decoder through the continuous HPS-DDR bitstream ring.
+    // Phase 3.3i/product: demux annex-B → host I-slice recon → RGB565 F1 (+ optional fb0).
+    // Also feed F3 for FPGA decode_stub / residual probes (diagnostic).
     // Robust multi-IDR: retain last SPS/PPS, recon every I/IDR, sticky CABAC skip.
     const bool wantF3 = fpga_.ok();
     const bool wantF1 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
@@ -1145,74 +947,30 @@ void MediaPlayer::streamPump(int sfd) {
     const bool reconToFb =
         fb_.ok() && (presentMode_ == "fb0" || presentMode_.empty());
 
-    auto formatDdrBitstreamStatus = [](const FpgaSpi::BitstreamStatus& st) {
-        return std::string("ddr_status session=") + std::to_string(st.session_id) +
-               " active=" + (st.active ? "1" : "0") +
-               " paused=" + (st.paused ? "1" : "0") +
-               " ring=" + std::to_string(st.ring_level) + "/" +
-               std::to_string(st.ring_capacity) +
-               " producer_bytes=" + std::to_string(st.producer_count) +
-               " consumer_bytes=" + std::to_string(st.consumer_count) +
-               " consumer_seq=" + std::to_string(st.consumer_seq) +
-               " underrun=" + std::to_string(st.underrun_count) +
-               " overrun=" + std::to_string(st.overrun_count) +
-               " desync=" + std::to_string(st.desync_count) +
-               " last_bad_seq=" + std::to_string(st.last_bad_seq) +
-               " flags=u" + (st.underrun ? "1" : "0") +
-               "o" + (st.overrun ? "1" : "0") +
-               "d" + (st.desync ? "1" : "0") +
-               "f" + (st.fatal ? "1" : "0");
-    };
-    auto readDdrBitstreamStatusString = [&]() {
-        FpgaSpi::BitstreamStatus st;
-        if (!fpga_.readBitstreamStatus(st))
-            return std::string("ddr_status=unreadable err=") + fpga_.lastError();
-        return formatDdrBitstreamStatus(st);
-    };
-
+    if (wantF3)
+        fpga_.flushBitstreamFifo();
     streamActive_.store(true);
     reconFrames_.store(0);
     reconPresentOk_.store(false);
     // cabacSkip_ is session-level (cleared in play()); do not clear here on mid-session re-entry.
     log(std::string("media: STREAM=1 host I-slice recon") +
-        (wantF1 ? " →F1" : "") + (wantF3 ? " +DDR-bitstream" : "") +
-        (reconToFb ? " +fb0" : ""));
+        (wantF1 ? " →F1" : "") + (wantF3 ? " +F3" : "") + (reconToFb ? " +fb0" : ""));
 
+    constexpr size_t kF3Chunk = 8192;
     // Bound NAL scan buffer (SPS+PPS+IDR can be large at 720p; cap for dual-A9)
     constexpr size_t kMaxAcc = 2 * 1024 * 1024;
     std::vector<uint8_t> acc;
     acc.reserve(64 * 1024);
+    // Unsent F3 tail offset into acc (bytes [f3Off, acc.size()) not yet pushed)
+    size_t f3Off = 0;
     // Last complete NAL start (start-code index) still in acc; incomplete NAL retained
     size_t parseFrom = 0;
 
-    FpgaBitstreamProducer f3Producer(fpga_);
-    h264stream::DispatchConfig f3Cfg;
-    f3Cfg.max_full_retries = 50;    // Full is transient: retry for ~100 ms.
-    f3Cfg.full_retry_sleep_ms = 2;
-    h264stream::NalDispatcher f3Dispatch(f3Producer, f3Cfg);
-    bool f3Active = false;
-    bool f3Fatal = false;
-    bool f3Paused = false;
-    static std::atomic<uint64_t> nextStreamSession{1};
-    const uint64_t streamSession = nextStreamSession.fetch_add(1);
-    if (wantF3) {
-        const auto br = f3Dispatch.begin(streamSession);
-        if (br == h264stream::ControlResult::Ok) {
-            f3Active = true;
-            log("media: F3 NAL producer begin session=" + std::to_string(streamSession) +
-                " " + readDdrBitstreamStatusString());
-        } else {
-            f3Fatal = true;
-            log("media: F3 NAL producer begin failed " +
-                std::string(h264stream::toString(br)) + " — F3 disabled");
-        }
-    }
-    const auto streamWall0 = std::chrono::steady_clock::now();
-    const int64_t streamCpu0 = threadCpuMicros();
-
     std::vector<uint8_t> spsNal; // includes start code
     std::vector<uint8_t> ppsNal;
-    std::vector<uint8_t> yuv420p;
+    std::vector<uint16_t> rgbNative;
+    std::vector<uint16_t> rgb320(320 * 240);
+    std::vector<uint8_t> rgb565le;
     char buf[4096];
     size_t f3Total = 0;
     size_t f3Pushes = 0;
@@ -1221,113 +979,78 @@ void MediaPlayer::streamPump(int sfd) {
     size_t idrSeen = 0;
     size_t iSliceSeen = 0;
     bool cabacLogged = cabacSkip_.load();
-    // Throttle sparse host recon F1 publishing; product rawvideo owns continuous playback.
+    // Throttle F1 SPI: ~100–150ms/frame; present every Nth successful recon
     constexpr size_t kReconPresentEvery = 1;
-    bool reconDdrMismatchLogged = false;
+    // Frame-store geometry (Plex core F1)
+    constexpr int kFsW = 320;
+    constexpr int kFsH = 240;
 
-    auto syncF3Pause = [&]() {
-        if (!f3Active || f3Fatal)
+    auto pushF3UpTo = [&](size_t end) {
+        if (!wantF3 || end <= f3Off)
             return;
-        const bool paused = paused_.load();
-        if (paused && !f3Paused) {
-            const auto r = f3Dispatch.pause();
-            if (r == h264stream::ControlResult::Ok) {
-                f3Paused = true;
-                log("media: F3 NAL producer pause session=" + std::to_string(streamSession) +
-                    " (HTTP demux kept alive; FPGA holds last frame)");
-            } else {
-                f3Fatal = true;
-                log("media: F3 NAL producer pause failed " +
-                    std::string(h264stream::toString(r)));
+        while (f3Off + kF3Chunk <= end && !stop_.load()) {
+            if (fpga_.sendBitstreamChunk(acc.data() + f3Off, kF3Chunk, /*F3*/ 3)) {
+                f3Total += kF3Chunk;
+                ++f3Pushes;
+                if ((f3Pushes % 64) == 0)
+                    log("media: F3 stream bytes=" + std::to_string(f3Total));
+            } else if ((f3Pushes % 16) == 0) {
+                log("media: F3 stream: " + fpga_.lastError());
             }
-        } else if (!paused && f3Paused) {
-            const auto r = f3Dispatch.resume();
-            if (r == h264stream::ControlResult::Ok) {
-                f3Paused = false;
-                log("media: F3 NAL producer resume session=" + std::to_string(streamSession) +
-                    " (SPS/PPS will replay before next VCL)");
-            } else {
-                f3Fatal = true;
-                log("media: F3 NAL producer resume failed " +
-                    std::string(h264stream::toString(r)));
-            }
+            f3Off += kF3Chunk;
         }
-    };
-
-    auto pushF3Nal = [&](const uint8_t* nalSc, size_t nalLen) {
-        if (!f3Active || f3Fatal || !wantF3)
-            return;
-        const uint64_t beforeNals = f3Dispatch.stats().nal_pushed;
-        const auto r = f3Dispatch.handleNal(nalSc, nalLen);
-        const auto& after = f3Dispatch.stats();
-        f3Total = static_cast<size_t>(after.bytes_pushed);
-        f3Pushes = static_cast<size_t>(after.nal_pushed);
-        if (r == h264stream::PushResult::Ok) {
-            if (after.nal_pushed != beforeNals && (after.nal_pushed % 64) == 0)
-                log("media: F3 NAL stream nals=" + std::to_string(after.nal_pushed) +
-                    " bytes=" + std::to_string(after.bytes_pushed));
-            return;
-        }
-        if (r == h264stream::PushResult::Full) {
-            f3Fatal = true;
-            log("ERROR media: F3 NAL producer Full persisted after bounded retry; resetting session " +
-                readDdrBitstreamStatusString());
-        } else {
-            f3Fatal = true;
-            log("ERROR media: F3 NAL producer " + std::string(h264stream::toString(r)) +
-                " — resetting session " + readDdrBitstreamStatusString());
-        }
-        if (f3Active)
-            f3Dispatch.end();
     };
 
     auto presentRecon = [&](const recon::ReconResult& rec) {
-        if (rec.y.empty() || rec.u.empty() || rec.v.empty() || rec.width <= 0 ||
-            rec.height <= 0 || (rec.width & 1) || (rec.height & 1))
+        if (rec.y.empty() || rec.width <= 0 || rec.height <= 0)
             return false;
-        const size_t yBytes = static_cast<size_t>(rec.width) * static_cast<size_t>(rec.height);
-        const size_t cBytes = yBytes / 4u;
-        if (rec.y.size() < yBytes || rec.u.size() < cBytes || rec.v.size() < cBytes)
-            return false;
-        auto ensureYuv420p = [&]() -> const uint8_t* {
-            if (yuv420p.empty()) {
-                yuv420p.resize(yBytes + 2u * cBytes);
-                std::memcpy(yuv420p.data(), rec.y.data(), yBytes);
-                std::memcpy(yuv420p.data() + yBytes, rec.u.data(), cBytes);
-                std::memcpy(yuv420p.data() + yBytes + cBytes, rec.v.data(), cBytes);
+        recon::yuv420ToRgb565(rec.y.data(), rec.u.data(), rec.v.data(), rec.width, rec.height,
+                              rgbNative);
+        scaleRgb565(rgbNative.data(), rec.width, rec.height, rgb320.data(), kFsW, kFsH);
+        auto ensureRgb565Le = [&]() -> const uint8_t* {
+            if (rgb565le.empty()) {
+                rgb565le.resize(static_cast<size_t>(kFsW) * kFsH * 2);
+                for (int i = 0; i < kFsW * kFsH; ++i)
+                    pixel::storeLe16(rgb565le.data() + static_cast<size_t>(i) * 2,
+                                     rgb320[static_cast<size_t>(i)]);
             }
-            return yuv420p.data();
+            return rgb565le.data();
         };
-        yuv420p.clear();
+        rgb565le.clear();
         bool any = false;
         if (wantF1) {
-            // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
+            // Prefer DDR bulk (3.1b); fall back to SPI F1 if RBF lacks path.
             bool ok = false;
             if (useDdrF1_) {
-                const DdrFrameGeometry g = plex480pDdrFrameGeometry();
-                if (rec.width == g.coded_width && rec.height == g.coded_height) {
-                    ensureYuv420p();
-                    clearYuv420pCropPadding(yuv420p.data(), g);
-                    ok = fpga_.sendYuv420pFrameDdr(yuv420p.data(), yuv420p.size(), g, ddrBank_);
-                    ddrBank_ ^= 1;
-                    if (!ok) {
-                        log("media: recon YUV420 DDR F1 unavailable: " + fpga_.lastError());
-                    } else if ((reconOk % 30) == 0) {
-                        log("media: recon F1 via YUV420 DDR " +
+                ensureRgb565Le();
+                if (fpga_.setDdrFrameSize(kFsW, kFsH))
+                    ok = fpga_.sendRgb565FrameDdr(rgb565le.data(), rgb565le.size(), ddrBank_);
+                ddrBank_ ^= 1;
+                if (!ok) {
+                    useDdrF1_ = false;
+                    log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                } else if ((reconOk % 30) == 0) {
+                    log("media: recon F1 via DDR " +
+                        std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                }
+            }
+            if (!ok) {
+                // SPI path: sendFileTx clears stale err_ from DDR probe.
+                if (fpga_.sendRgb565Frame(rgb320.data(), kFsW, kFsH, /*F1*/ 1)) {
+                    ok = true;
+                    if (reconOk == 1 || (reconOk % 8) == 0)
+                        log("media: recon F1 via SPI " +
                             std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
-                    }
-                } else if (!reconDdrMismatchLogged) {
-                    reconDdrMismatchLogged = true;
-                    log("media: recon F1 skipped: YUV DDR frame-store requires coded 624x480, got " +
-                        std::to_string(rec.width) + "x" + std::to_string(rec.height));
+                } else {
+                    log("media: recon F1 SPI: " + fpga_.lastError());
                 }
             }
             if (ok)
                 any = true;
         }
         if (reconToFb && fb_.ok()) {
-            ensureYuv420p();
-            if (fb_.blitYuv420p(yuv420p.data(), rec.width, rec.height))
+            ensureRgb565Le();
+            if (fb_.blitRgb565Le(rgb565le.data(), kFsW, kFsH))
                 any = true;
         }
         if (any) {
@@ -1385,7 +1108,7 @@ void MediaPlayer::streamPump(int sfd) {
                 cabacLogged = true;
                 log("media: recon CABAC/High — PPS entropy_coding_mode=1; host CAVLC skip "
                     "(sticky). Stream is High/CABAC; MiSTerPlex.xml profile may be missing "
-                    "or inactive on PMS. Use STREAM_SKIP_RGB=0/PRESENT=both for fb0 fallback.");
+                    "or inactive on PMS. FFmpeg RGB F1 fallback if enabled.");
             }
         } else {
             // CAVLC PPS: allow I-slice recon (seek/segment may flip profile).
@@ -1412,7 +1135,7 @@ void MediaPlayer::streamPump(int sfd) {
         if (cabacSkip_.load()) {
             if (ntype == 5 && (idrSeen % 16) == 1)
                 log("media: recon skip CABAC/High (sticky) idr=" + std::to_string(idrSeen) +
-                    " — legacy RGB F1 path is disabled; use PRESENT=both for fb0 fallback");
+                    " — FFmpeg RGB F1 fallback if enabled");
             return;
         }
 
@@ -1432,7 +1155,7 @@ void MediaPlayer::streamPump(int sfd) {
                     cabacLogged = true;
                     log("media: recon CABAC/High — host CAVLC cannot decode this stream; "
                         "stream is High/CABAC; MiSTerPlex.xml profile may be missing or "
-                        "inactive on PMS. Legacy RGB F1 path is disabled; STREAM still feeds F3.");
+                        "inactive on PMS. FFmpeg RGB F1 fallback (STREAM still feeds F3).");
                 }
                 return;
             }
@@ -1499,7 +1222,6 @@ void MediaPlayer::streamPump(int sfd) {
             const size_t nalLen = j - i;
             if (i + sc < j) {
                 const uint8_t ntype = acc[i + sc] & 0x1f;
-                pushF3Nal(acc.data() + i, nalLen);
                 if (ntype == 7) {
                     // SPS alone does not change entropy mode — keep sticky CABAC.
                     spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
@@ -1508,7 +1230,7 @@ void MediaPlayer::streamPump(int sfd) {
                     ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
                     applyPpsEntropy(acc.data() + i, nalLen);
-                } else if ((ntype == 5 || ntype == 1) && !paused_.load()) {
+                } else if (ntype == 5 || ntype == 1) {
                     tryReconNal(acc.data() + i, nalLen, ntype);
                 }
             }
@@ -1518,27 +1240,32 @@ void MediaPlayer::streamPump(int sfd) {
     };
 
     auto compactAcc = [&]() {
-        // Drop fully parsed bytes; keep the trailing incomplete NAL.
-        size_t drop = parseFrom;
+        // Drop bytes already pushed to F3 and fully parsed; keep incomplete NAL + unsent F3.
+        size_t drop = std::min(f3Off, parseFrom);
         if (drop == 0)
             return;
         // Never drop past incomplete NAL start
         drop = std::min(drop, parseFrom);
         if (drop > 0 && drop <= acc.size()) {
             acc.erase(acc.begin(), acc.begin() + static_cast<std::ptrdiff_t>(drop));
+            f3Off -= drop;
             parseFrom -= drop;
         }
         // Hard cap
         if (acc.size() > kMaxAcc) {
             log("media: STREAM acc overflow — reset NAL state");
             acc.clear();
+            f3Off = 0;
             parseFrom = 0;
             // Keep last SPS/PPS so multi-IDR can recover after overflow gap
         }
     };
 
     while (!stop_.load()) {
-        syncF3Pause();
+        if (paused_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
         ssize_t n = ::read(sfd, buf, sizeof(buf));
         if (n < 0) {
             if (errno == EINTR)
@@ -1549,6 +1276,8 @@ void MediaPlayer::streamPump(int sfd) {
             break; // demux EOF or killed (seek/stop closes pipe)
         acc.insert(acc.end(), buf, buf + n);
         consumeCompleteNals();
+        // Feed F3 up through fully parsed bytes (safe: complete NALs only)
+        pushF3UpTo(parseFrom);
         compactAcc();
     }
 
@@ -1559,7 +1288,6 @@ void MediaPlayer::streamPump(int sfd) {
         if (sc && parseFrom + sc < acc.size()) {
             const size_t nalLen = acc.size() - parseFrom;
             const uint8_t ntype = acc[parseFrom + sc] & 0x1f;
-            pushF3Nal(acc.data() + parseFrom, nalLen);
             if (ntype == 7) {
                 spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
                               acc.end());
@@ -1567,7 +1295,7 @@ void MediaPlayer::streamPump(int sfd) {
                 ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
                               acc.end());
                 applyPpsEntropy(acc.data() + parseFrom, nalLen);
-            } else if ((ntype == 5 || ntype == 1) && !paused_.load()) {
+            } else if (ntype == 5 || ntype == 1) {
                 tryReconNal(acc.data() + parseFrom, nalLen, ntype);
             }
             parseFrom = acc.size();
@@ -1577,56 +1305,17 @@ void MediaPlayer::streamPump(int sfd) {
     // Flush remaining complete NALs and F3 tail (only if not mid-stop)
     if (!stop_.load()) {
         consumeCompleteNals();
+        pushF3UpTo(parseFrom);
+        if (wantF3 && f3Off < acc.size()) {
+            size_t rem = acc.size() - f3Off;
+            if (rem && fpga_.sendBitstreamChunk(acc.data() + f3Off, rem, 3))
+                f3Total += rem;
+        }
     }
 
-    FpgaSpi::BitstreamStatus ddrBeforeEnd{};
-    const bool haveDdrBeforeEnd = fpga_.readBitstreamStatus(ddrBeforeEnd);
-    const std::string ddrStatusBeforeEnd = haveDdrBeforeEnd
-                                               ? formatDdrBitstreamStatus(ddrBeforeEnd)
-                                               : (std::string("ddr_status=unreadable err=") +
-                                                  fpga_.lastError());
-    h264stream::Telemetry f3StatusBeforeEnd = f3Producer.status();
-    if (f3Active) {
-        const auto endResult = f3Dispatch.end();
-        if (endResult != h264stream::ControlResult::Ok)
-            log("ERROR media: F3 NAL producer end failed " +
-                std::string(h264stream::toString(endResult)) + " " + ddrStatusBeforeEnd);
-    }
     ::close(sfd);
     streamActive_.store(false);
-    const auto streamWall1 = std::chrono::steady_clock::now();
-    const int64_t streamCpu1 = threadCpuMicros();
-    const int64_t streamWallMs =
-        std::chrono::duration_cast<std::chrono::milliseconds>(streamWall1 - streamWall0).count();
-    const int64_t streamCpuUs = std::max<int64_t>(0, streamCpu1 - streamCpu0);
-    const auto f3Stats = f3Dispatch.stats();
-    const auto f3Status = f3StatusBeforeEnd;
-    const bool effectivelyEmptyDelivery =
-        wantF3 && f3Status.bytes_accepted > 4 && haveDdrBeforeEnd &&
-        ddrBeforeEnd.consumer_count <= 4;
-    if (wantF3 && (f3Status.nal_accepted == 0 || f3Status.bytes_accepted <= 4 ||
-                   effectivelyEmptyDelivery || f3Fatal || f3Stats.full_escalations != 0 ||
-                   f3Stats.desync_or_fatal != 0)) {
-        log("ERROR media: DDR bitstream zero/effectively-empty delivery "
-            "accepted_nals=" + std::to_string(f3Status.nal_accepted) +
-            " accepted_bytes=" + std::to_string(f3Status.bytes_accepted) +
-            " dispatcher_seen=" + std::to_string(f3Stats.nal_seen) +
-            " full_retries=" + std::to_string(f3Stats.full_retries) +
-            " full_escalations=" + std::to_string(f3Stats.full_escalations) +
-            " desync_or_fatal=" + std::to_string(f3Stats.desync_or_fatal) +
-            " effectively_empty=" + (effectivelyEmptyDelivery ? "1" : "0") +
-            " " + ddrStatusBeforeEnd);
-    }
     log("media: STREAM end f3_bytes=" + std::to_string(f3Total) +
-        " f3_nals=" + std::to_string(f3Status.nal_accepted) +
-        " f3_full_retries=" + std::to_string(f3Stats.full_retries) +
-        " f3_full_escalations=" + std::to_string(f3Stats.full_escalations) +
-        " f3_dropped_paused=" + std::to_string(f3Stats.nal_dropped_paused) +
-        " f3_desync=" + std::to_string(f3Status.desync_count) +
-        " f3_last_bad_seq=" + std::to_string(f3Status.last_bad_seq) +
-        " " + ddrStatusBeforeEnd +
-        " stream_wall_ms=" + std::to_string(streamWallMs) +
-        " stream_cpu_us=" + std::to_string(streamCpuUs) +
         " recon_ok=" + std::to_string(reconOk) + " recon_fail=" + std::to_string(reconFail) +
         " idr=" + std::to_string(idrSeen) + " i_slices=" + std::to_string(iSliceSeen) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
@@ -1925,12 +1614,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
     // Match audioPump: F2 only when PRESENT=fpga and MrAudio unavailable.
     const bool wantF2 = fpga_.ok() && presentMode_ == "fpga" && !wantMr;
-    bool wantAudio = audioEnabled_ && (wantMr || wantF2);
-    if (wantAudio && localFile && !ffmpegHasAudioStream(ffmpeg_, url, headers, startMs)) {
-        wantAudio = false;
-        log("media: audio disabled for session: no audio stream detected; avoiding empty "
-            "audio output abort");
-    }
+    const bool wantAudio = audioEnabled_ && (wantMr || wantF2);
 
     // Product path: STREAM + PRESENT=fpga may skip heavy RGB (keep audio + demux).
     // STREAM=0 and PRESENT=both/fb0 always keep the proven FFmpeg RGB path.
@@ -1944,7 +1628,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             // Make preferDirect / skip-RGB product path inspectable in logs.
             log("media: STREAM keep FFmpeg RGB (PRESENT=" + presentMode_ +
                 " STREAM_SKIP_RGB=" + streamSkipRgb_ +
-                (presentMode_ == "fpga" ? " — RGB retained only for decode/audio fallback)"
+                (presentMode_ == "fpga" ? " — RGB forced on for CABAC/fallback)"
                                         : " — continuous fb0 needs RGB)"));
         }
     }
@@ -1980,11 +1664,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     auto lastLog = t0;
     size_t totalBytes = 0;
 
-    bool usedRawVideo = false;
-    bool videoEof = false;
-    bool shortRead = false;
-    size_t shortReadGot = 0;
-    size_t shortReadWant = 0;
+    bool usedRgb = false;
 
     // A/V pacing state. The exact rational rate is load-bearing: pacing 23.976 fps
     // content at a hardcoded 24 leaks ~1 ms/s of video lead.
@@ -2077,7 +1757,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     lastCabacWarn = elapsed;
                     log("media: STREAM no-RGB + CABAC — stream is High/CABAC; MiSTerPlex.xml "
                         "profile may be missing or inactive on PMS. Set STREAM_SKIP_RGB=0 or "
-                        "PRESENT=both for fb0 fallback.");
+                        "PRESENT=both for FFmpeg RGB fallback.");
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -2088,7 +1768,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // STREAM=1 recon is ~1 fps (keyframe only) and is the wrong interactive cast path.
         const bool wantFpgaFrameStore =
             fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
-        const bool wantYuvDdr = wantFpgaFrameStore && ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
+        const bool wantYuvDdr = wantFpgaFrameStore && presentMode_ == "fpga" &&
+                                ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
         RawVideoFormat videoFmt = RawVideoFormat::Rgb24;
         if (wantYuvDdr) {
             videoFmt = RawVideoFormat::Yuv420p;
@@ -2105,10 +1786,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " display=" + std::to_string(rawDisplayW) + "x" +
                 std::to_string(rawDisplayH) +
                 " clock=wall-48k-audio+every-frame-present");
-        if (wantYuvDdr && presentMode_ == "both" && fb_.ok())
-            log("media: PRESENT=both uses yuv420p DDR frame-store path; fb0 blit converts the "
-                "same frame");
-        usedRawVideo = true;
+        usedRgb = true;
         presentCount_ = 0;
         audioBytes_.store(0);
         std::vector<std::string> args;
@@ -2286,6 +1964,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
         std::vector<uint8_t> frame(frameBytes);
+        std::vector<uint8_t> rgb565Frame;
         std::vector<uint8_t> fbOverlayBackup;
 
         struct PresentProfileAccum {
@@ -2315,10 +1994,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t ddrFlushUs = 0;
             int64_t ddrDoorbellUs = 0;
             int64_t ddrPostWaitUs = 0;
-            int64_t ddrBankReuseWaitUs = 0;
             int64_t ddrTotalUs = 0;
             int64_t ddrCpuUs = 0;
             int64_t ddrUnaccountedUs = 0;
+            int64_t spiFallbackUs = 0;
+            int64_t spiFallbackCpuUs = 0;
             int64_t drops = 0;
         } prof;
         const bool profilePresent = presentProfile_;
@@ -2369,13 +2049,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " ddr_flush_us_p=" + std::to_string(avgPresented(prof.ddrFlushUs)) +
                 " ddr_doorbell_us_p=" + std::to_string(avgPresented(prof.ddrDoorbellUs)) +
                 " ddr_post_wait_us_p=" + std::to_string(avgPresented(prof.ddrPostWaitUs)) +
-                " ddr_bank_reuse_wait_us_p=" +
-                    std::to_string(avgPresented(prof.ddrBankReuseWaitUs)) +
                 " ddr_accounted_us_p=" + std::to_string(avgPresented(ddrAccountedUs)) +
                 " ddr_unaccounted_us_p=" +
                     std::to_string(avgPresented(prof.ddrUnaccountedUs)) +
                 " ddr_total_us_p=" + std::to_string(avgPresented(prof.ddrTotalUs)) +
                 " ddr_cpu_us_p=" + std::to_string(avgPresented(prof.ddrCpuUs)) +
+                " spi_fallback_us_p=" + std::to_string(avgPresented(prof.spiFallbackUs)) +
+                " spi_fallback_cpu_us_p=" +
+                    std::to_string(avgPresented(prof.spiFallbackCpuUs)) +
                 " frame_bytes=" + std::to_string(frameBytes) +
                 " fmt=" + ffmpegPixFmt(videoFmt));
             prof = PresentProfileAccum{};
@@ -2393,8 +2074,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 fbOk = fb_.blitBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
-                fbOk = fb_.blitYuv420p(data, rawW, rawH);
-                break;
+                return;
             case RawVideoFormat::Rgb24:
             default:
                 fbOk = fb_.blitRgb24(data, rawW, rawH);
@@ -2489,6 +2169,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (!reconOwnsF1 && wantFpgaFrameStore) {
                 const uint8_t* txFrame = cleanFrame;
                 size_t txBytes = frameBytes;
+                if (videoFmt == RawVideoFormat::Rgb24) {
+                    if (profilePresent) {
+                        const auto pix0 = std::chrono::steady_clock::now();
+                        const int64_t pixCpu0 = threadCpuMicros();
+                        packRgb24ToRgb565Le(cleanFrame, rawW, rawH, rgb565Frame);
+                        const int64_t pixCpu1 = threadCpuMicros();
+                        const auto pix1 = std::chrono::steady_clock::now();
+                        prof.pixelUs += microsBetween(pix0, pix1);
+                        prof.pixelCpuUs += pixCpu1 - pixCpu0;
+                    } else {
+                        packRgb24ToRgb565Le(cleanFrame, rawW, rawH, rgb565Frame);
+                    }
+                    txFrame = rgb565Frame.data();
+                    txBytes = rgb565Frame.size();
+                }
 
                 // Serialise with the OSD poller / idle painter: FpgaSpi keeps
                 // transaction state, so overlapping ioctls corrupt each other.
@@ -2498,8 +2193,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
                     if (videoFmt == RawVideoFormat::Yuv420p) {
                         ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, ddrGeometry, ddrBank_);
-                    } else {
-                        ok = false;
+                    } else if (fpga_.setDdrFrameLayout(ddrGeometry, DdrFrameFormat::Rgb565)) {
+                        ok = fpga_.sendRgb565FrameDdr(txFrame, txBytes, ddrBank_);
                     }
                     if (profilePresent && ok) {
                         const int64_t ddrCpu1 = threadCpuMicros();
@@ -2511,19 +2206,32 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         prof.ddrFlushUs += dt.flush_us;
                         prof.ddrDoorbellUs += dt.doorbell_us;
                         prof.ddrPostWaitUs += dt.post_wait_us;
-                        prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
                         prof.ddrTotalUs += dt.total_us;
                         prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
                         if (dt.total_us > accounted)
                             prof.ddrUnaccountedUs += dt.total_us - accounted;
                     }
                     ddrBank_ ^= 1;
-                    if (!ok)
-                        log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
+                    if (!ok) {
+                        useDdrF1_ = false;
+                        if (videoFmt == RawVideoFormat::Yuv420p)
+                            log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
+                        else
+                            log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                    }
                 }
                 if (!ok && videoFmt != RawVideoFormat::Yuv420p) {
-                    log("media: non-YUV F1 frame refused before send; frame store requires DDR "
-                        "YUV420p");
+                    if (profilePresent) {
+                        const auto spi0 = std::chrono::steady_clock::now();
+                        const int64_t spiCpu0 = threadCpuMicros();
+                        ok = fpga_.sendRgb565Bytes(txFrame, txBytes, /*F1*/ 1);
+                        const int64_t spiCpu1 = threadCpuMicros();
+                        const auto spi1 = std::chrono::steady_clock::now();
+                        prof.spiFallbackUs += microsBetween(spi0, spi1);
+                        prof.spiFallbackCpuUs += spiCpu1 - spiCpu0;
+                    } else {
+                        ok = fpga_.sendRgb565Bytes(txFrame, txBytes, /*F1*/ 1);
+                    }
                 }
                 if (!ok) {
                     if (countPresent && (frameIndex % 30) == 0)
@@ -2534,7 +2242,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         ++prof.presented;
                     if ((presentCount_ % 48) == 0) {
                         log(std::string("media: fpga frame_tx ok via ") +
-                            "DDR" +
+                            (useDdrF1_ ? "DDR" : "SPI") +
                             " presents=" + std::to_string(presentCount_) +
                             " frames=" + std::to_string(frameIndex) +
                             " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
@@ -2570,6 +2278,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         bool pausedOverlayWasVisible = false;
         std::chrono::steady_clock::time_point pauseStarted{};
         size_t got = 0;
+        bool videoEof = false;
+
         while (!stop_.load()) {
             int64_t seekTo = seekReqMs_.exchange(-1);
             if (seekTo >= 0) {
@@ -2661,9 +2371,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (paused_.load())
                 continue;
             if (got < frameBytes) {
-                shortRead = true;
-                shortReadGot = got;
-                shortReadWant = frameBytes;
                 log("media: short read got=" + std::to_string(got) + "/" +
                     std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes) +
                     (videoEof ? " eof=1" : ""));
@@ -2819,51 +2526,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (streamThr_.joinable())
         streamThr_.join();
 
-    if (streamEnabled_ && frameIndex == 0) {
-        FpgaSpi::BitstreamStatus st;
-        if (fpga_.readBitstreamStatus(st)) {
-            log("ERROR media: frames=0 with STREAM=1; DDR bitstream telemetry "
-                "session=" + std::to_string(st.session_id) +
-                " active=" + (st.active ? "1" : "0") +
-                " paused=" + (st.paused ? "1" : "0") +
-                " ring=" + std::to_string(st.ring_level) + "/" +
-                std::to_string(st.ring_capacity) +
-                " producer_bytes=" + std::to_string(st.producer_count) +
-                " consumer_bytes=" + std::to_string(st.consumer_count) +
-                " consumer_seq=" + std::to_string(st.consumer_seq) +
-                " underrun=" + std::to_string(st.underrun_count) +
-                " overrun=" + std::to_string(st.overrun_count) +
-                " desync=" + std::to_string(st.desync_count) +
-                " last_bad_seq=" + std::to_string(st.last_bad_seq) +
-                " flags=u" + (st.underrun ? "1" : "0") +
-                "o" + (st.overrun ? "1" : "0") +
-                "d" + (st.desync ? "1" : "0") +
-                "f" + (st.fatal ? "1" : "0"));
-        } else {
-            log("ERROR media: frames=0 with STREAM=1; DDR bitstream telemetry unreadable: " +
-                fpga_.lastError());
-        }
-    }
-
     playing_.store(false);
-    {
-        std::lock_guard<std::mutex> lock(summaryMu_);
-        lastSummary_.rawFrames = frameIndex;
-        lastSummary_.presentedFrames = presentCount_;
-        lastSummary_.reconFrames = reconFrames_.load();
-        lastSummary_.totalBytes = static_cast<int64_t>(totalBytes);
-        lastSummary_.usedRawVideo = usedRawVideo;
-        lastSummary_.streamEnabled = streamEnabled_;
-        lastSummary_.skipRgb = skipRgb;
-        lastSummary_.shortRead = shortRead;
-        lastSummary_.videoEof = videoEof;
-        lastSummary_.shortReadGot = shortReadGot;
-        lastSummary_.shortReadWant = shortReadWant;
-    }
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
-        const bool hadContent = usedRawVideo ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
-                                                                   positionMs_.load() > startMs + 500);
+        const bool hadContent = usedRgb ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
+                                                              positionMs_.load() > startMs + 500);
         if (hadContent)
             onProgress_("ended", positionMs_.load(), durationMs);
         else
@@ -2878,7 +2545,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
-        " rawvideo=" + (usedRawVideo ? "on" : "off") +
+        " rgb=" + (usedRgb ? "on" : "off") +
         " present=" + presentMode_ +
         " skip_rgb=" + (skipRgb ? "1" : "0"));
 }

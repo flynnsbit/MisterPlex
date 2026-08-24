@@ -3,7 +3,6 @@
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
-#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <csignal>
@@ -35,7 +34,6 @@ constexpr uint8_t FIO_FILE_INDEX = 0x55;
 constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
 constexpr uint8_t UIO_GET_STATUS = 0x29;
 constexpr uint8_t UIO_GET_STRING = 0x14;
-constexpr int kDdrBankReuseMinUs = 40000;
 
 // Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
 // share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
@@ -419,7 +417,6 @@ bool FpgaSpi::open() {
 
 void FpgaSpi::close() {
     releaseDdrMap();
-    releaseBitstreamDdrMap();
     if (map_) {
         munmap((void*)map_, kMapSize);
         map_ = nullptr;
@@ -430,203 +427,6 @@ void FpgaSpi::close() {
     }
     ddrKickMode_ = 0;
     doorbellSeq_ = 0;
-}
-
-bool FpgaSpi::ensureBitstreamDdrMap() {
-    namespace ring = ddr_bitstream_ring;
-    if (bitstreamMap_ && bitstreamMemFd_ >= 0)
-        return true;
-    releaseBitstreamDdrMap();
-    bitstreamMapLen_ = ring::kRingBytes + 0x1000u;
-    bitstreamMemFd_ = ::open("/dev/mem", O_RDWR | O_CLOEXEC | O_SYNC);
-    if (bitstreamMemFd_ < 0) {
-        setErr("ensureBitstreamDdrMap: open /dev/mem failed");
-        return false;
-    }
-    void* p = mmap(nullptr, bitstreamMapLen_, PROT_READ | PROT_WRITE, MAP_SHARED,
-                   bitstreamMemFd_, static_cast<off_t>(ring::kDataPhys));
-    if (p == MAP_FAILED) {
-        setErr("ensureBitstreamDdrMap: mmap bitstream ring failed");
-        ::close(bitstreamMemFd_);
-        bitstreamMemFd_ = -1;
-        bitstreamMapLen_ = 0;
-        return false;
-    }
-    bitstreamMap_ = static_cast<uint8_t*>(p);
-    return true;
-}
-
-void FpgaSpi::releaseBitstreamDdrMap() {
-    if (bitstreamMap_) {
-        munmap(bitstreamMap_, bitstreamMapLen_);
-        bitstreamMap_ = nullptr;
-        bitstreamMapLen_ = 0;
-    }
-    if (bitstreamMemFd_ >= 0) {
-        ::close(bitstreamMemFd_);
-        bitstreamMemFd_ = -1;
-    }
-    bitstreamWriteCount_ = 0;
-    bitstreamLegacySeq_ = 0;
-    bitstreamLegacyActive_ = false;
-    bitstreamResetEpoch_ = false;
-}
-
-bool FpgaSpi::readBitstreamFpgaCount(uint32_t& readCount) {
-    namespace ring = ddr_bitstream_ring;
-    if (!ensureBitstreamDdrMap())
-        return false;
-    const size_t off = ring::kReadPhys - ring::kDataPhys;
-    volatile uint64_t* p = reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
-    const uint64_t raw = *p;
-    if (static_cast<uint32_t>(raw) != ring::kReadMagic)
-        return false;
-    readCount = static_cast<uint32_t>(raw >> 32);
-    return true;
-}
-
-bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
-    namespace ring = ddr_bitstream_ring;
-    status = BitstreamStatus{};
-    if (!ensureBitstreamDdrMap())
-        return false;
-    auto read64 = [&](uint32_t phys) -> uint64_t {
-        const size_t off = phys - ring::kDataPhys;
-        volatile uint64_t* p = reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
-        return *p;
-    };
-    const uint64_t readRaw = read64(ring::kReadPhys);
-    const uint64_t errRaw = read64(ring::kErrPhys);
-    const uint64_t st0 = read64(ring::kStat0Phys);
-    const uint64_t st1 = read64(ring::kStat1Phys);
-    const uint64_t st2 = read64(ring::kStat2Phys);
-    const uint64_t st3 = read64(ring::kStat3Phys);
-    const uint64_t st4 = read64(ring::kStat4Phys);
-    const uint64_t st5 = read64(ring::kStat5Phys);
-    const uint64_t st6 = read64(ring::kStat6Phys);
-    if (static_cast<uint32_t>(readRaw) != ring::kReadMagic)
-        return false;
-    status.producer_count = bitstreamWriteCount_;
-    status.consumer_count = static_cast<uint32_t>(readRaw >> 32);
-    (void)ring::decodeErrStatusWord(errRaw, status);
-    if (static_cast<uint32_t>(st0) == ring::kStat0Magic)
-        status.ring_level = static_cast<uint32_t>(st0 >> 32);
-    else
-        status.ring_level = bitstreamWriteCount_ - status.consumer_count;
-    if (static_cast<uint32_t>(st1) == ring::kStat1Magic)
-        status.consumer_seq = static_cast<uint32_t>(st1 >> 32);
-    if (static_cast<uint32_t>(st2) == ring::kStat2Magic)
-        status.last_bad_seq = static_cast<uint32_t>(st2 >> 32);
-    if (static_cast<uint32_t>(st3) == ring::kStat3Magic)
-        status.session_id = static_cast<uint32_t>(st3 >> 32);
-    if (static_cast<uint32_t>(st4) == ring::kStat4Magic)
-        status.session_id |= static_cast<uint64_t>(static_cast<uint32_t>(st4 >> 32)) << 32;
-    (void)ring::decodeStat5StatusWord(st5, status);
-    (void)ring::decodeStat6StatusWord(st6, status);
-    return true;
-}
-
-bool FpgaSpi::waitBitstreamReadCount(uint32_t target, int timeout_ms) {
-    const int stepUs = 500;
-    const int maxUs = std::max(0, timeout_ms) * 1000;
-    for (int waited = 0; waited <= maxUs; waited += stepUs) {
-        uint32_t readCount = 0;
-        if (readBitstreamFpgaCount(readCount) &&
-            static_cast<int32_t>(readCount - target) >= 0)
-            return true;
-        usleep(stepUs);
-    }
-    return false;
-}
-
-FpgaSpi::BitstreamPushResult FpgaSpi::writeBitstreamRecord(ddr_bitstream_ring::Event event,
-                                                           uint64_t session_id,
-                                                           uint32_t seq,
-                                                           uint8_t nal_type,
-                                                           const uint8_t* payload,
-                                                           size_t len,
-                                                           int timeout_ms) {
-    namespace ring = ddr_bitstream_ring;
-    if (len && !payload) {
-        setErr("writeBitstreamRecord: empty payload pointer");
-        return BitstreamPushResult::Fatal;
-    }
-    const size_t recordLen = ring::kRecordHeaderBytes + len;
-    if (recordLen > ring::kRingBytes) {
-        setErr("writeBitstreamRecord: record larger than ring");
-        return BitstreamPushResult::Fatal;
-    }
-    if (!ensureBitstreamDdrMap())
-        return BitstreamPushResult::Fatal;
-
-    auto statusIsFatal = [&]() {
-        BitstreamStatus st;
-        return readBitstreamStatus(st) && (st.fatal || st.desync);
-    };
-    if (statusIsFatal()) {
-        setErr("writeBitstreamRecord: FPGA reports transport desync");
-        return BitstreamPushResult::Desync;
-    }
-
-    uint32_t readCount = bitstreamWriteCount_;
-    (void)readBitstreamFpgaCount(readCount);
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(std::max(0, timeout_ms));
-    while (bitstreamWriteCount_ - readCount + recordLen > ring::kRingBytes) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-            setErr("writeBitstreamRecord: FPGA ring full");
-            return BitstreamPushResult::Full;
-        }
-        usleep(500);
-        if (statusIsFatal()) {
-            setErr("writeBitstreamRecord: FPGA reports transport desync");
-            return BitstreamPushResult::Desync;
-        }
-        (void)readBitstreamFpgaCount(readCount);
-    }
-
-    std::vector<uint8_t> header(ring::kRecordHeaderBytes, 0);
-    auto put32 = [&](size_t off, uint32_t v) {
-        header[off + 0] = static_cast<uint8_t>(v);
-        header[off + 1] = static_cast<uint8_t>(v >> 8);
-        header[off + 2] = static_cast<uint8_t>(v >> 16);
-        header[off + 3] = static_cast<uint8_t>(v >> 24);
-    };
-    auto put64 = [&](size_t off, uint64_t v) {
-        put32(off, static_cast<uint32_t>(v));
-        put32(off + 4, static_cast<uint32_t>(v >> 32));
-    };
-    put32(0, ring::kRecordMagic);
-    header[4] = static_cast<uint8_t>(event);
-    header[5] = nal_type;
-    put64(8, session_id);
-    put32(16, seq);
-    put32(20, static_cast<uint32_t>(len));
-
-    auto writeBytes = [&](const uint8_t* src, size_t n) {
-        uint32_t wr = bitstreamWriteCount_ & static_cast<uint32_t>(ring::kRingBytes - 1u);
-        const size_t first = std::min(n, static_cast<size_t>(ring::kRingBytes - wr));
-        std::memcpy(bitstreamMap_ + wr, src, first);
-        if (first < n)
-            std::memcpy(bitstreamMap_, src + first, n - first);
-        bitstreamWriteCount_ += static_cast<uint32_t>(n);
-    };
-    writeBytes(header.data(), header.size());
-    if (len)
-        writeBytes(payload, len);
-    __sync_synchronize();
-    publishBitstreamCtrl();
-    clearErr();
-    return BitstreamPushResult::Ok;
-}
-
-void FpgaSpi::publishBitstreamCtrl() {
-    namespace ring = ddr_bitstream_ring;
-    const size_t off = ring::kCtrlPhys - ring::kDataPhys;
-    volatile uint64_t* p = reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
-    *p = (static_cast<uint64_t>(bitstreamResetEpoch_ ? 1u : 0u) << 63) |
-         (static_cast<uint64_t>(bitstreamWriteCount_ & 0x7fffffffu) << 32) |
-         ring::kCtrlMagic;
 }
 
 bool FpgaSpi::ensureDdrMap() {
@@ -655,24 +455,6 @@ bool FpgaSpi::ensureDdrMap() {
 
     ddrMap_ = static_cast<uint8_t*>(p);
     ddrMapLen_ = kLen;
-    const size_t doorbellOff = static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base);
-    if (doorbellOff + 8 <= ddrMapLen_) {
-        volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + doorbellOff);
-        for (int attempt = 0; attempt < 4; ++attempt) {
-            const uint32_t lo0 = dw[0];
-            const uint32_t hi = dw[1];
-            const uint32_t lo1 = dw[0];
-            if (lo0 != lo1)
-                continue;
-            uint32_t seq = 0;
-            int bank = 0;
-            if (decodeDdrDoorbell(lo0, hi, ddrLayout_.format, seq, bank)) {
-                (void)bank;
-                doorbellSeq_ = seq;
-            }
-            break;
-        }
-    }
     return true;
 }
 
@@ -764,13 +546,8 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
     // Pack: [31:0]=magic, high=[31]=bank, [30:29]=format, [28:0]=sequence.
     const uint32_t seq = doorbellSeq_ & 0x1FFFFFFFu;
     const uint32_t hi = ddrDoorbellHi(seq, bank, ddrLayout_.format);
-    // Publish the complete token before magic. On a cold mailbox this prevents
-    // the reader from seeing PLXK paired with a zero/old format; on a warm
-    // mailbox the already-valid magic may expose the new token immediately,
-    // which is safe because sendDdrFrame fences payload writes before this call.
-    dw[1] = hi;
-    __sync_synchronize();
     dw[0] = kDdrDoorbellMagic;
+    dw[1] = hi;
     __sync_synchronize();
     return true;
 }
@@ -817,32 +594,6 @@ bool FpgaSpi::readOsdMailbox(uint16_t& osd) {
         if (!mboxAlive_)
             return false;
         osd = static_cast<uint16_t>(hi & 0xFFFFu);
-        return true;
-    }
-    return false;
-}
-
-bool FpgaSpi::readDdrDoorbellStatus(DdrDoorbellStatus& status) {
-    status = DdrDoorbellStatus{};
-    if (!ensureDdrMap())
-        return false;
-    const size_t kOff = static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base);
-    if (kOff + 8 > ddrMapLen_)
-        return false;
-    volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const uint32_t lo = dw[0];
-        const uint32_t hi = dw[1];
-        __sync_synchronize();
-        if (dw[0] != lo || dw[1] != hi)
-            continue;
-        uint32_t seq = 0;
-        int bank = 0;
-        if (!decodeDdrDoorbell(lo, hi, ddrLayout_.format, seq, bank))
-            return false;
-        status.seq = seq;
-        status.bank = bank;
-        status.format = ddrLayout_.format;
         return true;
     }
     return false;
@@ -1218,11 +969,6 @@ bool FpgaSpi::setStatusBits(const int* bit_val_pairs, int n_pairs) {
 }
 
 bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
-    if (index == 1) {
-        setErr("non-YUV frame send refused: SPI F1 RGB frame path is disabled; use DDR "
-               "YUV420p (sendYuv420pFrameDdr / push_frame --ddr --yuv420p)");
-        return false;
-    }
     if (!ok() || !data || !len) {
         setErr("sendFileTx: not open or empty");
         return false;
@@ -1303,17 +1049,17 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
-bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
-    if (!payload || len != ddrLayout_.frame_bytes) {
-        setErr("sendDdrFrame: frame size does not match DDR geometry");
+bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) {
+    if (!rgb565le || len != ddrLayout_.frame_bytes) {
+        setErr("sendRgb565FrameDdr: frame size does not match DDR geometry");
         return false;
     }
     if (bank < 0 || bank > 1) {
-        setErr("sendDdrFrame: bank must be 0 or 1");
+        setErr("sendRgb565FrameDdr: bank must be 0 or 1");
         return false;
     }
     if (ddrKickMode_ < 0) {
-        setErr("sendDdrFrame: DDR path previously unavailable");
+        setErr("sendRgb565FrameDdr: DDR path previously unavailable");
         return false;
     }
     if (!ok() && !open())
@@ -1324,40 +1070,25 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
-    // Brief yield so previous DMA (~1–3 ms) is done, plus a two-vsync
-    // same-bank reuse floor so a writer faster than the display cannot
-    // immediately overwrite the bank it just published. RTL still owns the
-    // actual vsync flip; there is no cheap per-frame bank-release mailbox yet,
-    // and SPI-polling swap_pending every frame previously added ~100 ms and
-    // collapsed pfps.
+    // Brief pre-kick yield so previous DMA (~1–3 ms) is done. Tear-free display
+    // is handled in RTL (swap on vsync); do NOT SPI-poll swap_pending every frame
+    // (status latch is sparse and was adding ~100 ms → pfps collapse).
     auto tPrep0 = std::chrono::steady_clock::now();
     usleep(1500);
-    const double nowMs = std::chrono::duration<double, std::milli>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-    const double lastBankMs = lastDdrBankDoorbellMs_[bank];
-    if (lastBankMs >= 0.0) {
-        const int64_t sinceUs = static_cast<int64_t>((nowMs - lastBankMs) * 1000.0);
-        if (sinceUs < kDdrBankReuseMinUs) {
-            const int64_t waitUs = kDdrBankReuseMinUs - sinceUs;
-            usleep(static_cast<useconds_t>(waitUs));
-            timing.bank_reuse_wait_us = waitUs;
-        }
-    }
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map).
     const size_t bankOff = static_cast<size_t>(bank) * ddrLayout_.bank_stride;
     auto tCopy0 = std::chrono::steady_clock::now();
-    std::memcpy(ddrMap_ + bankOff, payload, len);
+    std::memcpy(ddrMap_ + bankOff, rgb565le, len);
     __sync_synchronize();
     auto tCopy1 = std::chrono::steady_clock::now();
     timing.copy_us = elapsedUs(tCopy0, tCopy1);
     if (!ddrMemSync_ && ddrMemFlush_) {
         auto tFlush0 = std::chrono::steady_clock::now();
         if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
-            setErr("sendDdrFrame: cache clean failed");
+            setErr("sendRgb565FrameDdr: cache clean failed");
             return false;
         }
         __sync_synchronize();
@@ -1369,21 +1100,6 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     bool saw_kick = false;
     bool saw_frame = false;
     const bool first = (ddrKickMode_ == 0);
-    auto frameStoreStatusSuffix = [this]() -> std::string {
-        FrameStoreStatus st{};
-        if (readFrameStoreStatus(st)) {
-            if (st.nonYuvDoorbellRejected())
-                return std::string(": ") + frameStoreDebugDescription(st.debug_state);
-            char buf[128]{};
-            std::snprintf(buf, sizeof(buf),
-                          ": frame-store status frame_debug=0x%02x frame_seq=%u "
-                          "frame_underrun=%u",
-                          static_cast<unsigned>(st.debug_state), static_cast<unsigned>(st.seq),
-                          static_cast<unsigned>(st.underrun_count));
-            return std::string(buf);
-        }
-        return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
-    };
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
     bool kicked = false;
@@ -1427,8 +1143,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
             const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
             if (!ok) {
                 ddrKickMode_ = -1;
-                setErr("sendDdrFrame: no kick/frame via SPI or doorbell" +
-                       frameStoreStatusSuffix());
+                setErr("sendRgb565FrameDdr: no kick/frame via SPI or doorbell");
                 return false;
             }
             ddrKickMode_ = 2;
@@ -1438,12 +1153,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
-        setErr("sendDdrFrame: could not kick DDR path" + frameStoreStatusSuffix());
+        setErr("sendRgb565FrameDdr: could not kick DDR path");
         return false;
     }
-    lastDdrBankDoorbellMs_[bank] = std::chrono::duration<double, std::milli>(
-                                       std::chrono::steady_clock::now().time_since_epoch())
-                                       .count();
 
     // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
     // in frame_store prevents tears without host blocking on swap_pending.
@@ -1461,50 +1173,18 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     return true;
 }
 
-bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
-    if (!ok() && !open())
-        return false;
-    if (!ensureDdrMap())
-        return false;
-    if (kUnderrunMailboxPhys < ddrLayout_.phys_base) {
-        setErr("readFrameStoreStatus: PLXF mailbox is outside DDR frame window");
+bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
+    if (!rgb || w <= 0 || h <= 0) {
+        setErr("sendRgb24FrameDdr: bad RGB24 frame");
         return false;
     }
-    const size_t off = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
-    if (off + 8 > ddrMapLen_) {
-        setErr("readFrameStoreStatus: PLXF mailbox is outside mapped DDR frame window");
-        return false;
+    if (w != ddrLayout_.width || h != ddrLayout_.height) {
+        if (!setDdrFrameSize(w, h))
+            return false;
     }
-    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
-    uint32_t lastLo = 0;
-    uint32_t lastHi = 0;
-    bool stable = false;
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const uint32_t lo0 = mw[0];
-        const uint32_t hi0 = mw[1];
-        __sync_synchronize();
-        const uint32_t lo1 = mw[0];
-        const uint32_t hi1 = mw[1];
-        lastLo = lo1;
-        lastHi = hi1;
-        stable = (lo0 == lo1 && hi0 == hi1);
-        if (decodeStableFrameStoreStatus(lo0, hi0, lo1, hi1, out)) {
-            clearErr();
-            return true;
-        }
-        usleep(200);
-    }
-    if (stable && lastLo != kUnderrunMailboxMagic) {
-        char buf[160]{};
-        std::snprintf(buf, sizeof(buf),
-                      "readFrameStoreStatus: PLXF mailbox absent/unwritten "
-                      "(lo=0x%08x hi=0x%08x)",
-                      static_cast<unsigned>(lastLo), static_cast<unsigned>(lastHi));
-        setErr(buf);
-        return false;
-    }
-    setErr("readFrameStoreStatus: PLXF mailbox not valid/stable");
-    return false;
+    std::vector<uint8_t> packed(ddrLayout_.frame_bytes);
+    pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
+    return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
@@ -1527,7 +1207,7 @@ bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
         if (!setDdrFrameLayout(geometry, DdrFrameFormat::Yuv420p))
             return false;
     }
-    return sendDdrFrame(yuv420p, len, bank);
+    return sendRgb565FrameDdr(yuv420p, len, bank);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
@@ -1555,118 +1235,6 @@ bool FpgaSpi::sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index)
     return sendFileTx(data, len, index);
 }
 
-bool FpgaSpi::flushBitstreamDdr() {
-    namespace ring = ddr_bitstream_ring;
-    if (!ensureBitstreamDdrMap())
-        return false;
-    bitstreamWriteCount_ = 0;
-    bitstreamLegacySeq_ = 0;
-    bitstreamLegacyActive_ = false;
-    bitstreamResetEpoch_ = !bitstreamResetEpoch_;
-    std::memset(bitstreamMap_, 0, ring::kRingBytes);
-    publishBitstreamCtrl();
-    clearErr();
-    return true;
-}
-
-bool FpgaSpi::beginBitstreamSession(uint64_t session_id, int timeout_ms) {
-    BitstreamStatus st;
-    if (readBitstreamStatus(st) && st.active) {
-        setErr("beginBitstreamSession: session already active; end first");
-        return false;
-    }
-    const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Begin, session_id, 0, 0,
-                                        nullptr, 0, timeout_ms);
-    if (r != BitstreamPushResult::Ok)
-        return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
-}
-
-FpgaSpi::BitstreamPushResult FpgaSpi::pushBitstreamNal(const BitstreamNal& nal,
-                                                       int timeout_ms) {
-    if (!nal.annexb || !nal.len) {
-        setErr("pushBitstreamNal: empty NAL");
-        return BitstreamPushResult::Fatal;
-    }
-    BitstreamStatus st;
-    if (readBitstreamStatus(st)) {
-        if (st.fatal || st.desync)
-            return BitstreamPushResult::Desync;
-        if (!st.active || st.session_id != nal.session_id) {
-            setErr("pushBitstreamNal: stale or inactive session");
-            return BitstreamPushResult::Desync;
-        }
-    }
-    return writeBitstreamRecord(ddr_bitstream_ring::Event::Nal, nal.session_id, nal.seq,
-                                nal.nal_type, nal.annexb, nal.len, timeout_ms);
-}
-
-bool FpgaSpi::flushBitstreamSession(uint64_t session_id, int timeout_ms) {
-    const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Flush, session_id, 0, 0,
-                                        nullptr, 0, timeout_ms);
-    if (r != BitstreamPushResult::Ok)
-        return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
-}
-
-bool FpgaSpi::endBitstreamSession(uint64_t session_id, int timeout_ms) {
-    const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::End, session_id, 0, 0,
-                                        nullptr, 0, timeout_ms);
-    if (r != BitstreamPushResult::Ok)
-        return false;
-    const bool ok = waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
-    if (ok && session_id == bitstreamLegacySessionId_)
-        bitstreamLegacyActive_ = false;
-    return ok;
-}
-
-bool FpgaSpi::pauseBitstreamSession(uint64_t session_id, int timeout_ms) {
-    const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Pause, session_id, 0, 0,
-                                        nullptr, 0, timeout_ms);
-    if (r != BitstreamPushResult::Ok)
-        return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
-}
-
-bool FpgaSpi::resumeBitstreamSession(uint64_t session_id, int timeout_ms) {
-    const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Resume, session_id, 0, 0,
-                                        nullptr, 0, timeout_ms);
-    if (r != BitstreamPushResult::Ok)
-        return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
-}
-
-bool FpgaSpi::sendBitstreamChunkDdr(const uint8_t* data, size_t len) {
-    if (!data || !len) {
-        setErr("sendBitstreamChunkDdr: empty");
-        return false;
-    }
-    if (!bitstreamLegacyActive_) {
-        if (!beginBitstreamSession(bitstreamLegacySessionId_, 250))
-            return false;
-        bitstreamLegacyActive_ = true;
-        bitstreamLegacySeq_ = 0;
-    }
-    BitstreamNal nal;
-    nal.session_id = bitstreamLegacySessionId_;
-    nal.seq = bitstreamLegacySeq_++;
-    nal.nal_type = len >= 5 && data[0] == 0 && data[1] == 0
-                       ? static_cast<uint8_t>(data[(data[2] == 1) ? 3 : 4] & 0x1f)
-                       : 0;
-    nal.annexb = data;
-    nal.len = len;
-    const auto r = pushBitstreamNal(nal, 250);
-    if (r == BitstreamPushResult::Ok)
-        return true;
-    if (r == BitstreamPushResult::Full)
-        setErr("sendBitstreamChunkDdr: FPGA ring full");
-    else if (r == BitstreamPushResult::Desync)
-        setErr("sendBitstreamChunkDdr: FPGA transport desync");
-    else
-        setErr("sendBitstreamChunkDdr: FPGA transport fatal");
-    return false;
-}
-
 bool FpgaSpi::flushAudioFifo() {
     // Pulse status[10] high then low (OSD T[10] / present_core af_wr_flush)
     if (!setStatusBit(10, 1))
@@ -1677,11 +1245,10 @@ bool FpgaSpi::flushAudioFifo() {
 }
 
 bool FpgaSpi::flushBitstreamFifo() {
-    bool ddr_ok = flushBitstreamDdr();
     if (!setStatusBit(11, 1))
-        return ddr_ok;
+        return false;
     usleep(2000);
-    return setStatusBit(11, 0) || ddr_ok;
+    return setStatusBit(11, 0);
 }
 
 bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
@@ -1765,17 +1332,15 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.residual_csum = raw[kResidualCsumByte];
     s.recon_sig = raw[kReconSigByte];
     s.recon_dbg = raw[kReconDbgByte];
-    // Stream byte telemetry was reclaimed for P3-3l2 silicon RCA. Publish the
-    // NAL-count liveness mirror under an explicit name; keep stream_bytes_in
-    // only as a deprecated in-process compatibility alias.
-    s.stream_nalus = static_cast<uint32_t>(s.nalu_count);
-    s.stream_bytes_in = s.stream_nalus;
+    // Stream byte telemetry was reclaimed for P3-3l2 silicon RCA. Use nalu_count
+    // as the liveness/perturbation witness while this debug ABI is active.
+    s.stream_bytes_in = static_cast<uint32_t>(s.nalu_count);
     s.idr_count = s.has_idr ? 1 : 0;
     return s;
 }
 
 bool FpgaSpi::readCoreStatus(CoreStatus& out) {
-    // Prefer consistent samples: same NAL liveness twice, or any stable stream with NALs.
+    // Prefer consistent samples: same nalu+bytes_in twice, or nalu>=1 with matching bytes.
     CoreStatus best{};
     bool have = false;
     for (int attempt = 0; attempt < 8; ++attempt) {
@@ -1783,14 +1348,14 @@ bool FpgaSpi::readCoreStatus(CoreStatus& out) {
         if (!getCoreStatus(raw))
             return false;
         CoreStatus s = parseCoreStatus(raw);
-        // Sanity: status no longer carries byte counts; nalu not huge garbage.
-        bool sane = s.nalu_count < 10000 && s.stream_nalus < 10000 &&
+        // Sanity: bytes_seen should be <= bytes_in + small slack, nalu not huge garbage
+        bool sane = s.nalu_count < 10000 && s.stream_bytes_in < (1u << 28) &&
                     s.sps_width <= 4096 && s.sps_height <= 2160;
         if (!sane) {
             usleep(10000);
             continue;
         }
-        if (have && s.nalu_count == best.nalu_count && s.stream_nalus == best.stream_nalus &&
+        if (have && s.nalu_count == best.nalu_count && s.stream_bytes_in == best.stream_bytes_in &&
             s.has_stream == best.has_stream && s.sps_valid == best.sps_valid) {
             out = s;
             return true;
@@ -1798,7 +1363,7 @@ bool FpgaSpi::readCoreStatus(CoreStatus& out) {
         best = s;
         have = true;
         // Strong signal: stream with NALs (and optional SPS)
-        if (s.has_stream && s.stream_nalus > 0 && s.nalu_count > 0) {
+        if (s.has_stream && s.stream_bytes_in > 0 && s.nalu_count > 0) {
             out = s;
             return true;
         }

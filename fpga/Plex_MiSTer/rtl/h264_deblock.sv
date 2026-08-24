@@ -223,7 +223,6 @@ module h264_deblock_edge (
 	reg signed [13:0] delta;
 	reg signed [13:0] adj;
 	reg signed [13:0] p0s, p1s, p2s, p3s, q0s, q1s, q2s, q3s;
-	reg [7:0] p0v, p1v, p2v, p3v, q0v, q1v, q2v, q3v;
 
 	always @* begin
 		for (i = 0; i < 4; i = i + 1) begin
@@ -234,10 +233,8 @@ module h264_deblock_edge (
 			q1_out[i] = q1_in[i];
 			q2_out[i] = q2_in[i];
 
-			p0v = p0_in[i]; p1v = p1_in[i]; p2v = p2_in[i]; p3v = p3_in[i];
-			q0v = q0_in[i]; q1v = q1_in[i]; q2v = q2_in[i]; q3v = q3_in[i];
-			p0s = {6'b000000, p0v}; p1s = {6'b000000, p1v}; p2s = {6'b000000, p2v}; p3s = {6'b000000, p3v};
-			q0s = {6'b000000, q0v}; q1s = {6'b000000, q1v}; q2s = {6'b000000, q2v}; q3s = {6'b000000, q3v};
+			p0s = {6'b000000, p0_in[i]}; p1s = {6'b000000, p1_in[i]}; p2s = {6'b000000, p2_in[i]}; p3s = {6'b000000, p3_in[i]};
+			q0s = {6'b000000, q0_in[i]}; q1s = {6'b000000, q1_in[i]}; q2s = {6'b000000, q2_in[i]}; q3s = {6'b000000, q3_in[i]};
 			tc = 14'sd0;
 			delta = 14'sd0;
 			adj = 14'sd0;
@@ -385,85 +382,6 @@ module h264_deblock_edge_pipe (
 				q0_r[i] <= q0_in[i]; q1_r[i] <= q1_in[i]; q2_r[i] <= q2_in[i]; q3_r[i] <= q3_in[i];
 				p2_out[i] <= edge_p2[i]; p1_out[i] <= edge_p1[i]; p0_out[i] <= edge_p0[i];
 				q0_out[i] <= edge_q0[i]; q1_out[i] <= edge_q1[i]; q2_out[i] <= edge_q2[i];
-			end
-		end
-	end
-endmodule
-
-module h264_deblock_writeback_ctrl #(
-	parameter int MB_COUNT = 1170,
-	parameter int FRAME_SLOT_W = 2,
-	parameter int SAMPLES_PER_MB = 384,
-	parameter int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT)
-) (
-	input  wire                   clk,
-	input  wire                   reset,
-	input  wire                   idr_frame_start,
-	input  wire                   filtered_sample_valid,
-	input  wire                   filtered_mb_valid,
-	input  wire [MB_AW-1:0]       filtered_mb_addr,
-	input  wire                   filtered_mb_is_ref,
-	input  wire                   filtered_frame_done,
-	input  wire [FRAME_SLOT_W-1:0] frame_slot_i,
-	input  wire                   frame_boundary,
-	output reg                    wb_valid,
-	output reg  [MB_AW-1:0]       wb_mb_addr,
-	output reg                    wb_is_ref,
-	output reg                    dpb_invalidate_refs,
-	output reg                    ref_ready_pulse,
-	output reg  [FRAME_SLOT_W-1:0] ref_ready_slot,
-	output reg                    commit_order_error
-);
-	localparam int SAMPLE_COUNT_W = $clog2(SAMPLES_PER_MB + 1);
-	localparam [SAMPLE_COUNT_W-1:0] SAMPLES_PER_MB_COUNT = SAMPLES_PER_MB[SAMPLE_COUNT_W-1:0];
-
-	reg                    ref_pending;
-	reg [FRAME_SLOT_W-1:0] ref_pending_slot;
-	reg [SAMPLE_COUNT_W-1:0] sample_count;
-	wire samples_complete = (sample_count == SAMPLES_PER_MB_COUNT);
-`ifdef H264_DEBLOCK_FAULT_MB_COMMIT_EARLY
-	wire commit_now = filtered_mb_valid;
-`else
-	wire commit_now = filtered_mb_valid && samples_complete;
-`endif
-
-	always @(posedge clk) begin
-		if (reset) begin
-			wb_valid <= 1'b0;
-			wb_mb_addr <= '0;
-			wb_is_ref <= 1'b0;
-			dpb_invalidate_refs <= 1'b0;
-			ref_ready_pulse <= 1'b0;
-			ref_ready_slot <= '0;
-			ref_pending <= 1'b0;
-			ref_pending_slot <= '0;
-			sample_count <= '0;
-			commit_order_error <= 1'b0;
-		end else begin
-			wb_valid <= commit_now;
-			wb_mb_addr <= filtered_mb_addr;
-			wb_is_ref <= filtered_mb_is_ref;
-			dpb_invalidate_refs <= idr_frame_start;
-			commit_order_error <= filtered_mb_valid && !samples_complete;
-`ifdef H264_DEBLOCK_FAULT_REF_READY_EARLY
-			ref_ready_pulse <= filtered_mb_valid && filtered_frame_done && filtered_mb_is_ref;
-			ref_ready_slot <= frame_slot_i;
-`else
-			ref_ready_pulse <= frame_boundary && ref_pending;
-			ref_ready_slot <= ref_pending_slot;
-`endif
-			if (idr_frame_start)
-				ref_pending <= 1'b0;
-			if (commit_now && filtered_frame_done && filtered_mb_is_ref) begin
-				ref_pending <= 1'b1;
-				ref_pending_slot <= frame_slot_i;
-			end
-			if (frame_boundary && ref_pending)
-				ref_pending <= 1'b0;
-			if (idr_frame_start || commit_now || frame_boundary) begin
-				sample_count <= '0;
-			end else if (filtered_sample_valid && !samples_complete) begin
-				sample_count <= sample_count + 1'b1;
 			end
 		end
 	end

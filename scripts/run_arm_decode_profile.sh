@@ -59,7 +59,7 @@ ssh_m "chmod +x '$REMOTE_BIN/ffmpeg_cpu_probe' '$REMOTE_BIN/present_loop_harness
 PROBE="$REMOTE_BIN/ffmpeg_cpu_probe"
 PRESENT="$REMOTE_BIN/present_loop_harness"
 DDR="$REMOTE_BIN/ddr_write_bench"
-FRAME_BYTES=$((WIDTH * HEIGHT * 3 / 2))
+FRAME_BYTES=$((WIDTH * HEIGHT * 2))
 VF="fps=${FPS},scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=decrease,pad=${WIDTH}:${HEIGHT}:(ow-iw)/2:(oh-ih)/2"
 
 log "host=$HOST sample=$SAMPLE width=$WIDTH height=$HEIGHT fps=$FPS frames=$FRAMES"
@@ -72,11 +72,11 @@ remote_run "sample metadata" \
 remote_run "decode-only: H.264 -> decoded frames -> null mux" \
   "'$PROBE' --label decode_null -- '$FFMPEG' -hide_banner -loglevel error -nostdin -i '$SAMPLE' -map 0:v:0 -frames:v '$FRAMES' -an -sn -f null -"
 
-remote_run "decode + scale/pad + yuv420p conversion -> /dev/null" \
-  "'$PROBE' --label decode_scale_yuv420p_null_${WIDTH}x${HEIGHT} -- '$FFMPEG' -hide_banner -loglevel error -nostdin -i '$SAMPLE' -map 0:v:0 -frames:v '$FRAMES' -an -sn -vf '$VF' -pix_fmt yuv420p -f rawvideo -y /dev/null"
+remote_run "decode + scale/pad + rgb565 conversion -> /dev/null" \
+  "'$PROBE' --label decode_scale_rgb565_null_${WIDTH}x${HEIGHT} -- '$FFMPEG' -hide_banner -loglevel error -nostdin -i '$SAMPLE' -map 0:v:0 -frames:v '$FRAMES' -an -sn -vf '$VF' -pix_fmt rgb565le -f rawvideo -y /dev/null"
 
-remote_run "decode + scale/pad + yuv420p conversion -> pipe drain/copy" \
-  "'$PROBE' --label decode_scale_yuv420p_pipe_${WIDTH}x${HEIGHT} --frame-bytes '$FRAME_BYTES' --copy --pipe-size '$PIPE_SIZE' -- '$FFMPEG' -hide_banner -loglevel error -nostdin -i '$SAMPLE' -map 0:v:0 -frames:v '$FRAMES' -an -sn -vf '$VF' -pix_fmt yuv420p -f rawvideo pipe:1"
+remote_run "decode + scale/pad + rgb565 conversion -> pipe drain/copy" \
+  "'$PROBE' --label decode_scale_rgb565_pipe_${WIDTH}x${HEIGHT} --frame-bytes '$FRAME_BYTES' --copy --pipe-size '$PIPE_SIZE' -- '$FFMPEG' -hide_banner -loglevel error -nostdin -i '$SAMPLE' -map 0:v:0 -frames:v '$FRAMES' -an -sn -vf '$VF' -pix_fmt rgb565le -f rawvideo pipe:1"
 
 remote_run "synthetic present-loop pipe/copy at source rate" \
   "'$PRESENT' --frames '$FRAMES' --width '$WIDTH' --height '$HEIGHT' --fps '$FPS' --pipe-size '$PIPE_SIZE'"
@@ -85,13 +85,13 @@ remote_run "synthetic present-loop pipe/copy at 60 fps" \
   "'$PRESENT' --frames '$FRAMES' --width '$WIDTH' --height '$HEIGHT' --fps '60' --pipe-size '$PIPE_SIZE'"
 
 remote_run "DDR write path: O_SYNC /dev/mem" \
-  "'$DDR' --sync --format yuv420p --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
+  "'$DDR' --sync --format rgb565 --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
 
 remote_run "DDR write path: no O_SYNC /dev/mem" \
-  "'$DDR' --no-sync --format yuv420p --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
+  "'$DDR' --no-sync --format rgb565 --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
 
 remote_run "DDR write path: no O_SYNC + ARM cacheflush" \
-  "'$DDR' --no-sync --flush --format yuv420p --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
+  "'$DDR' --no-sync --flush --format rgb565 --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
 
 log ""
 log "DONE evidence=$EVIDENCE"

@@ -360,6 +360,21 @@ int expectedDc(const std::array<uint8_t, 8>& above, const std::array<uint8_t, 4>
     return 128;
 }
 
+void tickI16(Vp3_intra_frame_tb& dut) {
+    dut.clk = 0;
+    dut.eval();
+    dut.clk = 1;
+    dut.eval();
+}
+
+void kickI16(Vp3_intra_frame_tb& dut) {
+    dut.i16_start = 1;
+    tickI16(dut);
+    dut.i16_start = 0;
+    for (int n = 0; n < 64 && !dut.i16_done; ++n)
+        tickI16(dut);
+}
+
 bool runFallbackProbe(Vp3_intra_frame_tb& dut) {
     bool ok = true;
     std::array<uint8_t, 8> above{{10, 20, 30, 40, 50, 60, 70, 80}};
@@ -414,6 +429,13 @@ int main(int argc, char** argv) {
     }
 
     Vp3_intra_frame_tb dut;
+    dut.clk = 0;
+    dut.reset = 1;
+    dut.i16_start = 0;
+    tickI16(dut);
+    tickI16(dut);
+    dut.reset = 0;
+    tickI16(dut);
     const int width = rec.width;
     const int height = rec.height;
     const int mbW = (width + 15) / 16;
@@ -523,7 +545,7 @@ int main(int argc, char** argv) {
                 dut.i16_left[t] = (mbx > 0) ? yAt(rtlY, width, height, baseX - 1, baseY + t) : 128;
             }
             dut.i16_top_left = (mby > 0 && mbx > 0) ? yAt(rtlY, width, height, baseX - 1, baseY - 1) : 128;
-            dut.eval();
+            kickI16(dut);
             if (dut.i16_unsupported) {
                 std::cerr << "unexpected I16 unsupported at mb " << mb << " mode " << predMode << "\n";
                 ++failures;

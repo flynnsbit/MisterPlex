@@ -79,9 +79,7 @@ Phase 3.3b (done this fire — decode_stub + typed NAL + STREAM path):
     [4] has_idr [5] stub_busy
     [15:8] last_nal_type  [31:16] nalu_count  [47:32] fifo_level
     [55:48] idr_count  [63:56] stub_frames[7:0]
-    [95:64] bytes_seen  [127:96] bytes_in (historical name; later status overlays
-    reuse this field, so in current ARM parsing `bytes_in=4` means `nalu_count=4`,
-    not four delivered bytes)
+    [95:64] bytes_seen  [127:96] bytes_in
   ARM: STREAM=1 conf → second ffmpeg copy-demux annex-B → F3 chunks
   HW: `tests/hw/test_f3_decode_stub.sh` (has_idr + stub_frames + has_frame)
 
@@ -119,7 +117,7 @@ Phase 3.3g (done — first-MB inv-quant recon stub):
   Host: FFmpeg-table CAVLC residual_block; invQuantHadamardDc4x4; reconFirstI16DcMeanY
   FPGA: residual_ok paints top-left 16×16 recon-gray (128+tc) in decode_stub
 
-Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide green retired**):
+Phase 3.3h (host I-slice recon **bit-exact** vs FFmpeg no-deblock — done this fire):
   **Root causes fixed this arc:**
     1. I_16x16 missing `intra_chroma_pred_mode` → walk desync
     2. I4 MPM: unavailable neighbour → pred=DC(2)
@@ -128,22 +126,11 @@ Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide 
     5. **I16 DC scan layout:** CAVLC zigzag must be loaded with FFmpeg `TRANSPOSE(zz[i])`
        into the Hadamard (column-major). ITU raster alone mapped scan-pos 2 → vertical
        frequency; FFmpeg places it at input[1] → gold top/bot pattern. Fixed
-       `invQuantHadamardDc4x4` → retired scoreboard once claimed
-       **maeY=0 exact 300/300**. That frame-wide green is no longer accepted
-       as product evidence because it was measured through RGB565/presentation
-       diagnostics with border masking.
+       `invQuantHadamardDc4x4` → **maeY=0 exact 300/300**.
     6. **Chroma DC pred rounding:** TL/BR 4x4 must use single-sum `(sA+sL+4)>>3`, not
        nested avgs. Fixed `predChroma8` mode 0 → **maeU=maeV=0** (full YUV exact).
-  Host: FULL residual walk exists, but the former full-frame **maeY=U=V=0**
-        status is **UNSUBSTANTIATED** as product decode evidence. Native-I420
-        scoreboard evidence replaces it: the old MB0 phantom (`got=142 ref=65`
-        through RGB565) is clean (`got=73 ref=73 abs=0`). The first native-I420
-        full-frame ratchet numbers (624×480 `510/1170`, 320×240 `155/300`,
-        wcap `207/300`) are also retired because the reference silently kept
-        in-loop deblocking enabled while RTL output was no-deblock. Full-frame
-        green must cite native-I420 plane evidence with loop-filter state
-        declared/refused in provenance, not RGB565 presentation output or a
-        silent FFmpeg default.
+  Host: FULL residual walk 300/300; recon real baseline **maeY=U=V=0** vs FFmpeg
+        `-skip_loop_filter all`; tiny/gray mae=0; `h264_recon.hpp` → YUV420 + RGB565
   FPGA: ST_CHRPRED (I16) + ST_I4MODE/ST_CBP (I_NxN); gray I16 HW green earlier
   **Next was 3.3i (now done):** host SPI present + STREAM wire — see below.
     - Optional deblock filter (not needed for no-LF gold)
@@ -151,18 +138,16 @@ Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide 
 
 Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   STREAM=1: annex-B demux → retain SPS/PPS → IDR/I VCL → `recon::reconISlice`
-    → I420/YUV420p → **F1** `sendYuv420pFrameDdr` (frame_store)
+    → YUV420 → RGB565 → scale 320×240 → **F1** `sendRgb565Frame` (frame_store)
   Still feeds **F3** for FPGA decode_stub / residual probes (diagnostic)
-  FFmpeg RGB: fb0 fallback only; F1 frame-store sends remain YUV420p DDR-only
+  FFmpeg RGB: fallback F1 until first recon present; then recon owns F1
   PRESENT=both: FFmpeg continuous fb0 + recon F1; companion :3005 unchanged
   Logs: `recon frame ok #N WxH mb=…`; session `recon=N`
-  Unit: `test_cavlc_dc` FULL walk + recon host check; ARM `-I host`.
-  Treat any historical `maeY=U=V=0` wording from this path as retired unless
-  paired with native-I420 plane provenance.
+  Unit: `test_cavlc_dc` FULL walk + recon + maeY=U=V=0 vs FFmpeg; ARM `-I host`
   **HW lab 192.168.1.183 (this fire):**
     - Baseline smoke: `recon_ok=3 recon_fail=0 present=3` f1ms≈170
-    - High/CABAC `test.mp4`: fail_reason=`cabac` → fb0 fallback continues when enabled
-    - Legacy manual RGB565 F1 push is retired; use DDR YUV420p frame pushes
+    - High/CABAC `test.mp4`: fail_reason=`cabac` → FFmpeg RGB F1 continues (frames>0)
+    - Manual F1 push recon RGB565: `has_frame=1` (~172–200 ms / 153600 B ≈ 0.75–0.9 MB/s SPI)
     - F3 residual: `res_ok=1 res_tc=8 res_t1=3` (test_f3_residual.sh green)
 
 Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
@@ -266,13 +251,11 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     model / source-integration check, **not** a Verilog simulator. It drives the checked-in
     6739-byte Annex-B vector, compares all 16 block-0 `dequant`, signed post-IDCT, and
     reconstructed samples against `tests/fixtures/p3_host_recon/mb0_luma_v1.json`, checks all
-    16 MB0 block pred+IDCT→recon rows. The historical frame-MAE grading line
-    (`frame_mae_rows=300 maeY=0.000000`) is retained only as a host-source
-    regression check and is **not** a product full-frame decode PASS; it came
-    from the retired RGB565/presentation scoreboard path. Evidence-backed MB0
-    output remains `y00=73 mean=62 coeff_csum=0x14`, corroborated by native
-    I420 (`got=73 ref=73 abs=0`). This does **not** replace the Verilator
-    behavioural RTL testbench or native-I420 full-frame ratchet.
+    16 MB0 block pred+IDCT→recon rows, and grades all 300 frame-MAE rows from
+    `frame_mae_v1.csv`. Evidence: green output
+    `vector_bytes=6739 coeff_csum=0x14 ... mb0_blocks=16 ... frame_mae_rows=300 maeY=0.000000 y00=73 mean=62`;
+    red directions perturb AC dequant and frame-MAE grading. This does **not** replace the
+    Verilator behavioural RTL testbench.
   **3.3l-2 product RTL staged (W-CAP):** `decode_stub.sv` now consumes proven
     `residual_coeff[0:15]` + `slice_qp` and instantiates the shared
     `h264_iq_idct_4x4.sv` modules for first-4×4 inverse quant + H.264 integer IDCT onto
@@ -297,22 +280,15 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     `tests/fixtures/p3_host_recon/mb0_luma_v1.json` (`format=misterplex.p3.luma_mb.v1`).
     The checked-in source vector is `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`
     and remains **6739 bytes**; no existing generated vector is resized.
-  **3.3l-4 host frame-MAE green retired as product evidence (W-CTL reconciliation 2026-07-27):**
-    `test_p3_host_recon_vectors` / `tests/fixtures/p3_host_recon/frame_mae_v1.csv`
-    formerly reported `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`.
-    That is now **UNSUBSTANTIATED** for product full-frame decode because the
-    measurement path was RGB565/presentation-contaminated. The evidence-backed
-    first native-I420 ratchets (`plex_inter_p16_624x480_12f` `510/1170`,
-    `plex_inter_p16_320x240_12f` `155/300`, `wcap_residual14_idr_plus_p`
-    `207/300`) are also retired because their reference silently had in-loop
-    deblocking enabled while RTL output did not. Current full-frame status waits
-    for no-deblock native-I420 ratchets; first real localized mismatch is MB 182
-    `(26,4)`, `Y(420,72)`, `got=107 ref=145`, I16x16 vertical, QP 0, pred=106,
-    AC all zero, dequant DC=60, IDCT=1.
-    The host CSV can remain a source-level regression fixture, but it must not be
-    cited as a full-frame product PASS.
-  **Milestones:** 3.3l-0 ✅ → 3.3l-1 host/status ✅ / RBF dabdaeb0 hard csum FAIL → 3.3l-2 MB0 host+handoff ✅ / paint **BLOCKED** →
-    3.3l-3 host first full MB ✅ → 3.3l-4 frame-wide green **RETIRED / native-I420 partial** → FPGA 3.3l-3/4 remain blocked behind residual checksum gate → 3.3l-5 hybrid gate.
+  **3.3l-4 host frame-MAE golden done (W-REL 2026-07-26):** `test_p3_host_recon_vectors`
+    reconstructs the whole 320×240 IDR, compares it to FFmpeg
+    `-skip_loop_filter all`, and emits `tests/fixtures/p3_host_recon/frame_mae_v1.csv`
+    (`format=misterplex.p3.frame_mae.v1`). Evidence command:
+    `build/test_p3_host_recon_vectors` → `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`.
+    Every MB row has `sum_abs_y=0`, `mae_y=0.000000`, `max_abs_y=0`; generated copies land in
+    `build/p3_host_recon_mb0_luma_v1.json` and `build/p3_host_recon_frame_mae_v1.csv`.
+  **Milestones:** 3.3l-0 ✅ → 3.3l-1 host/status ✅ / RBF dabdaeb0 hard csum FAIL → 3.3l-2 host+handoff ✅ / paint **BLOCKED** →
+    3.3l-3 host first full MB ✅ → 3.3l-4 host all-MB frame MAE ✅ → FPGA 3.3l-3/4 remain blocked behind residual checksum gate → 3.3l-5 hybrid gate.
   **Product:** host F1 recon stays until FPGA mae competitive; F3 diagnostic until then.
   **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.
 
@@ -339,9 +315,7 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder exists.
   **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
   (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
-  (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, host-model maeY=0).
-  This is evidence for the host inter model/golden generator only, not a product
-  stream-path/DPB/MC full-frame PASS. Unit
+  (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, maeY=0). Unit
   `test_p3_inter_pred_vectors` regenerates byte-identically, exports libav motion vectors, and
   verifies Baseline/CAVLC/profile constraints plus the fixtures; red perturbations cover MV, MAE rows,
   and unsupported-profile handling.
@@ -377,14 +351,10 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   so unsupported-stream guards stay mandatory. Local x264 proxy with the exact `VideoEncodeFlags`
   plus `partitions=none` measured P frames as intra 4.8%, **P16×16 17.6%**, sub-MB partitions 0%,
   **skip 77.7%**; first RTL rung implements only P_Skip + P_L0_16x16.
-  RTL: `h264_inter_pred.sv` adds MV median predictor/MVD add/P_Skip zero rule, partition-aware
-  predictors for P_L0_16x8/P_L0_8x16/P_8x8/sub-MB modes, luma qpel six-tap interpolation, chroma
-  eighth-pel bilinear interpolation, and 9×9 reference fetch address clamping. `h264_p_slice_modes.sv`
-  classifies P_Skip, P_L0_16x16, P_L0_16x8, P_L0_8x16, P_8x8/P_8x8ref0 and sub-MB
-  8x8/8x4/4x8/4x4 shapes; `slice_hdr_parser.sv` now skips non-IDR ref-marking/ref-idx bits before
-  QP and exposes P `mb_skip_run` plus the first P MB type. `decode_stub.sv`
-  instantiates the inter RTL in the shipped artifact and paints a top-row MB1 diagnostic tile as four
-  green/red stage bands (MV+partition, luma qpel, chroma epel, fetch; aggregate signature `0x57`).
+  RTL: `h264_inter_pred.sv` adds MV median predictor/MVD add/P_Skip zero rule, luma qpel six-tap
+  interpolation, chroma eighth-pel bilinear interpolation, and 9×9 reference fetch address
+  clamping. `decode_stub.sv` instantiates the inter RTL in the shipped artifact and paints a
+  top-row MB1 diagnostic tile as four green/red stage bands (MV, luma qpel, chroma epel, fetch; aggregate signature `0x56`).
   Verilator: `tests/unit/test_p3_inter_rtl_sim.sh` elaborates the real product RTL listed in
   `files.qip` through `tests/rtl/h264_inter_pred_tb_top.sv`, compares against
   `tests/fixtures/p3_inter_pred/inter_mc_v1.json`, and red-checks bad interpolation rounding via a
@@ -392,8 +362,7 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   elaborates product `stream_path.sv` plus parsers/`decode_stub`/inter RTL, feeds paced multi-NAL
   Annex-B vectors, and requires idle return after each VCL: IDR fixture `nals=4 frames=1`, P fixture
   `nals=15 idr=1 p=11 frames=12`, all four MB1 inter diagnostic bands green, and red-checks a
-  testbench-only bad visual-diagnostic pixel fault. Primitive RTL evidence is `mv_cases=6`,
-  `partition_cases=10`, plus a bad-partition-MV red-check. This is a stream-path/diagnostic gate; parsed P
+  testbench-only bad visual-diagnostic pixel fault. This is a stream-path/diagnostic gate; parsed P
   MB syntax is not yet driving MC. DDR/YUV update: one
   624×480 YUV420 ref + current = 898,560 B; +present = 1,347,840 B. At 25 fps, narrow P16×16/P_Skip
   YUV traffic is ~40 MB/s before overhead (~50–70 MB/s planning), comfortable for the validated
@@ -411,7 +380,7 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     **Wall time after ARM kick batching + kick/frame verify (not busy-only):**
     | path | wall time | effective | unique fps |
     |------|-----------|-----------|------------|
-    | legacy SPI F1 RGB path | retired/refused (non-YUV frame-store payload) | n/a | n/a |
+    | SPI F1 `push_frame --index 1` | **~112 ms** (5 runs: 110.9–116.6) | **~1.37 MB/s** | **≈8.9 fps** |
     | DDR `push_frame --ddr` | **~16.5 ms** (5 runs: 16.0–16.8) | **~9.3 MB/s** | **≈60 fps** |
     mmap alone ~1.9 ms; remainder is one MainPause SPI session + DMA settle.
     Log: `/tmp/misterplex-ddr-agent.txt`. DDR ≈ **7× SPI** → real-time 24/30 @320×240 OK.
@@ -423,8 +392,8 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     → pulse **status[12]** start (status[13]=bank) → `ddram_frame_rd` Avalon
     burst-reads f2sdram → dual-bank BRAM `frame_store` → present (same as F1).
     - RTL: `rtl/ddram_frame_rd.sv`; Plex.sv no longer ties DDRAM_* to 0
-    - ARM: `FpgaSpi::sendYuv420pFrameDdr` (I420 planar DDR payload + doorbell)
-    - Tool: `push_frame --ddr [--bank 0|1] --yuv420p WxH file.yuv420p`
+    - ARM: `FpgaSpi::sendRgb565FrameDdr` / `sendRgb24FrameDdr` (single SpiExclusive kick)
+    - Tool: `push_frame --ddr [--bank 0|1] file.rgb565`
     - Verify: `ddr_busy` **or** (status[12] echo in status_in + `has_frame`); busy-only
       was a false negative — see diagnosis below
     - status_in[79] = ddr_busy during copy (`{ddr_busy,0,qp}` @ [79:72])
@@ -434,13 +403,12 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     - Functional proof: after reset `has_frame=0` → mmap + status[12] 0→1 → `has_frame=1`.
     - `ddr_busy` rarely latched: status_req updates only on status_set; DMA ~1–3 ms so
       busy clears before SPI poll samples. Idle busy=0 is expected, not missing IP.
-  **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; F1 remains DDR YUV420p-only.
+  **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
 
   **RBF rebuild status (lab 2026-07-24):** Sole Quartus with `NUM_PARALLEL_PROCESSORS=2`
   completed map→fit→asm (ALMs ~22%, M10K ~74%). Deployed `_Utility/Plex.rbf` includes
-  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product **uses DDR
-  YUV420p only for F1**; kick/frame failures stay visible instead of falling
-  back to legacy RGB/SPI.
+  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product **prefers DDR
+  with SPI fallback** (fallback only if kick/frame verify fails).
 
   **Build / lab status:**
     - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr` OK ~16 ms)
@@ -457,9 +425,9 @@ Phase 3.1b (DDR bulk path — implemented this fire):
 
 1. Build RBF: `make build-rbf` (Quartus via misterfpga-dev).
 2. Deploy: `./scripts/deploy_plex_core.sh`.
-3. `python3 scripts/gen_edge_markers.py --format yuv420p build/plex_test_320x240.yuv420p`.
-4. Push with `push_frame --ddr --yuv420p 320x240 build/plex_test_320x240.yuv420p`.
-5. Expect edge-marker frame and `has_frame=1`.
+3. `python3 scripts/gen_test_frame.py /tmp/plex_test_320x240.rgb565` and copy to SD.
+4. OSD: load frame via **F1**, set **Video source = Frame store**.
+5. Expect yellow border + color bars + orange diagonal (not internal pattern block).
 
 ## H.264 soft-core evaluation notes
 

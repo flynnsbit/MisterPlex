@@ -30,10 +30,6 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 
 | Action | Command |
 |--------|---------|
-| Define parity | `make define-parity` — Quartus product macros must match Verilator/lint macros |
-| Quartus SV subset | `make quartus-sv-subset` — curated static Quartus syntax guard; no fit/RBF |
-| Post-fit hierarchy | `make post-fit-hierarchy FIT_RPT=...` — critical modules must survive fitting |
-| Post-fit timing | `make post-fit-timing STA_RPT=...` — negative STA slack is a hard fail |
 | RBF (sole) | Project Quartus via `misterfpga-dev` / `scripts/build_rbf.sh` — **one at a time** |
 | Unit | `make unit` |
 | Package | `make package` / `scripts/package_release.sh` |
@@ -59,6 +55,15 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 
 ## Key docs
 
+- **True480 / 720p24 case law** lives on the product tree, not this dirty decode `main`:
+  worktree `/home/shawn/Projects/MisterPlex-wt-480p-lessons`, branch `lessons/true480-720p24`
+  (`origin/480p` @ `a6ba15d`). Read `docs/LESSONS.md` **L44–L56** and
+  `Memory/lab/status/FREDDO_YUV_LAST_RGB.md` (**L56**). Read
+  `docs/PHASE_BACKLOG.md` **P3-720P24** / **P4-DISPLAY** / **P4-720P-MIX** before
+  any 720p or F12 Display work. 240p/480p glass is the v0.4.1 pair; 720p24 is
+  blocked on host publish + pix clock, not another exclusive decode fit.
+  **Display must change the MiSTer raster** or the setting is meaningless
+  (`Memory/lab/status/DISPLAY_RES_MUST_CHANGE_RASTER.md`).
 - `docs/phase3-decode.md`, `docs/phase3-3l-idct.md` — decode path  
 - `docs/p3-wide-rca.md` — full-width / pillar  
 - `docs/crt-lcd-lab-checklist.md` — CRT/LCD lab  
