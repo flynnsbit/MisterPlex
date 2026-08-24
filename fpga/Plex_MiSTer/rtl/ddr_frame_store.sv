@@ -564,18 +564,17 @@ module ddr_frame_store #(
 	reg        plxj_req;
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
-	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (blank-only PLXJ WE)
-	// Hold cut: mux4 Slack : -0.093 → mux5 Slack : -0.071 (same-clock clk_ddr).
-	// Chain nomerge qualify FFs (not parallel AND) then S_PLXJ_ISSUE samples
-	// ADDR/DIN and asserts WE next clk_ddr — keepv21 class. Combo blank/req
-	// still parks other S_IDLE arms so fills cannot starve gold 250 ms ACK.
-	// clk_sys/clk_ddr stay related-edge. Do not false_path. Do not
-	// create_generated_clock on analog ce_pix. Do not retune clk_sys.
+	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (status only)
+	// mux7: take S_PLXJ_ISSUE from plxj_req in S_IDLE (no nomerge we_go
+	// AND). mux6 glass: gold 5f1c8614 timeout want token=5 last=4, then
+	// mailbox later showed token=5 — ACK issued after 250 ms. we_go was a
+	// 3-cycle pulse that missed !BUSY, and park only ran when blank_ok so
+	// analog Template rd_active stole S_IDLE. Park ALL other S_IDLE arms
+	// while plxj_req. WE stays registered in S_PLXJ_ISSUE (mux5 hold cut;
+	// mux6 Hold general[2] +0.185). Mailbox write is not a frame store —
+	// do not wait blank. clk_sys/clk_ddr related-edge. Do not false_path.
 	wire plxj_blank_ok = !rd_act_s2 || !has_frame_d2;
-	wire plxj_we_c = plxj_req && plxj_blank_ok && (state_ddr == S_IDLE);
-	reg plxj_we_r /* synthesis nomerge */;
-	reg plxj_we_dup /* synthesis nomerge */;
-	reg plxj_we_go /* synthesis nomerge */;
+	wire _unused_plxj_blank = plxj_blank_ok;
 	reg [28:0] plxj_addr_r;
 	reg [63:0] plxj_din_r;
 	async_fifo #(.WIDTH(8), .AW(2)) input_fifo (
@@ -855,26 +854,6 @@ module ddr_frame_store #(
 
 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
 
-	// Separate always + nomerge chain: do not pack into the DDRAM_WE ALM.
-	always @(posedge clk_ddr) begin
-		if (reset_ddr)
-			plxj_we_r <= 1'b0;
-		else
-			plxj_we_r <= plxj_we_c;
-	end
-	always @(posedge clk_ddr) begin
-		if (reset_ddr)
-			plxj_we_dup <= 1'b0;
-		else
-			plxj_we_dup <= plxj_we_r;
-	end
-	always @(posedge clk_ddr) begin
-		if (reset_ddr)
-			plxj_we_go <= 1'b0;
-		else
-			plxj_we_go <= plxj_we_dup;
-	end
-
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			state_ddr <= S_IDLE;
@@ -1145,22 +1124,17 @@ module ddr_frame_store #(
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					// PLXJ FIRST. compose ae26f31e put ACK before doorbell but
-					// still after fills/mbox. Leftover PLXK → has_frame/swap_pending
-					// keeps need_y_cur_c=1 on analog Template; fills stole every
-					// S_IDLE beat (ca4ca655 still token 4 vs leftover 3). Gold
-					// 5f1c8614 waits 250 ms. Pre-play / idle has_frame=0: ACK even
-					// mid-scan (nothing to tear). Once a frame is up, blank-only.
-					// Sample only. WE is S_PLXJ_ISSUE (extra register stage).
-					// plxj_req gates the chain tail so a leftover go cannot
-					// re-issue after WRITE_WAIT returns to S_IDLE.
-					if (plxj_we_go && plxj_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					// PLXJ FIRST. mux7: take on plxj_req (not we_go pulse).
+					// mux6 1e77c26d: want token=5 last=4 then mailbox token=5
+					// after timeout — nomerge we_go missed the !BUSY beat.
+					// Park every other S_IDLE arm while plxj_req, including
+					// analog Template rd_active. Sample here; WE in S_PLXJ_ISSUE.
+					if (plxj_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						plxj_addr_r <= ASPECT_ACK_W;
 						plxj_din_r <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
 						plxj_req <= 1'b0;
 						state_ddr <= S_PLXJ_ISSUE;
-					end else if (plxj_req && (!rd_act_s2 || !has_frame_d2)) begin
-						// Park while the nomerge chain (r→dup→go) fills.
+					end else if (plxj_req) begin
 						state_ddr <= S_IDLE;
 					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
