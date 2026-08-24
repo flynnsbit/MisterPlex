@@ -37,6 +37,14 @@ if ! grep -q 'rtl/h264_cabac.sv' "$ROOT/fpga/Plex_MiSTer/files.qip"; then
   echo "RTL SIM ERROR: files.qip does not list rtl/h264_cabac.sv" >&2
   exit 2
 fi
+if ! grep -Rq 'h264_cabac u_cabac' "$ROOT/fpga/Plex_MiSTer/rtl"; then
+  echo "RTL SIM ERROR: h264_decode_core does not instantiate h264_cabac u_cabac" >&2
+  exit 2
+fi
+if ! grep -Rq 'ENABLE_CABAC(1.b1)' "$ROOT/fpga/Plex_MiSTer/rtl"; then
+  echo "RTL SIM ERROR: stream_path product_decode_core does not set ENABLE_CABAC=1" >&2
+  exit 2
+fi
 
 mkdir -p "$BUILD" "$BUILD_RENORM" "$BUILD_INIT"
 INCDIR="$ROOT/fpga/Plex_MiSTer/rtl"

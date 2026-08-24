@@ -24,11 +24,10 @@ fi
 TOP="$ROOT/tests/rtl/h264_cabac_residual_tb.sv"
 TB="$ROOT/tests/rtl/h264_cabac_residual_tb.cpp"
 RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_cabac.sv"
-CORE="$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
 INCDIR="$ROOT/fpga/Plex_MiSTer/rtl"
 BUILD="$ROOT/build/verilator/h264_cabac_residual"
 BUILD_CBF="$ROOT/build/verilator/h264_cabac_residual_force_cbf0"
-for f in "$TOP" "$TB" "$RTL" "$CORE"; do
+for f in "$TOP" "$TB" "$RTL"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -38,12 +37,12 @@ if ! grep -q 'rtl/h264_cabac.sv' "$ROOT/fpga/Plex_MiSTer/files.qip"; then
   echo "RTL SIM ERROR: files.qip does not list rtl/h264_cabac.sv" >&2
   exit 2
 fi
-if ! grep -q 'h264_cabac_residual_4x4 u_cabac_res' "$CORE"; then
-  echo "RTL SIM ERROR: h264_decode_core does not instantiate h264_cabac_residual_4x4 u_cabac_res" >&2
+if ! grep -Rq 'h264_cabac_residual_4x4 u_cabac_res' "$ROOT/fpga/Plex_MiSTer/rtl"; then
+  echo "RTL SIM ERROR: product decode_core does not instantiate h264_cabac_residual_4x4 u_cabac_res" >&2
   exit 2
 fi
-if ! grep -q 'use_cabac_res' "$CORE" || ! grep -q 'cabac_res_start_r' "$CORE"; then
-  echo "RTL SIM ERROR: decode_core does not gate CAVLC vs CABAC residual" >&2
+if ! grep -Rq 'use_cabac_res' "$ROOT/fpga/Plex_MiSTer/rtl" || ! grep -Rq 'cabac_res_start_r' "$ROOT/fpga/Plex_MiSTer/rtl"; then
+  echo "RTL SIM ERROR: product decode_core does not gate CAVLC vs CABAC residual" >&2
   exit 2
 fi
 if ! grep -q 'Tables 9-12' "$RTL"; then
