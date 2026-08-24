@@ -25,6 +25,7 @@ grep -q '#set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"' "$
   || { echo "FAIL L4 must stay commented off in Plex.qsf" >&2; exit 1; }
 # PLXJ must be the first S_IDLE arm (fills starved compose ae26f31e).
 # mux5: chained qualify + S_PLXJ_ISSUE extra WE stage (same-clock hold -0.071).
+# mux7: park ALL fill/doorbell/mbox while plxj_req; leftover PLXK gated until ACK.
 awk '
   /case \(state_ddr\)/ {in_case=1}
   in_case && /S_IDLE: begin/ {in_idle=1}
@@ -32,6 +33,16 @@ awk '
   in_idle && /frame_mbox_req/ {print "MBOX_BEFORE_PLXJ"; exit 1}
 ' "$STORE" | grep -q PLXJ_FIRST \
   || { echo "FAIL PLXJ ACK is not first S_IDLE arm (fills will starve analog Template)" >&2; exit 1; }
+awk '
+  /case \(state_ddr\)/ {in_case=1}
+  in_case && /S_IDLE: begin/ {in_idle=1}
+  in_idle && /else if \(plxj_req\) begin/ {print "PARK_ALL"; exit 0}
+  in_idle && /else if \(plxj_req && \(!rd_act_s2/ {print "PARK_BLANK_ONLY"; exit 1}
+  in_idle && /frame_mbox_req/ {print "NO_PARK"; exit 1}
+' "$STORE" | grep -q PARK_ALL \
+  || { echo "FAIL S_IDLE must park fill/doorbell while plxj_req (leftover PLXK starve)" >&2; exit 1; }
+grep -q 'if (db_new_seq && plxj_acked)' "$STORE" \
+  || { echo "FAIL leftover PLXK swap must wait for first PLXJ ACK of this load" >&2; exit 1; }
 grep -q 'wire plxj_we_c = plxj_req && plxj_blank_ok && (state_ddr == S_IDLE)' "$STORE" \
   || { echo "FAIL plxj_we_c must register plxj_req && blank_ok in S_IDLE" >&2; exit 1; }
 grep -q 'wire plxj_blank_ok = !rd_act_s2 || !has_frame_d2' "$STORE" \
@@ -42,6 +53,8 @@ grep -q 'plxj_we_dup <= plxj_we_r' "$STORE" \
   || { echo "FAIL plxj qualify must be a nomerge chain (not parallel AND)" >&2; exit 1; }
 grep -q 'plxj_we_go <= plxj_we_dup' "$STORE" \
   || { echo "FAIL plxj_we_go must chain from plxj_we_dup" >&2; exit 1; }
+grep -q 'parameter \[31:0\] ANALOG_DOORBELL_PHYS = 32.h3007_F138' "$STORE" \
+  || { echo "FAIL ANALOG_DOORBELL_PHYS must stay 0x3007F138 (not leftover 0x3047F130)" >&2; exit 1; }
 if grep -nE '^[[:space:]]*set_clock_groups[[:space:]]+-asynchronous' \
      "$ROOT/fpga/Plex_MiSTer/Plex.sdc" "$ROOT/fpga/Plex_MiSTer/Plex_analog_mux.sdc"; then
   echo "FAIL do not hide clk_ddr hold with new -asynchronous clock groups" >&2
@@ -94,6 +107,10 @@ if [[ "$GREEN_RC" -ne 0 ]]; then
 fi
 if ! grep -q 'OK plxj ack: toggle then WE 0x3007F130' <<<"$GREEN_OUT"; then
   echo "FAIL plxj ack green: missing OK WE line" >&2
+  exit 1
+fi
+if ! grep -q 'leftover PLXK: has_frame=0 before ACK' <<<"$GREEN_OUT"; then
+  echo "FAIL plxj ack green: leftover PLXK was not isolated before ACK" >&2
   exit 1
 fi
 

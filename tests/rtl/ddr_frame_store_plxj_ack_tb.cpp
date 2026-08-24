@@ -14,9 +14,15 @@ double sc_time_stamp() { return (double)main_time; }
 
 static constexpr uint32_t kPlxjPhys = 0x3007F130u;
 static constexpr uint32_t kL4PlxjPhys = 0x3047F130u;
+static constexpr uint32_t kDoorbellPhys = 0x3001F000u; // TB DOORBELL_PHYS
+static constexpr uint32_t kPlxhPhys = 0x3007F138u;
 static constexpr uint32_t kMagicJ = 0x504C584Au;
 static constexpr uint32_t kMagicA = 0x41584C50u;
+static constexpr uint32_t kMagicK = 0x504C584Bu;
 static constexpr int kWait = 8000;
+// Leftover HDMI-era PLXK: token 3, YUV420P format in token[30:29]=1.
+static constexpr uint64_t kLeftoverPlxk =
+    (1ull << 61) | (3ull << 32) | static_cast<uint64_t>(kMagicK);
 
 static void tick(Vddr_frame_store_plxj_ack_tb* t) {
 	t->clk = 0;
@@ -34,9 +40,14 @@ static void service_idle_ddr(Vddr_frame_store_plxj_ack_tb* t) {
 	t->DDRAM_DOUT_READY = 0;
 	t->DDRAM_DOUT = 0;
 	if (t->DDRAM_RD && !t->DDRAM_BUSY) {
-		// Leftover gold doorbell/PLXH must not be required for ACK.
+		const uint32_t phys = ((uint32_t)t->DDRAM_ADDR) << 3;
 		t->DDRAM_DOUT_READY = 1;
-		t->DDRAM_DOUT = 0;
+		if (phys == kDoorbellPhys)
+			t->DDRAM_DOUT = kLeftoverPlxk;
+		else if (phys == kPlxhPhys)
+			t->DDRAM_DOUT = 0; // no live PLXH; analog is reset-snapshot OSD
+		else
+			t->DDRAM_DOUT = 0;
 	}
 }
 
@@ -140,8 +151,19 @@ int main(int argc, char** argv) {
 	idle(t, nullptr, 20);
 	t->reset = 0;
 	idle(t, nullptr, 40);
+	// Leftover HDMI PLXK on every doorbell poll (token 3). Must not set
+	// has_frame/swap before the first ACK, and must not starve ioctl-4 WE.
+	idle(t, nullptr, 512);
+	if (t->has_frame) {
+		std::printf("FAIL leftover PLXK set has_frame before first ACK\n");
+		// keep going; ACK miss is the product fail
+	} else {
+		std::printf("leftover PLXK: has_frame=0 before ACK (isolated)\n");
+	}
 
 	int fails = 0;
+	if (t->has_frame)
+		fails++;
 	const uint8_t tog0 = t->ack_toggle ? 1 : 0;
 
 	PlxjWe we4{};
@@ -199,6 +221,6 @@ int main(int argc, char** argv) {
 		std::printf("FAIL ddr_frame_store_plxj_ack: %d failure(s)\n", fails);
 		return 1;
 	}
-	std::printf("OK plxj ack: toggle then WE 0x3007F130 token=4 analog-DE has_frame=0\n");
+	std::printf("OK plxj ack: toggle then WE 0x3007F130 token=4 analog-DE leftover-PLXK isolated\n");
 	return 0;
 }

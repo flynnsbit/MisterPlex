@@ -63,7 +63,9 @@ localparam CONF_STR = {
 	// O[5:4] CONTENT resolution → PMS weak ladder / DECODE (misterplexd).
 	// O[15:14] ANALOG raster (reset-latched mux v1; HPS PLXH 0x3007F138 2FF).
 	// 720p HDMI analog is parked; menu 3 is 480i 15 kHz weave, not a 1280 bank.
-	// Live F12 / live doorbell hop does not retarget H. Default remains Follow.
+	// Live F12 / live doorbell hop does not retarget H. Do not reorder Analog
+	// options (analog_menu 1/2/3 glass = 240p15 / 480p31 / 480i). LCD default
+	// is 480p 31kHz: v,11 discards saved Follow; analog_menu 0 aliases to 2.
 	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720) decode only.
 	"O[5:4],Content resolution,240p,480p,720p,720p;",
 	// 0=Follow content; 1=240p 15kHz; 2=480p ~31kHz; 3=480i 15kHz VGA_F1.
@@ -87,7 +89,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,10;", // reset OSD: v10 O[15:14]=Analog raster (was Display res)
+	"v,11;", // reset OSD: Analog default 480p 31kHz (O[15:14]=2). Keep option order.
 	"V,v",`BUILD_DATE
 };
 
@@ -235,17 +237,20 @@ pll pll
 wire reset = RESET | status[0] | buttons[1];
 
 // O[5:4] CONTENT (PMS/DECODE) — misterplexd OSD mailbox.
-// O[15:14] ANALOG raster (v10). Present bank stays 640×480 on this RBF
-// (L4 720p parked). Follow+720p content → 480p ~31 kHz analog, never 15 kHz HDMI.
+// O[15:14] ANALOG raster (v11). Present bank stays 640×480 on this RBF
+// (L4 720p parked). LCD product default latches 31 kHz without parent
+// set_status: Main CFG zeros = Follow (0); alias to option 2 (480p 31kHz).
+// analog_menu 1/2/3 glass mapping unchanged. Never 15 kHz HDMI ascal.
 wire [1:0]  content_res_sel     = status[5:4];
-wire [1:0]  analog_menu         = status[15:14];
-// analog_sel: 0=240p15, 1=480p31, 2=480i. Follow maps 240p content → 15 kHz,
-// anything else (480p/720p) → 31 kHz. forced_scandoubler on Follow = LCD-safe 31 kHz.
-// analog_raster_mux 2FF-snapshots HPS PLXH doorbell (0x3007F138) at reset, else
-// this OSD combo. Live F12 Analog/Content / live doorbell hop does not retarget
-// H class. Content O[5:4] is DECODE, not a 15 kHz switch. Not leftover 0x3047F130.
+wire [1:0]  analog_menu         = (status[15:14] == 2'd0) ? 2'd2 : status[15:14];
+// analog_sel: 0=240p15, 1=480p31, 2=480i. analog_menu 1/2/3 = those classes.
+// analog_menu 0 (Follow, power-on) aliases to 2 above so sel=1 (480p31).
+// forced_scandoubler on Follow also 31 kHz (dead once aliased). analog_raster_mux
+// 2FF-snapshots HPS PLXH doorbell (0x3007F138) at reset, else this OSD combo.
+// Live F12 Analog/Content / live doorbell hop does not retarget H class.
+// Content O[5:4] is DECODE, not a 15 kHz switch. Not leftover 0x3047F130.
 wire [1:0]  analog_from_content = (content_res_sel == 2'd0) ? 2'd0 : 2'd1;
-wire        analog_follow_lcd   = forced_scandoubler && (analog_menu == 2'd0);
+wire        analog_follow_lcd   = forced_scandoubler && (status[15:14] == 2'd0);
 wire [1:0]  analog_sel          = analog_follow_lcd ? 2'd1 :
                                   (analog_menu == 2'd0) ? analog_from_content :
                                   (analog_menu == 2'd1) ? 2'd0 :

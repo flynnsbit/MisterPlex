@@ -562,13 +562,16 @@ module ddr_frame_store #(
 	);
 	reg        plxa_tog_s1, plxa_tog_s2, plxa_tog_seen;
 	reg        plxj_req;
+	reg        plxj_acked; // first PLXJ WE of this load; leftover PLXK gated until then
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
 	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (blank-only PLXJ WE)
 	// Hold cut: mux4 Slack : -0.093 → mux5 Slack : -0.071 (same-clock clk_ddr).
 	// Chain nomerge qualify FFs (not parallel AND) then S_PLXJ_ISSUE samples
-	// ADDR/DIN and asserts WE next clk_ddr — keepv21 class. Combo blank/req
-	// still parks other S_IDLE arms so fills cannot starve gold 250 ms ACK.
+	// ADDR/DIN and asserts WE next clk_ddr — keepv21 class. Do not lengthen
+	// combo into DDRAM_WE. S_IDLE parks fill/doorbell/mbox while plxj_req
+	// (not only blank_ok) so leftover HDMI PLXK need_y cannot steal the
+	// 3-cycle chain + S_PLXJ_ISSUE inside gold 5f1c8614 250 ms.
 	// clk_sys/clk_ddr stay related-edge. Do not false_path. Do not
 	// create_generated_clock on analog ce_pix. Do not retune clk_sys.
 	wire plxj_blank_ok = !rd_act_s2 || !has_frame_d2;
@@ -964,6 +967,7 @@ module ddr_frame_store #(
 			plxa_tog_s2 <= 1'b0;
 			plxa_tog_seen <= 1'b0;
 			plxj_req <= 1'b0;
+			plxj_acked <= 1'b0;
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
@@ -1126,7 +1130,12 @@ module ddr_frame_store #(
 			end
 			if (db_token_new)
 				stale_db_polls <= '0;
-			if (db_new_seq) begin
+			// Leftover HDMI-era PLXK looks "new" after reset (have_seq=0).
+			// last_seq still samples so the leftover token is seen (stale after
+			// ACK). Swap/has_frame wait for the first PLXJ ACK of this load so
+			// analog Template fills cannot starve gold 250 ms. Gold PLAY writes
+			// a new token after ACK. Do not combo this into DDRAM_WE.
+			if (db_new_seq && plxj_acked) begin
 				pending_bank_ddr <= DDRAM_DOUT[63];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
@@ -1145,22 +1154,21 @@ module ddr_frame_store #(
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					// PLXJ FIRST. compose ae26f31e put ACK before doorbell but
-					// still after fills/mbox. Leftover PLXK → has_frame/swap_pending
-					// keeps need_y_cur_c=1 on analog Template; fills stole every
-					// S_IDLE beat (ca4ca655 still token 4 vs leftover 3). Gold
-					// 5f1c8614 waits 250 ms. Pre-play / idle has_frame=0: ACK even
-					// mid-scan (nothing to tear). Once a frame is up, blank-only.
-					// Sample only. WE is S_PLXJ_ISSUE (extra register stage).
-					// plxj_req gates the chain tail so a leftover go cannot
-					// re-issue after WRITE_WAIT returns to S_IDLE.
+					// PLXJ FIRST. Leftover HDMI PLXK → has_frame/swap_pending
+					// keeps need_y_* ; fills + PIPELINE sched_valid stole every
+					// S_IDLE beat (mux3 token 4 vs leftover 3). Gold 5f1c8614
+					// waits 250 ms. While plxj_req: do not take fill / mbox /
+					// doorbell arms — sit in S_IDLE so r→dup→go can fill.
+					// WE still S_PLXJ_ISSUE (registered). blank_ok still
+					// qualifies plxj_we_c (has_frame=0: ACK mid-scan; else blank).
 					if (plxj_we_go && plxj_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						plxj_addr_r <= ASPECT_ACK_W;
 						plxj_din_r <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
 						plxj_req <= 1'b0;
+						plxj_acked <= 1'b1;
 						state_ddr <= S_PLXJ_ISSUE;
-					end else if (plxj_req && (!rd_act_s2 || !has_frame_d2)) begin
-						// Park while the nomerge chain (r→dup→go) fills.
+					end else if (plxj_req) begin
+						// Park fill/doorbell/mbox. Not combo into DDRAM_WE.
 						state_ddr <= S_IDLE;
 					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
