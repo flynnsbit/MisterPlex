@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Analog mux v1 reset-latch: live fstart sel change must not retarget H class.
 # Separate from test_analog_raster_mux_verilator.sh (class GREEN stays green).
-# Expected RED on current analog_raster_mux.sv until w-fpga. rc=1 is not PASS.
+# mux6 RTL is reset-only; GREEN rc=0. Soft-skip ≠ PASS.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
@@ -15,6 +15,9 @@ VERILATOR_RC=$?
 set -e
 if [[ "$VERILATOR_RC" -eq 127 ]]; then
   echo "RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation." >&2
+  exit 3
+elif [[ "$VERILATOR_RC" -eq 77 ]]; then
+  echo "RTL SIM ERROR: Verilator probe rc=77 is skip, not PASS." >&2
   exit 3
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
@@ -33,11 +36,22 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$RTL_MUX" "$RTL_BARS" "$TB"
 
 set +e
-"$BUILD/Vanalog_raster_mux"
+LATCH_OUT="$("$BUILD/Vanalog_raster_mux" 2>&1)"
 LATCH_RC=$?
 set -e
+printf '%s\n' "$LATCH_OUT"
 echo "analog_raster_mux_latch true rc=$LATCH_RC"
-if [[ "$LATCH_RC" -ne 0 ]]; then
-  echo "analog_raster_mux_latch RED/BLOCKED until w-fpga reset-only sel_lat (not PASS)" >&2
+if [[ "$LATCH_RC" -eq 77 ]]; then
+  echo "FAIL analog_raster_mux_latch: rc=77 is skip not PASS" >&2
+  exit 1
 fi
-exit "$LATCH_RC"
+if [[ "$LATCH_RC" -ne 0 ]]; then
+  echo "FAIL analog_raster_mux_latch green" >&2
+  exit "$LATCH_RC"
+fi
+if ! grep -q 'OK analog_raster_mux_latch' <<<"$LATCH_OUT"; then
+  echo "FAIL analog_raster_mux_latch: missing OK line" >&2
+  exit 1
+fi
+echo "OK analog_raster_mux_latch GREEN true rc=$LATCH_RC"
+exit 0

@@ -43,13 +43,92 @@ assert_gold_pair_conf "$GOLD_480I" "480i"
 ok "pair_conf gold OSD_CONTROL=0 lead 40 drop 0 PLEX_BASE untouched"
 
 # --- HDMI LCD refuse ascal 15 kHz (6500 kHz) --------------------------------
+# Live symbols: header predicate videoModeCmdIsHdmiLcdSafe / ForbiddenOnHdmiLcd;
+# media_player applyDisplayRaster uses videoModeCmdForScoringPath(..., displaySink_)
+# (never pokes kVideoModeCmd240p 6500 on HdmiLcd). Do not grep the retired
+# media_player videoModeCmdIsHdmiLcdSafe call site.
+CXX="${CXX:-g++}"
 grep -q 'video_mode 320,16,32,48,240,4,3,15,6500' "$DR" || \
   fail "kVideoModeCmd240p must stay the 6500 kHz 15 kHz CRT modeline"
 grep -q 'videoModeIsCrt15k' "$DR" || fail "display_raster missing videoModeIsCrt15k"
+grep -q 'videoModeForbiddenOnHdmiLcd' "$DR" || \
+  fail "HDMI LCD path missing videoModeForbiddenOnHdmiLcd"
 grep -q 'videoModeCmdIsHdmiLcdSafe' "$DR" || \
   fail "HDMI LCD path missing videoModeCmdIsHdmiLcdSafe (must refuse kVideoModeCmd240p 6500)"
-grep -q 'videoModeCmdIsHdmiLcdSafe' "$MP" || \
-  fail "applyDisplayRaster HDMI LCD must refuse ascal 15 kHz via videoModeCmdIsHdmiLcdSafe"
+grep -q 'videoModeCmdForScoringPath' "$DR" || \
+  fail "HDMI LCD scoring missing videoModeCmdForScoringPath"
+if grep -q 'videoModeCmdForScoringPath(display.label, displaySink_)' "$MP"; then
+  ok "applyDisplayRaster HDMI LCD uses videoModeCmdForScoringPath(..., displaySink_)"
+else
+  fail "applyDisplayRaster must refuse 15 kHz via videoModeCmdForScoringPath(..., displaySink_)"
+fi
+
+mkdir -p "$ROOT/build"
+REFUSE_BIN="$ROOT/build/test_hdmi_lcd_refuse_15k"
+if ! "$CXX" -std=c++17 -Wall -Wextra -I"$ROOT/host" -o "$REFUSE_BIN" \
+     "$ROOT/tests/unit/test_hdmi_lcd_refuse_15k.cpp"; then
+  fail "compile test_hdmi_lcd_refuse_15k"
+else
+  set +e
+  REFUSE_OUT="$("$REFUSE_BIN" 2>&1)"
+  REFUSE_RC=$?
+  set +e
+  printf '%s\n' "$REFUSE_OUT"
+  echo "hdmi_lcd_refuse GREEN true rc=$REFUSE_RC"
+  if [ "$REFUSE_RC" -eq 0 ] && grep -q 'test_hdmi_lcd_refuse_15k: OK' <<<"$REFUSE_OUT"; then
+    ok "test_hdmi_lcd_refuse_15k GREEN"
+  else
+    fail "test_hdmi_lcd_refuse_15k expected rc=0 OK, got rc=$REFUSE_RC"
+  fi
+fi
+
+# RED twin: plant-delete the refuse predicate, expect C++ twin fail, restore.
+HDR_BAK=$(mktemp)
+cp "$DR" "$HDR_BAK"
+restore_hdr() { cp "$HDR_BAK" "$DR"; rm -f "$HDR_BAK"; }
+trap restore_hdr EXIT
+python3 - "$DR" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+text = p.read_text()
+old = """inline bool videoModeCmdIsHdmiLcdSafe(const char* cmd) {
+    return cmd && cmd[0] && !videoModeForbiddenOnHdmiLcd(cmd);
+}"""
+new = """inline bool videoModeCmdIsHdmiLcdSafe(const char* cmd) {
+    (void)cmd;
+    return true; // PLANTED: refuse deleted
+}"""
+if old not in text:
+    sys.exit("plant: videoModeCmdIsHdmiLcdSafe body not found")
+p.write_text(text.replace(old, new, 1))
+PY
+if [ $? -ne 0 ]; then
+  fail "plant HDMI refuse deletion"
+else
+  REFUSE_RED="$ROOT/build/test_hdmi_lcd_refuse_15k_planted"
+  if ! "$CXX" -std=c++17 -Wall -Wextra -I"$ROOT/host" -o "$REFUSE_RED" \
+       "$ROOT/tests/unit/test_hdmi_lcd_refuse_15k.cpp"; then
+    fail "compile planted test_hdmi_lcd_refuse_15k"
+  else
+    set +e
+    RED_OUT="$("$REFUSE_RED" 2>&1)"
+    RED_RC=$?
+    set +e
+    printf '%s\n' "$RED_OUT"
+    echo "hdmi_lcd_refuse RED planted-delete true rc=$RED_RC"
+    if [ "$RED_RC" -eq 0 ]; then
+      fail "planted refuse-delete unexpectedly passed"
+    elif [ "$RED_RC" -eq 77 ]; then
+      fail "planted refuse-delete rc=77 is skip not FAIL"
+    else
+      ok "RED: deleting videoModeCmdIsHdmiLcdSafe refuse fails twin (rc=$RED_RC)"
+    fi
+  fi
+fi
+restore_hdr
+trap - EXIT
+rm -f "$ROOT/build/test_hdmi_lcd_refuse_15k_planted"
 
 # --- leftover PLXJ must not select 720p on SD-family live RBF ----------------
 [ -f "$NAMED" ] || { echo "missing $NAMED" >&2; exit 1; }

@@ -1,9 +1,6 @@
 // Analog raster mux v1: H class is reset-latched. Live fstart sel change
 // must NOT retarget 15.6 kHz <-> 31 kHz. field_odd may still toggle only
-// when reset latched 480i.
-//
-// Current analog_raster_mux.sv assigns sel_lat on fstart — this TB is RED
-// until w-fpga lands reset-only latch. Do not call rc=1 PASS.
+// when reset latched 480i. mux6 doorbell ports stay invalid (OSD path).
 
 #include "Vanalog_raster_mux.h"
 #include "verilated.h"
@@ -30,6 +27,8 @@ void reset_sel(Vanalog_raster_mux* top, int sel) {
 	top->reset = 1;
 	top->pal = 0;
 	top->raster_sel = static_cast<uint8_t>(sel);
+	top->doorbell_sel = 0;
+	top->doorbell_valid = 0;
 	top->content_index = 0;
 	top->pattern = 0;
 	for (int i = 0; i < 8; ++i)
