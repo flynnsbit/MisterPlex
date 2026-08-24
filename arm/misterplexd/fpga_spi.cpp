@@ -799,6 +799,11 @@ void FpgaSpi::releaseDdrMap() {
 
 bool FpgaSpi::ensureDdrMailboxMap() {
     const uint32_t page = ddrLayout_.doorbell_phys & ~0xFFFu;
+    return ensureDdrMailboxMapPage(page);
+}
+
+bool FpgaSpi::ensureDdrMailboxMapPage(uint32_t page) {
+    page &= ~0xFFFu;
     if (ddrMboxMap_ && ddrMboxFd_ >= 0 && ddrMboxPagePhys_ == page)
         return true;
     if (ddrMboxMap_) {
@@ -828,7 +833,8 @@ bool FpgaSpi::ensureDdrMailboxMap() {
 }
 
 volatile uint32_t* FpgaSpi::ddrMailboxWord(uint32_t phys) {
-    if (!ensureDdrMailboxMap() || !ddrMboxMap_)
+    const uint32_t page = phys & ~0xFFFu;
+    if (!ensureDdrMailboxMapPage(page) || !ddrMboxMap_)
         return nullptr;
     if (phys < ddrMboxPagePhys_ || phys + 8 > ddrMboxPagePhys_ + 4096u)
         return nullptr;
@@ -1971,14 +1977,14 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    // RTL: FRAME_MAILBOX_PHYS = DOORBELL_PHYS + 0x118 (not fixed 0x3007F118).
-    // Legacy kUnderrunMailboxPhys is 480-era absolute; product 720 doorbell is
-    // phys+2*bank_stride-0x1000 (e.g. 0x302FF000) so PLXF lives at +0x118.
+    // Product 480p page is 0x3007F118 even when doorbell is 0x300FF000.
+    // L4 (parked) stays doorbell-relative. doorbell+0x118 on 640×480 is 0x300FF118.
     if (ddrLayout_.doorbell_phys < ddrLayout_.phys_base) {
         setErr("readFrameStoreStatus: invalid doorbell_phys");
         return false;
     }
-    const uint32_t plxfPhys = ddrLayout_.doorbell_phys + 0x118u;
+    const uint32_t plxfPhys =
+        mailbox_abi::productMailboxPhys(ddrLayout_.doorbell_phys, kUnderrunMailboxPhys);
     if (plxfPhys < ddrLayout_.phys_base) {
         setErr("readFrameStoreStatus: PLXF mailbox is outside DDR frame window");
         return false;
@@ -2025,13 +2031,14 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    // RTL: BANK_MAILBOX_PHYS = DOORBELL_PHYS + 0x128. Absolute 0x3007F128 is the
-    // pre-cut-b 480 map and lands in bank payload on 720 (plxd_used=0 forever).
+    // Product 480p page is kPlxdAddr 0x3007F128. doorbell+0x128 on 640×480 is
+    // 0x300FF128; leftover L4 is 0x3047F128. SDfamily must not use those.
     if (ddrLayout_.doorbell_phys < ddrLayout_.phys_base) {
         setErr("readBankRelease: invalid doorbell_phys");
         return false;
     }
-    const uint32_t plxdPhys = ddrLayout_.doorbell_phys + 0x128u;
+    const uint32_t plxdPhys =
+        mailbox_abi::productMailboxPhys(ddrLayout_.doorbell_phys, kBankReleaseMailboxPhys);
     volatile uint32_t* mw = ddrMailboxWord(plxdPhys);
     if (!mw) {
         setErr("readBankRelease: PLXD mailbox is outside uncached doorbell page");
@@ -2099,7 +2106,15 @@ bool FpgaSpi::readSourceAspectAck(SourceAspectAck& out) {
         setErr("readSourceAspectAck: invalid doorbell_phys");
         return false;
     }
-    const uint32_t plxjPhys = ddrLayout_.doorbell_phys + 0x130u;
+    // Gold 5f1c8614 / kPlxjAddr 0x3007F130. doorbell+0x130 is 0x300FF130 on
+    // 640×480 (empty) or leftover L4 0x3047F130 after a 720p lab.
+    const uint32_t plxjPhys =
+        mailbox_abi::productMailboxPhys(ddrLayout_.doorbell_phys, mailbox_abi::kPlxjAddr);
+    if (!mailbox_abi::leftoverL4PlxjMustNotSatisfyAck(plxjPhys) &&
+        ddrLayout_.doorbell_phys != mailbox_abi::kL4DoorbellPhys) {
+        setErr("readSourceAspectAck: leftover L4 PLXJ 0x3047F130 must not satisfy 480p ACK");
+        return false;
+    }
     volatile uint32_t* mw = ddrMailboxWord(plxjPhys);
     if (!mw) {
         setErr("readSourceAspectAck: PLXJ mailbox is outside uncached doorbell page");

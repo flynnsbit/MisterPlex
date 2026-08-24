@@ -87,8 +87,41 @@ constexpr unsigned kPlxdFramesDoneWidth = 16;
 //   [43:32]  committed DAR X
 //   [55:44]  committed DAR Y
 //   [63:56]  packet token echoed from PLXA
+// Product 480p mailbox page (gold 5f1c8614). 8-byte slot 0x3007F130..0x3007F137.
+// PLXA (ioctl index 4, 9 bytes) lives in source_aspect_ack, not in this DDR slot.
 constexpr uint32_t kPlxjAddr  = 0x3007F130u;
 constexpr uint32_t kPlxjMagic = 0x504C584Au; // "PLXJ"
+
+// PLXH — Analog H-class doorbell (ARM→FPGA). Sampled only at core reset.
+// Layout (64-bit, little-endian):
+//   [31:0]   magic 0x504C5848 "PLXH"
+//   [33:32]  analog_sel 0=240p15, 1=480p31, 2=480i (3=reserved → OSD fallback)
+//   [63:34]  reserved / seq (FPGA ignores; live hop does not retarget)
+// Address is the 480p mailbox page, 8-byte slot 0x3007F138..0x3007F13F.
+// Adjacent to PLXJ (no overlap). NOT leftover L4 PLXJ 0x3047F130.
+constexpr uint32_t kPlxhAddr  = 0x3007F138u;
+constexpr uint32_t kPlxhMagic = 0x504C5848u; // "PLXH"
+
+// Leftover L4 page after a 720p lab. Sticky PLXJ magic here must not satisfy
+// the 480p-page ACK and must not pin live_glass=L4 on an SD-family RBF.
+constexpr uint32_t kL4DoorbellPhys     = 0x3047F000u;
+constexpr uint32_t kL4LeftoverPlxjAddr = 0x3047F130u;
+
+// Resolve FPGA↔ARM mailbox phys for this load.
+// Product 640×480 doorbell is 0x300FF000; the 480p mailbox page stays 0x3007Fxxx
+// (gold kPlxjAddr). doorbell+0x130 would land 0x300FF130 (empty) or leftover L4
+// 0x3047F130. L4 (parked) keeps doorbell-relative offsets.
+constexpr uint32_t productMailboxPhys(uint32_t doorbell_phys, uint32_t spec_addr)
+{
+    return (doorbell_phys == kL4DoorbellPhys)
+               ? (doorbell_phys + (spec_addr - kPlxkAddr))
+               : spec_addr;
+}
+
+constexpr bool leftoverL4PlxjMustNotSatisfyAck(uint32_t ack_phys)
+{
+    return ack_phys != kL4LeftoverPlxjAddr;
+}
 
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
@@ -103,7 +136,7 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 8> kAllMagics = {{
+constexpr std::array<MagicEntry, 9> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -111,12 +144,13 @@ constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
     {"PLXJ", kPlxjMagic},
+    {"PLXH", kPlxhMagic},
     {"PLXB", kPlxbMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 10> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -125,6 +159,7 @@ constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
     {"PLXJ", kPlxjAddr,     kPlxjMagic,     8, "fpga_to_arm",  true},
+    {"PLXH", kPlxhAddr,     kPlxhMagic,     8, "arm_to_fpga",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

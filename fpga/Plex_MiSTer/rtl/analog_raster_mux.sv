@@ -16,7 +16,9 @@
 // STA: fpga/Plex_MiSTer/Plex_analog_mux.sdc — do not create_generated_clock
 // on ce_pix / analog HSync. 15.6 kHz is H-rate; Fmax stays clk_sys 20 MHz.
 //
-// analog_sel / OSD O[15:14] / future HPS doorbell: reset-latch only.
+// analog_sel / OSD O[15:14] / HPS PLXH doorbell: reset-latch only.
+// PLXH is 0x3007F138 magic 0x504C5848 (8 bytes after PLXJ 0x3007F130).
+// NOT leftover L4 PLXJ 0x3047F130. PLXA 9-byte ioctl is SPI, not this slot.
 // sel_lat does not follow live F12. field_odd still toggles on frame_start.
 //
 // HDMI LCD must never take a 15 kHz ascal video_mode from this module.

@@ -4,7 +4,12 @@
     "Both RTL (SystemVerilog) and ARM (C++) sides MUST match this file.",
     "test_rtl_invariants.py gates against it; a mismatch is a hard fail.",
     "Adding a new mailbox: append here, then implement both sides.",
-    "NEVER duplicate an address or magic \u2014 the gate rejects collisions."
+    "NEVER duplicate an address or magic \u2014 the gate rejects collisions.",
+    "480p mailbox page origin 0x3007F000 (mailbox_abi kPlxkAddr / 320x240 doorbell).",
+    "Product 640x480 PLXK poll is 0x300FF000 (end of dual 512KiB banks).",
+    "PLXJ ACK 0x3007F130 and analog PLXH 0x3007F138 stay on the 0x3007F000 page.",
+    "PLXA is ioctl index 4 (9 bytes in source_aspect_ack), not a DDR mailbox.",
+    "Leftover L4 PLXJ 0x3047F130 must not satisfy the 480p-page ACK."
   ],
   "mailboxes": [
     {
@@ -108,8 +113,41 @@
       "_note": "ARM constants pending w-osd commit alignment to PLXD"
     },
     {
+      "name": "PLXJ",
+      "purpose": "Source-aspect ACK (core\u2192HPS). Product 480p page (gold 5f1c8614 / kPlxjAddr). NOT leftover L4 0x3047F130. 8-byte slot; PLXA 9-byte ioctl is SPI, not this DDR word.",
+      "address": "0x3007F130",
+      "magic": "0x504C584A",
+      "rtl_file": "rtl/ddr_frame_store.sv",
+      "rtl_addr_param": "ASPECT_ACK_PHYS",
+      "rtl_magic_param": "MAGIC_J",
+      "arm_addr_const": "kPlxjAddr",
+      "arm_magic_const": "kPlxjMagic",
+      "layout": {
+        "31:0": "magic",
+        "43:32": "committed DAR X",
+        "55:44": "committed DAR Y",
+        "63:56": "packet token echoed from PLXA"
+      }
+    },
+    {
+      "name": "PLXH",
+      "purpose": "Analog H-class doorbell (HPS\u2192core). Sampled only at reset (2FF into clk_sys). Adjacent 8-byte slot after PLXJ. NOT leftover L4 PLXJ 0x3047F130.",
+      "address": "0x3007F138",
+      "magic": "0x504C5848",
+      "rtl_file": "rtl/ddr_frame_store.sv",
+      "rtl_addr_param": "ANALOG_DOORBELL_PHYS",
+      "rtl_magic_param": "MAGIC_H",
+      "arm_addr_const": "kPlxhAddr",
+      "arm_magic_const": "kPlxhMagic",
+      "layout": {
+        "31:0": "magic",
+        "33:32": "analog_sel 0=240p15 1=480p31 2=480i (3=reserved OSD fallback)",
+        "63:34": "reserved (live hop ignored)"
+      }
+    },
+    {
       "name": "PLXK",
-      "purpose": "DDR doorbell (HPS\u2192core)",
+      "purpose": "DDR doorbell (HPS\u2192core). Product 640x480 poll at dual-bank end. Mailbox page origin / 320x240 doorbell is kPlxkAddr 0x3007F000.",
       "address": "0x300FF000",
       "magic": "0x504C584B",
       "rtl_file": "rtl/ddram_frame_rd.sv",

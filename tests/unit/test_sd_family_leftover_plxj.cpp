@@ -20,6 +20,24 @@ int main() {
     using namespace misterplex;
 
     CHECK(mailbox_abi::kPlxjMagic == 0x504C584Au);
+    CHECK(mailbox_abi::kPlxjAddr == 0x3007F130u);
+    CHECK(mailbox_abi::kPlxhAddr == 0x3007F138u);
+    CHECK(mailbox_abi::kPlxhMagic == 0x504C5848u);
+    CHECK(mailbox_abi::kPlxjAddr + 8u == mailbox_abi::kPlxhAddr);
+    CHECK(mailbox_abi::kL4LeftoverPlxjAddr == 0x3047F130u);
+    CHECK(mailbox_abi::leftoverL4PlxjMustNotSatisfyAck(mailbox_abi::kPlxjAddr));
+    CHECK(!mailbox_abi::leftoverL4PlxjMustNotSatisfyAck(mailbox_abi::kL4LeftoverPlxjAddr));
+
+    // Product 640×480 doorbell 0x300FF000 must still ACK at 0x3007F130.
+    CHECK(mailbox_abi::productMailboxPhys(0x300FF000u, mailbox_abi::kPlxjAddr) ==
+          mailbox_abi::kPlxjAddr);
+    CHECK(mailbox_abi::productMailboxPhys(0x3007F000u, mailbox_abi::kPlxjAddr) ==
+          mailbox_abi::kPlxjAddr);
+    CHECK(mailbox_abi::productMailboxPhys(0x300FF000u, mailbox_abi::kPlxhAddr) ==
+          mailbox_abi::kPlxhAddr);
+    CHECK(mailbox_abi::productMailboxPhys(mailbox_abi::kL4DoorbellPhys, mailbox_abi::kPlxjAddr) ==
+          mailbox_abi::kL4LeftoverPlxjAddr);
+    CHECK(0x300FF000u + 0x130u != mailbox_abi::kPlxjAddr);
 
     LiveGlassPin pin;
     pin.core = "Plex";

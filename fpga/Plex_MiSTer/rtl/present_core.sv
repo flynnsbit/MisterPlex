@@ -637,6 +637,8 @@ module present_core #(
 		.FRAME_MAILBOX_PHYS(FS_DOORBELL + 32'h118),
 		.BANK_MAILBOX_PHYS(FS_DOORBELL + 32'h128),
 		.ASPECT_ACK_PHYS(FS_DOORBELL + 32'h130),
+		// Analog H-class doorbell stays on the 480p page (not leftover L4 0x3047F130).
+		.ANALOG_DOORBELL_PHYS(32'h3007_F138),
 		.DYN_BASE_EN(1'b1)
 `else
 		// Product 480p mailbox page (gold 5f1c8614 / kPlxjAddr). Not L4 0x3047F130.
@@ -646,6 +648,7 @@ module present_core #(
 		.FRAME_MAILBOX_PHYS(32'h3007_F118),
 		.BANK_MAILBOX_PHYS(32'h3007_F128),
 		.ASPECT_ACK_PHYS(32'h3007_F130),
+		.ANALOG_DOORBELL_PHYS(32'h3007_F138),
 		.DYN_BASE_EN(1'b0)
 `endif
 	) fstore (

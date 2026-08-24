@@ -35,6 +35,9 @@ module ddr_frame_store #(
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
 	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
 	parameter [31:0] ASPECT_ACK_PHYS    = 32'h3007_F130,
+	// PLXH analog H-class doorbell (ARM→FPGA). Always the 480p mailbox page.
+	// 8-byte slot after PLXJ (0x3007F130..137). NOT leftover L4 PLXJ 0x3047F130.
+	parameter [31:0] ANALOG_DOORBELL_PHYS = 32'h3007_F138,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
@@ -133,6 +136,7 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
 	localparam [31:0] MAGIC_J = 32'h504C_584A; // PLXJ source-aspect ACK
+	localparam [31:0] MAGIC_H = 32'h504C_5848; // PLXH analog H-class doorbell
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
@@ -230,6 +234,9 @@ module ddr_frame_store #(
 			disp_bank <= 1'b0;
 			pending_bank <= 1'b0;
 			disp_buf <= 1'b0;
+			// Leftover isolation: has_frame stays 0 until the first doorbell of
+			// this load (db_new_seq → swap → vsync). IGNORE_STALE holds leftover
+			// PLXK until fallback. Do not grow LINE_COUNT / M10K for 480i.
 			has_frame <= 1'b0;
 			swap_pending <= 1'b0;
 			frames_done <= 16'd0;
@@ -551,6 +558,7 @@ module ddr_frame_store #(
 	reg        plxj_req;
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
+	reg        leftover_ack_inval_req; // reset: zero 480p PLXJ so leftover token cannot satisfy gold
 	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (blank-only PLXJ WE)
 	async_fifo #(.WIDTH(8), .AW(2)) input_fifo (
 		.wr_clk(clk), .wr_reset(reset),
@@ -922,6 +930,7 @@ module ddr_frame_store #(
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
+			leftover_ack_inval_req <= 1'b1;
 			rd_act_s1 <= 1'b1;
 			rd_act_s2 <= 1'b1;
 			mbox_seq <= 16'd0;
@@ -1096,7 +1105,19 @@ module ddr_frame_store #(
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+					// Leftover-magic isolate: on analog/core reset write 0 to the 480p
+					// PLXJ slot so leftover token (mux3: want 4 vs leftover 3) cannot
+					// satisfy gold 5f1c8614. Do not touch leftover L4 0x3047F130.
+					// Existing DDR; no extra BRAM. has_frame is already 0 until the
+					// first doorbell of this load (swap/vsync).
+					if (leftover_ack_inval_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= ASPECT_ACK_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= 64'd0;
+						DDRAM_WE <= 1'b1;
+						leftover_ack_inval_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;

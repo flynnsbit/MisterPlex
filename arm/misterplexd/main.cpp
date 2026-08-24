@@ -8,6 +8,7 @@
 #include "plex_resolve.hpp"
 #include "libmisterplex/display_raster.hpp"
 #include "libmisterplex/av_clock.hpp"
+#include "libmisterplex/mailbox_abi_spec.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -764,7 +765,8 @@ int main(int argc, char** argv) {
             const auto geom = misterplex::ddrFrameGeometryForPresentedSize(decodeW, decodeH);
             const auto layout = misterplex::makeDdrFrameLayout(
                 geom, misterplex::ddrFramePhysBaseForGeometry(geom));
-            const uint32_t plxjPhys = layout.doorbell_phys + 0x130u;
+            const uint32_t plxjPhys = mailbox_abi::productMailboxPhys(
+                layout.doorbell_phys, mailbox_abi::kPlxjAddr);
             std::fprintf(stderr,
                          "misterplexd: LAB play-file=%s seconds=%d decode=%dx%d "
                          "doorbell=0x%08X PLXJ=0x%08X%s\n",
@@ -1009,7 +1011,8 @@ int main(int argc, char** argv) {
             const auto geom = misterplex::ddrFrameGeometryForPresentedSize(bankW, bankH);
             const auto layout = misterplex::makeDdrFrameLayout(
                 geom, misterplex::ddrFramePhysBaseForGeometry(geom));
-            const uint32_t plxjPhys = layout.doorbell_phys + 0x130u;
+            const uint32_t plxjPhys = mailbox_abi::productMailboxPhys(
+                layout.doorbell_phys, mailbox_abi::kPlxjAddr);
             std::fprintf(stderr,
                          "misterplexd: CLOSED-STOP %s content=%s display=%s bank=%dx%d "
                          "doorbell=0x%08X PLXJ=0x%08X\n",

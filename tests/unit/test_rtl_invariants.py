@@ -506,6 +506,8 @@ def check_mailboxes() -> None:
         "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
         "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
         "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXJ": ("kPlxjAddr", "kPlxjMagic", 0x3007F130, 0x504C584A),
+        "PLXH": ("kPlxhAddr", "kPlxhMagic", 0x3007F138, 0x504C5848),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
@@ -646,6 +648,28 @@ def check_mailbox_map_collisions() -> None:
             if magic in all_magics:
                 fail(f"Mailbox magic collision: {name} and {all_magics[magic]} both use 0x{magic:08X}")
             all_magics[magic] = name
+
+    # 8-byte span overlap (exact-address check misses PLXJ/PLXH byte collision).
+    spans = []
+    for mb in mailboxes:
+        addr = int(mb["address"], 16)
+        size = int(mb.get("size_bytes", 8))
+        spans.append((addr, addr + size, mb["name"]))
+    spans.sort()
+    for i in range(len(spans) - 1):
+        a0, a1, n0 = spans[i]
+        b0, b1, n1 = spans[i + 1]
+        if a1 > b0:
+            fail(
+                f"Mailbox span collision: {n0} [0x{a0:08X},0x{a1:08X}) overlaps "
+                f"{n1} [0x{b0:08X},0x{b1:08X})"
+            )
+
+    plxj = next((int(mb["address"], 16) for mb in mailboxes if mb["name"] == "PLXJ"), None)
+    plxh = next((int(mb["address"], 16) for mb in mailboxes if mb["name"] == "PLXH"), None)
+    check(plxj == 0x3007F130, f"PLXJ registry must be 0x3007F130 (got {plxj})")
+    check(plxh == 0x3007F138, f"PLXH registry must be 0x3007F138 (got {plxh})")
+    check(plxj + 8 == plxh, "PLXH must be the 8-byte slot after PLXJ (no overlap with PLXA ioctl)")
 
     for rname, rval in ring.items():
         if rname.startswith("_"):

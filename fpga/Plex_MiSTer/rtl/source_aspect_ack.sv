@@ -1,6 +1,8 @@
 // Collect ioctl index 4 PLXA (9 bytes) and pulse a clk-domain ACK snapshot.
 // ddr_frame_store writes PLXJ at the 480p mailbox page 0x3007F130
-// (doorbell-family +0x130). L4-only 0x3047F130 must not be the sole path.
+// (8-byte DDR slot 0x3007F130..0x3007F137). Analog PLXH is the next 8-byte
+// slot at 0x3007F138 — not these 9 ioctl bytes. L4-only 0x3047F130 must not
+// be the sole path and must not satisfy the 480p-page ACK.
 module source_aspect_ack (
 	input  wire        clk,
 	input  wire        reset,

@@ -350,6 +350,7 @@ private:
     int ingestBank_ = -1;
     bool ensureDdrMap();
     bool ensureDdrMailboxMap();
+    bool ensureDdrMailboxMapPage(uint32_t page);
     volatile uint32_t* ddrMailboxWord(uint32_t phys);
     bool waitPlxdHeardKick(const BankReleaseStatus& pre, int timeoutUs);
     void releaseDdrMap();
@@ -369,10 +370,10 @@ private:
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
     bool kickDdrDoorbell(int bank);
     uint32_t ddrStatusMailboxPhys() const {
-        return ddrLayout_.doorbell_phys + (kDdrMailboxPhys - kDdrDoorbellPhys);
+        return mailbox_abi::productMailboxPhys(ddrLayout_.doorbell_phys, kDdrMailboxPhys);
     }
     uint32_t ddrInputMailboxPhys() const {
-        return ddrLayout_.doorbell_phys + (kInputMailboxPhys - kDdrDoorbellPhys);
+        return mailbox_abi::productMailboxPhys(ddrLayout_.doorbell_phys, kInputMailboxPhys);
     }
     static constexpr uint32_t kMgrBase = 0xFF706000;
     static constexpr uint32_t kMapBase = 0xFF000000;
