@@ -485,6 +485,7 @@ module ddr_frame_store #(
 	localparam [3:0] S_POLL_WAIT  = 4'd3;
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
 	localparam [3:0] S_LINE_PREP  = 4'd5; // keepv21: sample line_addr → S_LINE_ISSUE
+	localparam [3:0] S_PLXJ_ISSUE = 4'd6; // mux5 hold: sample PLXJ then WE
 
 	reg [3:0] state_ddr;
 	reg [LINE_SLOTS-1:0] y_valid, c_valid;
@@ -564,16 +565,19 @@ module ddr_frame_store #(
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
 	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (blank-only PLXJ WE)
-	// Hold cut: mux4 STA Hold Slack : -0.093 on clk_ddr general[2] (TNS -0.093).
-	// PLXJ-first S_IDLE made DDRAM_WE a 1-LUT path from plxj_req/rd_act_s2.
-	// Register + nomerge-duplicate the qualify; fire uses the replicas only
-	// (combo blank/req still parks other S_IDLE arms so fills cannot starve).
-	// clk_sys/clk_ddr stay related-edge. Do not false_path this path. Do not
+	// Hold cut: mux4 Slack : -0.093 → mux5 Slack : -0.071 (same-clock clk_ddr).
+	// Chain nomerge qualify FFs (not parallel AND) then S_PLXJ_ISSUE samples
+	// ADDR/DIN and asserts WE next clk_ddr — keepv21 class. Combo blank/req
+	// still parks other S_IDLE arms so fills cannot starve gold 250 ms ACK.
+	// clk_sys/clk_ddr stay related-edge. Do not false_path. Do not
 	// create_generated_clock on analog ce_pix. Do not retune clk_sys.
 	wire plxj_blank_ok = !rd_act_s2 || !has_frame_d2;
 	wire plxj_we_c = plxj_req && plxj_blank_ok && (state_ddr == S_IDLE);
 	reg plxj_we_r /* synthesis nomerge */;
 	reg plxj_we_dup /* synthesis nomerge */;
+	reg plxj_we_go /* synthesis nomerge */;
+	reg [28:0] plxj_addr_r;
+	reg [63:0] plxj_din_r;
 	async_fifo #(.WIDTH(8), .AW(2)) input_fifo (
 		.wr_clk(clk), .wr_reset(reset),
 		.wr_en(input_cmd_valid && (input_cmd != 8'd0)), .wr_data(input_cmd),
@@ -851,7 +855,7 @@ module ddr_frame_store #(
 
 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
 
-	// Separate always so the qualify FFs do not pack into the DDRAM_WE ALM.
+	// Separate always + nomerge chain: do not pack into the DDRAM_WE ALM.
 	always @(posedge clk_ddr) begin
 		if (reset_ddr)
 			plxj_we_r <= 1'b0;
@@ -862,7 +866,13 @@ module ddr_frame_store #(
 		if (reset_ddr)
 			plxj_we_dup <= 1'b0;
 		else
-			plxj_we_dup <= plxj_we_c;
+			plxj_we_dup <= plxj_we_r;
+	end
+	always @(posedge clk_ddr) begin
+		if (reset_ddr)
+			plxj_we_go <= 1'b0;
+		else
+			plxj_we_go <= plxj_we_dup;
 	end
 
 	always @(posedge clk_ddr) begin
@@ -957,6 +967,8 @@ module ddr_frame_store #(
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
+			plxj_addr_r <= 29'd0;
+			plxj_din_r <= 64'd0;
 			// Optimistic blank: analog Template de_r starts 0. Init-1 blocked
 			// blank-only ACK until the first 0→1→0 of rd_active.
 			rd_act_s1 <= 1'b0;
@@ -1139,16 +1151,16 @@ module ddr_frame_store #(
 					// S_IDLE beat (ca4ca655 still token 4 vs leftover 3). Gold
 					// 5f1c8614 waits 250 ms. Pre-play / idle has_frame=0: ACK even
 					// mid-scan (nothing to tear). Once a frame is up, blank-only.
-					// WE D-pin from registered duplicates (not combo plxj_req).
-					if (plxj_we_r && plxj_we_dup && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= ASPECT_ACK_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
-						DDRAM_WE <= 1'b1;
+					// Sample only. WE is S_PLXJ_ISSUE (extra register stage).
+					// plxj_req gates the chain tail so a leftover go cannot
+					// re-issue after WRITE_WAIT returns to S_IDLE.
+					if (plxj_we_go && plxj_req && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						plxj_addr_r <= ASPECT_ACK_W;
+						plxj_din_r <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
 						plxj_req <= 1'b0;
-						state_ddr <= S_WRITE_WAIT;
+						state_ddr <= S_PLXJ_ISSUE;
 					end else if (plxj_req && (!rd_act_s2 || !has_frame_d2)) begin
-						// Park 1 clk_ddr while plxj_we_r/dup catch the qualify.
+						// Park while the nomerge chain (r→dup→go) fills.
 						state_ddr <= S_IDLE;
 					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
@@ -1318,6 +1330,17 @@ module ddr_frame_store #(
 						analog_poll_pending <= 1'b1;
 						poll_beat <= 1'b0;
 						state_ddr <= S_POLL_WAIT;
+					end
+				end
+
+				// mux5 hold: DDRAM_WE from registered PLXJ sample, not S_IDLE combo.
+				S_PLXJ_ISSUE: begin
+					if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= plxj_addr_r;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= plxj_din_r;
+						DDRAM_WE <= 1'b1;
+						state_ddr <= S_WRITE_WAIT;
 					end
 				end
 

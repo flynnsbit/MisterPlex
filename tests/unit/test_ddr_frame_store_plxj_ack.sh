@@ -24,11 +24,11 @@ grep -q "assign VGA_SCALER  = 0;" "$PLEX" \
 grep -q '#set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"' "$QSF" \
   || { echo "FAIL L4 must stay commented off in Plex.qsf" >&2; exit 1; }
 # PLXJ must be the first S_IDLE arm (fills starved compose ae26f31e).
-# WE is registered+duplicated (mux4 hold -0.093); combo plxj_req parks others.
+# mux5: chained qualify + S_PLXJ_ISSUE extra WE stage (same-clock hold -0.071).
 awk '
   /case \(state_ddr\)/ {in_case=1}
   in_case && /S_IDLE: begin/ {in_idle=1}
-  in_idle && /if \(plxj_we_r && plxj_we_dup/ {print "PLXJ_FIRST"; exit 0}
+  in_idle && /if \(plxj_we_go && plxj_req &&/ {print "PLXJ_FIRST"; exit 0}
   in_idle && /frame_mbox_req/ {print "MBOX_BEFORE_PLXJ"; exit 1}
 ' "$STORE" | grep -q PLXJ_FIRST \
   || { echo "FAIL PLXJ ACK is not first S_IDLE arm (fills will starve analog Template)" >&2; exit 1; }
@@ -36,6 +36,12 @@ grep -q 'wire plxj_we_c = plxj_req && plxj_blank_ok && (state_ddr == S_IDLE)' "$
   || { echo "FAIL plxj_we_c must register plxj_req && blank_ok in S_IDLE" >&2; exit 1; }
 grep -q 'wire plxj_blank_ok = !rd_act_s2 || !has_frame_d2' "$STORE" \
   || { echo "FAIL plxj_blank_ok must be !rd_act_s2 || !has_frame_d2" >&2; exit 1; }
+grep -q 'localparam \[3:0\] S_PLXJ_ISSUE = 4.d6' "$STORE" \
+  || { echo "FAIL S_PLXJ_ISSUE extra WE stage missing (mux5 hold cut)" >&2; exit 1; }
+grep -q 'plxj_we_dup <= plxj_we_r' "$STORE" \
+  || { echo "FAIL plxj qualify must be a nomerge chain (not parallel AND)" >&2; exit 1; }
+grep -q 'plxj_we_go <= plxj_we_dup' "$STORE" \
+  || { echo "FAIL plxj_we_go must chain from plxj_we_dup" >&2; exit 1; }
 if grep -nE '^[[:space:]]*set_clock_groups[[:space:]]+-asynchronous' \
      "$ROOT/fpga/Plex_MiSTer/Plex.sdc" "$ROOT/fpga/Plex_MiSTer/Plex_analog_mux.sdc"; then
   echo "FAIL do not hide clk_ddr hold with new -asynchronous clock groups" >&2
