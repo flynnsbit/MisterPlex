@@ -1142,6 +1142,14 @@ module ddr_frame_store #(
 						state_ddr <= S_PLXJ_ISSUE;
 					end else if (plxj_req) begin
 						state_ddr <= S_IDLE;
+					end else if (!plxj_acked) begin
+						// mux9: mux8 still timed out want token=6 last=5 then
+						// mailbox token=6 after 250 ms with fills/poll gated
+						// (frame_debug=0x00). Mbox heartbeats (reset mbox_req=1)
+						// kept WRITE_WAIT. Skip ALL other S_IDLE arms until
+						// first PLXJ ACK. GDM leftover PLXD is enough to
+						// advertise MiSTerPlex.
+						state_ddr <= S_IDLE;
 					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
