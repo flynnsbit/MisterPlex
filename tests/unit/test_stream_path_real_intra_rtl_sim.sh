@@ -40,6 +40,7 @@ COMMON=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_cabac.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_rbsp_window.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_feed_chroma.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i_mb_feed.sv"

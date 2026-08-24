@@ -40,6 +40,7 @@ RTL=(
   "$RTL_DIR/h264_mb_recon_route.sv"
   "$RTL_DIR/h264_intra16_dc.sv"
   "$RTL_DIR/h264_decode_core.sv"
+  "$RTL_DIR/h264_cabac.sv"
   "$RTL_DIR/h264_dpb.sv"
 )
 for f in "$TOP" "$TB" "$SLICE" "${RTL[@]}"; do

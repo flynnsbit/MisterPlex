@@ -66,6 +66,22 @@
       ]
     },
     {
+      "id": "h264_cabac_skip_renorm",
+      "owner": "tests/unit/test_h264_cabac_rtl_sim.sh",
+      "why": "Skipping CABAC renormalize must diverge from the software arithmetic model.",
+      "required_substrings": [
+        "FAIL h264_cabac bin"
+      ]
+    },
+    {
+      "id": "h264_cabac_bad_init",
+      "owner": "tests/unit/test_h264_cabac_rtl_sim.sh",
+      "why": "Inverting valMPS at context init must change decoded bins versus the good-init model.",
+      "required_substrings": [
+        "FAIL h264_cabac bin"
+      ]
+    },
+    {
       "id": "h264_inter_recon_add_drop_residual",
       "owner": "tests/unit/test_h264_inter_recon_add_rtl_sim.sh",
       "why": "Dropping residual-add after MC must fail clip(pred+res) so pred-only cannot score as reconstruction.",

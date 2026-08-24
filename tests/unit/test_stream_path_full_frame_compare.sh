@@ -71,6 +71,7 @@ PRODUCT_RTL=(
   h264_dpb.sv
   h264_decode_top.sv
   h264_decode_core.sv
+  h264_cabac.sv
   h264_mb_recon_route.sv
   h264_inter_part.sv
   h264_pskip_mv.sv

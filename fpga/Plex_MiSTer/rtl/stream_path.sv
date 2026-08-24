@@ -911,6 +911,7 @@ module stream_path #(
 		.mb_x_external(feed_mb_x),
 		.mb_y_external(feed_mb_y),
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
+		.pps_entropy_cabac(pps_cabac),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_window_valid(core_rbsp_window_valid),

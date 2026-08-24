@@ -36,7 +36,10 @@ module h264_decode_core #(
     parameter bit MB_COORD_EXTERNAL = 1'b0,
     // Glass / overnight MVP: keep I-slice + writeback, drop P/inter fabric.
     // When 0, qpel/epel/MV/P_Skip/partition MC are not instantiated (~8-12k ALMs).
-    parameter bit ENABLE_INTER = 1'b0
+    parameter bit ENABLE_INTER = 1'b0,
+    // CABAC arithmetic engine. Default off (glass ALM). CAVLC remains the
+    // residual walker until entropy_coding_mode_flag is proven on a fixture.
+    parameter bit ENABLE_CABAC = 1'b0
 )(
     input  wire        clk,
     input  wire        reset,
@@ -54,6 +57,7 @@ module h264_decode_core #(
 
     // ── PPS parameters ──
     input  wire signed [4:0] pps_chroma_qp_index_offset, // se(), range [-12,+12]
+    input  wire        pps_entropy_cabac,     // PPS entropy_coding_mode_flag
 
     // ── Bitstream access (RBSP bytes for CAVLC residual parsing) ──
     // The CAVLC residual block decoder needs random-access to RBSP bits.
@@ -1112,6 +1116,41 @@ module h264_decode_core #(
             assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
 `endif
         end
+    endgenerate
+    wire cabac_init_busy, cabac_init_done, cabac_bit_ready, cabac_dec_valid, cabac_dec_bin, cabac_dec_stall;
+    generate
+    if (ENABLE_CABAC) begin : g_cabac
+        h264_cabac u_cabac (
+            .clk(clk),
+            .reset(reset),
+            .slice_start(slice_start && pps_entropy_cabac),
+            .slice_type(slice_is_i ? 2'd0 : 2'd1),
+            .cabac_init_idc(2'd0),
+            .slice_qp_y(slice_qp_y),
+            .bit_valid(1'b0),
+            .bit_in(1'b0),
+            .bit_ready(cabac_bit_ready),
+            .init_busy(cabac_init_busy),
+            .init_done(cabac_init_done),
+            .dec_req(1'b0),
+            .ctx_idx(9'd0),
+            .bypass(1'b0),
+            .terminate(1'b0),
+            .dec_valid(cabac_dec_valid),
+            .dec_bin(cabac_dec_bin),
+            .dec_stall(cabac_dec_stall),
+            .dbg_range(),
+            .dbg_offset(),
+            .dbg_fifo_count()
+        );
+    end else begin : g_cabac_off
+        assign cabac_bit_ready = 1'b0;
+        assign cabac_init_busy = 1'b0;
+        assign cabac_init_done = 1'b0;
+        assign cabac_dec_valid = 1'b0;
+        assign cabac_dec_bin = 1'b0;
+        assign cabac_dec_stall = 1'b0;
+    end
     endgenerate
     // P16 residual CAVLC/IDCT only when ENABLE_INTER=1 (~2k+0.9k ALM).
     wire signed [28:0] p16_res_idct [0:15];
@@ -2208,6 +2247,8 @@ module h264_decode_core #(
         |product_intra_nb_topright[0] | product_intra_recon_valid |
         |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
+        pps_entropy_cabac | cabac_init_busy | cabac_init_done | cabac_bit_ready |
+        cabac_dec_valid | cabac_dec_bin | cabac_dec_stall |
         |part_sub_mb_types | |part_ref_idx_l0 | |part_mvd_valid |
         |part_mvd_x[0] | |part_mvd_y[0] | |mb_route_part_mode |
         part_geo_valid | |part_geo_mask | part_shape_override | part_busy |

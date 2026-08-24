@@ -23,6 +23,7 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
 fi
 
 RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
+CABAC_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_cabac.sv"
 CAVLC_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
 IQ_IDCT_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
 IQ_IDCT_SEQ_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"
@@ -41,7 +42,7 @@ TB="$ROOT/tests/rtl/h264_decode_core_wb_tb.cpp"
 BUILD="$ROOT/build/verilator/h264_decode_core_wb"
 BUILD_FAULT="$ROOT/build/verilator/h264_decode_core_wb_fault"
 
-for f in "$RTL" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$IQ_IDCT_SEQ_RTL" "$INTRA_PRED_RTL" "$NB_CTX_RTL" "$DECODE_TOP_RTL" "$DPB_RTL" "$INTER_RTL" "$INTER_PART_RTL" "$PSKIP_RTL" "$MB_ROUTE_RTL" "$INTRA16_RTL" "$QIP" "$TOP" "$TB"; do
+for f in "$RTL" "$CABAC_RTL" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$IQ_IDCT_SEQ_RTL" "$INTRA_PRED_RTL" "$NB_CTX_RTL" "$DECODE_TOP_RTL" "$DPB_RTL" "$INTER_RTL" "$INTER_PART_RTL" "$PSKIP_RTL" "$MB_ROUTE_RTL" "$INTRA16_RTL" "$QIP" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -59,7 +60,7 @@ echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core writeback)" >&2
   --Mdir "$BUILD" \
   --top-module h264_decode_core_wb_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$IQ_IDCT_SEQ_RTL" "$INTRA_PRED_RTL" "$NB_CTX_RTL" "$DECODE_TOP_RTL" "$INTER_RTL" "$INTER_PART_RTL" "$PSKIP_RTL" "$MB_ROUTE_RTL" "$INTRA16_RTL" "$DPB_RTL" "$RTL" "$TB"
+  "$TOP" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$IQ_IDCT_SEQ_RTL" "$INTRA_PRED_RTL" "$NB_CTX_RTL" "$DECODE_TOP_RTL" "$INTER_RTL" "$INTER_PART_RTL" "$PSKIP_RTL" "$MB_ROUTE_RTL" "$INTRA16_RTL" "$DPB_RTL" "$CABAC_RTL" "$RTL" "$TB"
 set +e
 POS_OUT="$("$BUILD/Vh264_decode_core_wb_tb" 2>&1)"
 POS_RC=$?
@@ -74,7 +75,7 @@ fi
   --Mdir "$BUILD_FAULT" \
   --top-module h264_decode_core_wb_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_WB \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$IQ_IDCT_SEQ_RTL" "$INTRA_PRED_RTL" "$NB_CTX_RTL" "$DECODE_TOP_RTL" "$INTER_RTL" "$INTER_PART_RTL" "$PSKIP_RTL" "$MB_ROUTE_RTL" "$INTRA16_RTL" "$DPB_RTL" "$RTL" "$TB"
+  "$TOP" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$IQ_IDCT_SEQ_RTL" "$INTRA_PRED_RTL" "$NB_CTX_RTL" "$DECODE_TOP_RTL" "$INTER_RTL" "$INTER_PART_RTL" "$PSKIP_RTL" "$MB_ROUTE_RTL" "$INTRA16_RTL" "$DPB_RTL" "$CABAC_RTL" "$RTL" "$TB"
 set +e
 FAULT_OUT="$("$BUILD_FAULT/Vh264_decode_core_wb_tb" 2>&1)"
 FAULT_RC=$?

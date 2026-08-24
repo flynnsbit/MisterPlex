@@ -57,6 +57,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_part.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mb_recon_route.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_iq_idct_seq.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_recon_add.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_cabac.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_feed_chroma.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_rbsp_window.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_i_mb_feed.sv
