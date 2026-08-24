@@ -82,6 +82,23 @@ grep -q 'sel_lat[[:space:]]*<=[[:space:]]*db_or_osd' "$MUX" \
   || fail "sel_lat reset load missing (doorbell 2FF snapshot)"
 grep -q 'db_sel_s1' "$MUX" || fail "analog doorbell 2FF db_sel_s1 missing"
 grep -q '0x3007F138' "$MUX" || fail "PLXH analog doorbell address 0x3007F138 missing"
+PLEX_SV="$ROOT/fpga/Plex_MiSTer/Plex.sv"
+# LCD default 480p31: v,11 + analog_menu 0 aliases to 2. Do not reorder Analog options.
+if grep -q '"O\[15:14\],Analog raster,Follow content,240p 15kHz,480p 31kHz,480i 15kHz;"' "$PLEX_SV"; then
+  ok "Analog CONF_STR option order unchanged (analog_menu 1/2/3 glass)"
+else
+  fail "do not reorder O[15:14] Analog raster options"
+fi
+if grep -q '"v,11;"' "$PLEX_SV"; then
+  ok "CONF_STR v,11 (Analog default 480p 31kHz O[15:14]=2)"
+else
+  fail "CONF_STR must bump v,11 so saved Follow CFG is discarded"
+fi
+if grep -q 'analog_menu.*=.*(status\[15:14\] == 2.d0) ? 2.d2 : status\[15:14\]' "$PLEX_SV"; then
+  ok "analog_menu 0 aliases to 2 (LCD 480p31 without set_status)"
+else
+  fail "power-on analog_menu 0 must alias to 2 (480p 31kHz)"
+fi
 if grep -q '3047F130' "$MUX"; then
   grep -qi 'NOT leftover L4' "$MUX" || fail "must not use leftover L4 0x3047F130 as analog doorbell"
 fi

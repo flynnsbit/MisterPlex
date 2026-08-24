@@ -562,6 +562,7 @@ module ddr_frame_store #(
 	);
 	reg        plxa_tog_s1, plxa_tog_s2, plxa_tog_seen;
 	reg        plxj_req;
+	reg        plxj_acked; // 0 until first PLXJ WE of this load
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
 	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (status only)
@@ -943,6 +944,7 @@ module ddr_frame_store #(
 			plxa_tog_s2 <= 1'b0;
 			plxa_tog_seen <= 1'b0;
 			plxj_req <= 1'b0;
+			plxj_acked <= 1'b0;
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
@@ -1105,7 +1107,10 @@ module ddr_frame_store #(
 			end
 			if (db_token_new)
 				stale_db_polls <= '0;
-			if (db_new_seq) begin
+			// Leftover HDMI PLXK looks new after reset. Ignore swap/has_frame
+			// until the first PLXJ ACK of this load so analog Template fills
+			// cannot starve gold 5f1c8614 250 ms (mux6/7: token N after timeout).
+			if (db_new_seq && plxj_acked) begin
 				pending_bank_ddr <= DDRAM_DOUT[63];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
@@ -1113,7 +1118,7 @@ module ddr_frame_store #(
 			end
 			if (spi_edge_ddr) begin
 				start_seen <= start_d2;
-				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
+				if (plxj_acked && (!STRICT_YUV_DOORBELL || (have_seq && !format_error))) begin
 					pending_bank_ddr <= bank_sel_d2;
 					swap_req_t_ddr <= ~swap_req_t_ddr;
 				end
@@ -1133,6 +1138,7 @@ module ddr_frame_store #(
 						plxj_addr_r <= ASPECT_ACK_W;
 						plxj_din_r <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
 						plxj_req <= 1'b0;
+						plxj_acked <= 1'b1;
 						state_ddr <= S_PLXJ_ISSUE;
 					end else if (plxj_req) begin
 						state_ddr <= S_IDLE;
@@ -1170,7 +1176,7 @@ module ddr_frame_store #(
 					// KEEP_VALID_UNTIL_FILL_DONE: do NOT clear y_valid/c_valid or
 					// retag bank at arm/issue. Tag+valid commit only when full
 					// line lands (S_LINE_WAIT done) — anti-shear keepv.
-					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
+					end else if (plxj_acked && PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;
 						fill_idx <= sched_idx;
 						fill_plane_v <= 1'b0;
@@ -1190,7 +1196,7 @@ module ddr_frame_store #(
 					// L4: take C *before* Y once two Y fills have run. Putting
 					// this after the Y arm left c_rr stuck at 2 with C never
 					// scheduled (HDMI grey chevron, DDR U=53 V=169).
-					end else if (C_INTERLEAVE_ON_Y_BEAM && c_rr_r >= 2'd2) begin
+					end else if (plxj_acked && C_INTERLEAVE_ON_Y_BEAM && c_rr_r >= 2'd2) begin
 						c_rr_r <= 2'd0;
 						if (PIPELINE_REFILL_SCHEDULER) begin
 							sched_valid <= 1'b1;
@@ -1210,7 +1216,7 @@ module ddr_frame_store #(
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_PREP;
 						end
-					end else if ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c)) begin
+					end else if (plxj_acked && ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c))) begin
 						if (C_INTERLEAVE_ON_Y_BEAM && c_rr_r < 2'd2)
 							c_rr_r <= c_rr_r + 2'd1;
 						if (PIPELINE_REFILL_SCHEDULER) begin
@@ -1236,7 +1242,7 @@ module ddr_frame_store #(
 					// under FOAR Y_FILL_STRIDE=2 (keepv22 gray RCA).
 					// L4 C_INTERLEAVE_ON_Y_BEAM: after two Y fills, fetch C even
 					// if the beam still wants Y (720p LC=8 otherwise stays grey).
-					end else if (((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c))
+					end else if (plxj_acked && ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c))
 					            && (!(has_frame_d2 && need_y_beam_c)
 					                || (C_INTERLEAVE_ON_Y_BEAM && c_rr_r >= 2'd2))) begin
 						c_rr_r <= 2'd0;
@@ -1258,7 +1264,7 @@ module ddr_frame_store #(
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_PREP;
 						end
-					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (plxj_acked && !poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= DYN_BASE_EN ? 8'd2 : 8'd1;
 						DDRAM_RD <= 1'b1;
@@ -1294,7 +1300,7 @@ module ddr_frame_store #(
 						sdram_mbox_valid <= 1'b1;
 						sdram_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
-					end else if (!poll_pending && poll_div[7:0] == 8'd96 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					end else if (plxj_acked && !poll_pending && poll_div[7:0] == 8'd96 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						// Idle PLXH analog doorbell poll (after fills / ACK).
 						// Capture persists across reset; analog_raster_mux snapshots on reset.
 						DDRAM_ADDR <= ANALOG_DOORBELL_W;
@@ -1380,7 +1386,13 @@ module ddr_frame_store #(
 				end
 
 				S_POLL_WAIT: begin
-					if (DDRAM_DOUT_READY) begin
+					// mux8: ioctl ACK must not wait out a hung doorbell/PLXH poll.
+					// mux7 glass: want token=6 last=5 then mailbox token=6 after 250 ms.
+					if (plxj_req && (DDRAM_DOUT_READY || (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE))) begin
+						analog_poll_pending <= 1'b0;
+						poll_pending <= 1'b0;
+						state_ddr <= S_IDLE;
+					end else if (DDRAM_DOUT_READY) begin
 						if (analog_poll_pending) begin
 							analog_db_valid_r <= (DDRAM_DOUT[31:0] == MAGIC_H);
 							if (DDRAM_DOUT[31:0] == MAGIC_H)
