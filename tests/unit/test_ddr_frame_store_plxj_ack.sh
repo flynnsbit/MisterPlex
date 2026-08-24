@@ -41,6 +41,8 @@ grep -q 'plxj_acked && !poll_pending' "$STORE" \
   || { echo "FAIL doorbell/PLXH poll must wait for first ACK (mux7 hung S_POLL_WAIT)" >&2; exit 1; }
 grep -q 'else if (!plxj_acked) begin' "$STORE" \
   || { echo "FAIL S_IDLE must skip mbox/fill until first ACK (mux8 mbox steal)" >&2; exit 1; }
+grep -q 'ASPECT_ACK2_PHYS   = 32.h300F_F130' "$STORE" \
+  || { echo "FAIL must mirror PLXJ to 0x300FF130 (gold daemon doorbell+0x130)" >&2; exit 1; }
 grep -q 'localparam \[3:0\] S_PLXJ_ISSUE = 4.d6' "$STORE" \
   || { echo "FAIL S_PLXJ_ISSUE extra WE stage missing (mux5 hold cut)" >&2; exit 1; }
 if grep -q 'plxj_we_go && plxj_req' "$STORE"; then

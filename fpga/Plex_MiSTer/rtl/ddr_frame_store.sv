@@ -32,6 +32,11 @@ module ddr_frame_store #(
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
 	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
 	parameter [31:0] ASPECT_ACK_PHYS    = 32'h3007_F130,
+	// Gold 5f1c8614 reads PLXJ as doorbell_phys+0x130. Analog mux idle
+	// has no PLXK at 0x3007F000 (peek 0x5ad65ad6), so the daemon binds
+	// 0x300FF000 and polls 0x300FF130. mux12 peek: 0x3007F130 tok=6
+	// while 0x300FF130 tok=5 = daemon last=5. Write BOTH pages.
+	parameter [31:0] ASPECT_ACK2_PHYS   = 32'h300F_F130,
 	// PLXH analog H-class doorbell (ARM→FPGA). Always the 480p mailbox page.
 	// NOT leftover L4 PLXJ 0x3047F130. 2FF + reset snapshot is in analog_raster_mux.
 	parameter [31:0] ANALOG_DOORBELL_PHYS = 32'h3007_F138,
@@ -123,6 +128,7 @@ module ddr_frame_store #(
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
 	localparam [28:0] ASPECT_ACK_W    = ASPECT_ACK_PHYS[31:3];
+	localparam [28:0] ASPECT_ACK2_W   = ASPECT_ACK2_PHYS[31:3];
 	localparam [28:0] ANALOG_DOORBELL_W = ANALOG_DOORBELL_PHYS[31:3];
 	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
 	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
@@ -563,6 +569,7 @@ module ddr_frame_store #(
 	reg        plxa_tog_s1, plxa_tog_s2, plxa_tog_seen;
 	reg        plxj_req;
 	reg        plxj_acked; // 0 until first PLXJ WE of this load
+	reg        plxj_mirror; // 1: second WE to 0x300FF130 after 0x3007F130
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
 	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (status only)
@@ -945,6 +952,7 @@ module ddr_frame_store #(
 			plxa_tog_seen <= 1'b0;
 			plxj_req <= 1'b0;
 			plxj_acked <= 1'b0;
+			plxj_mirror <= 1'b0;
 			plxj_x <= 12'd0;
 			plxj_y <= 12'd0;
 			plxj_token <= 8'd0;
@@ -1142,6 +1150,7 @@ module ddr_frame_store #(
 						plxj_din_r <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
 						plxj_req <= 1'b0;
 						plxj_acked <= 1'b1;
+						plxj_mirror <= 1'b1;
 						state_ddr <= S_PLXJ_ISSUE;
 					end else if (plxj_req) begin
 						state_ddr <= S_IDLE;
@@ -1442,8 +1451,15 @@ module ddr_frame_store #(
 				end
 
 				S_WRITE_WAIT: begin
-					if (!DDRAM_BUSY && !DDRAM_WE)
-						state_ddr <= S_IDLE;
+					if (!DDRAM_BUSY && !DDRAM_WE) begin
+						if (plxj_mirror) begin
+							plxj_mirror <= 1'b0;
+							plxj_addr_r <= ASPECT_ACK2_W;
+							state_ddr <= S_PLXJ_ISSUE;
+						end else begin
+							state_ddr <= S_IDLE;
+						end
+					end
 				end
 
 				default: state_ddr <= S_IDLE;
