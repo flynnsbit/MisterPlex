@@ -11,7 +11,11 @@
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
-    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault."
+    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",
+    "ANALOG_RASTER_FAULT_SWAP_SEL": "Injected analog mux expected-red fault: swap 240p/480p H class.",
+    "ANALOG_RASTER_FAULT_LIVE_LATCH": "Injected analog mux expected-red fault: live fstart reload of analog_sel.",
+    "ANALOG_RASTER_FAULT_LIVE_DOORBELL": "Injected analog mux expected-red fault: live PLXH doorbell hop retargets H class.",
+    "SOURCE_ASPECT_ACK_FAULT_IGNORE_INDEX_MAGIC": "Injected PLXA ACK fault: accept any ioctl index / magic so the product index-4 PLXA check is load-bearing."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."

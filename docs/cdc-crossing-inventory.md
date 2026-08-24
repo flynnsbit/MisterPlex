@@ -120,6 +120,7 @@ See `rtl/tb_arb_beat_conservation.sv` for the reference implementation.
 | 15 | `sdram_status` | clk→clk_ddr | 24 | multi-bit | Toggle-snapshot (`sdram_status_toggle` 2-FF sync, data captured on edge) | SAFE (fixed: was 2-FF binary sync, fed PLXM mailbox) |
 | 16 | `input_fifo` data | clk→clk_ddr | 8 | data stream | `async_fifo` Gray-coded, AW=2 (4 deep) | SAFE |
 | 17 | line_buf_ram ×48 | clk_ddr→clk | 64 | data | Dual-port M10K, wr_clk=clk_ddr, rd_clk=clk | SAFE |
+| 17b | `rd_active` (PLXJ blank) | clk→clk_ddr | 1 | level | 2-FF (`rd_act_s1/s2`); WE qualify is a nomerge chain (`plxj_we_r→dup→go`) plus `S_PLXJ_ISSUE` extra WE stage. Related-edge, not async-grouped. | SAFE (hold cut vs mux4 -0.093 / mux5 -0.071) |
 
 ### ddr_bus_arbiter.sv (clk_ddr ↔ clk_sys via clk_m1)
 

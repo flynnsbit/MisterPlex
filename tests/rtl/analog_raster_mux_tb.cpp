@@ -1,8 +1,10 @@
 // Analog raster mux: 240p ~15.6 kHz vs 480p ~31 kHz vs 480i field toggle.
 // v1 reset-latch: after reset sel=0, live raster_sel=1 must keep 15.6 kHz.
+// HPS PLXH doorbell: 2FF + snapshot at reset. Live doorbell hop must not retarget.
 // RED twins:
 //   ANALOG_RASTER_FAULT_SWAP_SEL  — 240p/480p class swap must fail
 //   ANALOG_RASTER_FAULT_LIVE_LATCH — live fstart latch must fail reset-hold
+//   ANALOG_RASTER_FAULT_LIVE_DOORBELL — live doorbell hop must fail hold
 //
 // clk_sys = 20 MHz (TB period 1 tick = 1 clk). colorbars Template H_TOTAL=638.
 
@@ -36,6 +38,22 @@ void reset_sel(Vanalog_raster_mux* top, int sel) {
 	top->reset = 1;
 	top->pal = 0;
 	top->raster_sel = static_cast<uint8_t>(sel);
+	top->doorbell_sel = 0;
+	top->doorbell_valid = 0;
+	top->content_index = 0;
+	top->pattern = 0;
+	for (int i = 0; i < 8; ++i)
+		tick(top);
+	top->reset = 0;
+}
+
+// Doorbell at reset selects H class. OSD raster_sel disagrees on purpose.
+void reset_doorbell(Vanalog_raster_mux* top, int db_sel) {
+	top->reset = 1;
+	top->pal = 0;
+	top->raster_sel = (db_sel == 0) ? 1 : 0;
+	top->doorbell_sel = static_cast<uint8_t>(db_sel);
+	top->doorbell_valid = 1;
 	top->content_index = 0;
 	top->pattern = 0;
 	for (int i = 0; i < 8; ++i)
@@ -143,6 +161,61 @@ int main(int argc, char** argv) {
 		fails++;
 	}
 
+	// ---- PLXH doorbell at reset selects H class (OSD disagrees) ----
+	reset_doorbell(top, 0);
+	const int p_db0 = measure_hs_period(top, 6);
+	const int hz_db0 = hz_from_period(p_db0);
+	const bool c_db0 = in_class(hz_db0, kHzLo15, kHzHi15);
+	std::printf("doorbell reset sel=0 period_clk=%d H=%d Hz class15=%d (OSD raster_sel=1)\n",
+	            p_db0, hz_db0, c_db0 ? 1 : 0);
+	if (!c_db0) {
+		std::printf("FAIL doorbell: reset sel=0 did not select 15.6 kHz class\n");
+		fails++;
+	}
+
+	// Live doorbell hop without reset must NOT retarget (GREEN).
+	// RED ANALOG_RASTER_FAULT_LIVE_DOORBELL: H jumps to ~31 kHz.
+	top->doorbell_sel = 1;
+	int db_fstart = 0;
+	for (int c = 0; c < max_latch && db_fstart < 2; ++c) {
+		tick(top);
+		if (top->frame_start)
+			db_fstart++;
+	}
+	std::printf("doorbell-hold wait fstart=%d (flipped doorbell_sel=1, no reset)\n",
+	            db_fstart);
+	if (db_fstart < 2) {
+		std::printf("FAIL doorbell-hold: need 2 frame_starts to prove hold (saw %d)\n",
+		            db_fstart);
+		fails++;
+	}
+	const int p_dbh = measure_hs_period(top, 6);
+	const int hz_dbh = hz_from_period(p_dbh);
+	const bool c_dbh15 = in_class(hz_dbh, kHzLo15, kHzHi15);
+	const bool c_dbh31 = in_class(hz_dbh, kHzLo31, kHzHi33);
+	std::printf("doorbell-hold after live db=1 period_clk=%d H=%d Hz class15=%d class31=%d scandouble_act=%d\n",
+	            p_dbh, hz_dbh, c_dbh15 ? 1 : 0, c_dbh31 ? 1 : 0,
+	            top->scandouble_act ? 1 : 0);
+	if (!c_dbh15) {
+		std::printf("FAIL doorbell-hold: mid-stream doorbell hop retargeted H class (must stay 15.6 kHz until reset)\n");
+		fails++;
+	}
+	if (c_dbh31) {
+		std::printf("FAIL doorbell-hold: H class jumped to ~31 kHz without reset\n");
+		fails++;
+	}
+
+	reset_doorbell(top, 1);
+	const int p_db1 = measure_hs_period(top, 6);
+	const int hz_db1 = hz_from_period(p_db1);
+	const bool c_db1 = in_class(hz_db1, kHzLo31, kHzHi33);
+	std::printf("doorbell reset sel=1 period_clk=%d H=%d Hz class31=%d (OSD raster_sel=0)\n",
+	            p_db1, hz_db1, c_db1 ? 1 : 0);
+	if (!c_db1) {
+		std::printf("FAIL doorbell: reset sel=1 did not select ~31 kHz class\n");
+		fails++;
+	}
+
 	// ---- 480p ~31 kHz class ----
 	reset_sel(top, 1);
 	const int p480 = measure_hs_period(top, 6);
@@ -197,7 +270,7 @@ int main(int argc, char** argv) {
 		delete top;
 		return 1;
 	}
-	std::printf("OK analog_raster_mux: 240p~15.6kHz 480p~31kHz 480i field toggle reset-latch\n");
+	std::printf("OK analog_raster_mux: 240p~15.6kHz 480p~31kHz 480i field toggle reset-latch doorbell\n");
 	delete top;
 	return 0;
 }

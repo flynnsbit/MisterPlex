@@ -108,6 +108,22 @@
       "_note": "ARM constants pending w-osd commit alignment to PLXD"
     },
     {
+      "name": "PLXH",
+      "purpose": "Analog H-class doorbell (HPS\u2192core). Sampled only at reset (2FF into clk_sys). NOT leftover L4 PLXJ 0x3047F130.",
+      "address": "0x3007F138",
+      "magic": "0x504C5848",
+      "rtl_file": "rtl/ddr_frame_store.sv",
+      "rtl_addr_param": "ANALOG_DOORBELL_PHYS",
+      "rtl_magic_param": "MAGIC_H",
+      "arm_addr_const": "kPlxhAddr",
+      "arm_magic_const": "kPlxhMagic",
+      "layout": {
+        "31:0": "magic",
+        "33:32": "analog_sel 0=240p15 1=480p31 2=480i (3=reserved OSD fallback)",
+        "63:34": "reserved (live hop ignored)"
+      }
+    },
+    {
       "name": "PLXK",
       "purpose": "DDR doorbell (HPS\u2192core)",
       "address": "0x300FF000",

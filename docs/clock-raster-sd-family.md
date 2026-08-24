@@ -74,3 +74,21 @@ Future doorbell: 2FF into `clk_sys`, snapshot at reset into `analog_sel` /
 `sel_lat`. Do not turn the doorbell into a generated clock.
 
 HDMI LCD refuse of ascal 15 kHz is unchanged (`test_hdmi_lcd_refuse_15k`).
+
+## clk_ddr hold (PLXJ WE qualify)
+
+mux4 STA (`sdfam-mux4` / dbce76db): Hold `general[2]` Slack : **-0.093** TNS **-0.093**.
+mux5 STA (`sdfam-mux5` / `0afc1786`): same-clock clk_ddr→clk_ddr RR Hold
+Slack : **-0.071** TNS **-0.071**. Setup still green (g2 +0.440, g0 +0.929).
+Wrapper **QUARTUS_TIMING_REJECTED** rc=1. RBF md5 `19b568e5` not deployed.
+
+Cause: PLXJ-first S_IDLE made `DDRAM_WE` a short combo. mux5 nomerge-parallel
+qualify closed 22 ps, not 71 ps. Next cut: chain `plxj_we_r→dup→go` (separate
+always, nomerge) and **S_PLXJ_ISSUE** extra register stage (sample ADDR/DIN,
+assert WE next clk_ddr — keepv21 class). Park other S_IDLE arms while
+`plxj_req && blank_ok` so fills cannot starve the 250 ms gold ACK.
+
+Do **not** add `set_clock_groups -asynchronous` on clk_sys↔clk_ddr
+(related-edge). Do **not** `false_path` this qualify. Do **not**
+`create_generated_clock` on `ce_pix`. Do **not** retune `clk_sys`.
+Address remains **0x3007F130**. Parent FIT_GO mux6 after this land; no invented STA.

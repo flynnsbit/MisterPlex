@@ -53,11 +53,13 @@
     "cec5dcaef6dfb306": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:77 \u2014 REVIEW: false_path on non-obvious target",
     "a2ff373066af8638": "clock_groups @ fpga/Plex_MiSTer/Plex_clk_pix.sdc:28 \u2014 PRESENT_CLK_PIX_PLL default-OFF SDC: clk_pix vs clk_sys crossed only via present_npx_path async_fifo gray + 2FF (source-proven CDC); file not sourced in product QSF",
     "80914f1b557a9074": "clock_groups @ fpga/Plex_MiSTer/Plex_clk_pix.sdc:32 \u2014 PRESENT_CLK_PIX_PLL default-OFF SDC: clk_pix vs clk_ddr asynchronous; same FIFO CDC class; file not sourced in product QSF",
-    "1db7f4c7fc99ff22": "false_path @ fpga/Plex_MiSTer/Plex_analog_mux.sdc:35 \u2014 analog_sel/OSD O[15:14] reset-latched into sel_lat (not live F12). ce_pix is a clk_sys clock-enable; 15.6 kHz is analog H-rate, not a generated clock. Do not false_path FROM sel_lat (scandouble to ce_pix is real clk_sys)."
+    "1db7f4c7fc99ff22": "false_path @ fpga/Plex_MiSTer/Plex_analog_mux.sdc:37 \u2014 analog_sel/OSD O[15:14] reset-latched into sel_lat (not live F12). ce_pix is a clk_sys clock-enable; 15.6 kHz is analog H-rate, not a generated clock. Do not false_path FROM sel_lat (scandouble to ce_pix is real clk_sys).",
+    "9d5607eb1156b8bc": "false_path @ fpga/Plex_MiSTer/Plex_analog_mux.sdc:39 \u2014 analog doorbell PLXH CDC: clk_ddr analog_db_sel 2FF first stage db_sel_s1 into clk_sys. Snapshot is reset-only into sel_lat.",
+    "0e0582642c3ac62f": "false_path @ fpga/Plex_MiSTer/Plex_analog_mux.sdc:40 \u2014 analog doorbell PLXH CDC: clk_ddr analog_db_valid 2FF first stage db_v_s1 into clk_sys. Snapshot is reset-only into sel_lat."
   },
   "expected_sta_clocks": [
-    "general[0].gpll",
-    "general[2].gpll"
+    "emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk",
+    "emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk"
   ],
   "min_sta_rows": 4
 }

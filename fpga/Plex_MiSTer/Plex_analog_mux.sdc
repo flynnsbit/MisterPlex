@@ -24,12 +24,16 @@
 #   OSD Display O[15:14] → analog_sel (Plex.sv). w-fpga reset-latches analog_sel;
 #   analog_raster_mux.sel_lat is reset-only (not fstart, not live F12).
 #   Treat analog_sel as a run-constant. Do not time F12 hops as per-line data.
-#   Future HPS analog doorbell: 2FF into clk_sys, snapshot at reset into
-#   analog_sel / sel_lat. Do not create_generated_clock from the doorbell.
-#   Content O[5:4] stays live and is NOT false-pathed here.
-
+#   HPS analog doorbell PLXH 0x3007F138 (NOT leftover L4 0x3047F130): 2FF into
+#   clk_sys (db_sel_s1/db_v_s1), snapshot at reset into sel_lat. Do not
+#   create_generated_clock from the doorbell. Content O[5:4] stays live and
+#   is NOT false-pathed here.
+#
 # sel_lat is a 2-bit reset-time constant (scandouble_act). False-path its D
-# pin so STA does not treat OSD status[15:14] / a future doorbell as a
-# every-cycle analog hop. Do not false_path FROM sel_lat (scandouble → ce_pix
-# mux is a real clk_sys path and must stay timed).
+# pin so STA does not treat OSD status[15:14] / PLXH as a every-cycle analog
+# hop. Do not false_path FROM sel_lat (scandouble → ce_pix mux is a real
+# clk_sys path and must stay timed).
 set_false_path -to {*sel_lat*}
+# Analog doorbell CDC: clk_ddr analog_db_* → clk_sys 2FF first stage.
+set_false_path -to {*db_sel_s1*}
+set_false_path -to {*db_v_s1*}

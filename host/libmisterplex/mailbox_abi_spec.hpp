@@ -90,6 +90,15 @@ constexpr unsigned kPlxdFramesDoneWidth = 16;
 constexpr uint32_t kPlxjAddr  = 0x3007F130u;
 constexpr uint32_t kPlxjMagic = 0x504C584Au; // "PLXJ"
 
+// PLXH — Analog H-class doorbell (ARM→FPGA). Sampled only at core reset.
+// Layout (64-bit, little-endian):
+//   [31:0]   magic 0x504C5848 "PLXH"
+//   [33:32]  analog_sel 0=240p15, 1=480p31, 2=480i (3=reserved → OSD fallback)
+//   [63:34]  reserved / seq (FPGA ignores; live hop does not retarget)
+// Address is the 480p mailbox page. NOT leftover L4 PLXJ 0x3047F130.
+constexpr uint32_t kPlxhAddr  = 0x3007F138u;
+constexpr uint32_t kPlxhMagic = 0x504C5848u; // "PLXH"
+
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
@@ -103,7 +112,7 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 8> kAllMagics = {{
+constexpr std::array<MagicEntry, 9> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -111,12 +120,13 @@ constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
     {"PLXJ", kPlxjMagic},
+    {"PLXH", kPlxhMagic},
     {"PLXB", kPlxbMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 10> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -125,6 +135,7 @@ constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
     {"PLXJ", kPlxjAddr,     kPlxjMagic,     8, "fpga_to_arm",  true},
+    {"PLXH", kPlxhAddr,     kPlxhMagic,     8, "arm_to_fpga",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 
