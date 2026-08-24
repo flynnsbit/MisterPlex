@@ -102,8 +102,10 @@ public:
     // Core reset / daemon start: latch Display and write video_mode once.
     void latchAndApplyDisplayRaster(const ContentResolution& display);
     // v1 analog mux: write O[15:14] from ANALOG_RASTER then pulse status[0].
-    // True480 / SD-family only. Not live OSD poll. OSD_CONTROL stays 0.
-    void applyAnalogRasterOnStart(const std::string& analogRasterConf);
+    // Plex_SDfamily argv only. Not mid-play. Not live OSD poll. OSD_CONTROL=0.
+    // argvOrRbf is Main argv / LIVE_RBF / RBFNAME (must contain Plex_SDfamily).
+    void applyAnalogRasterOnStart(const std::string& analogRasterConf,
+                                  const char* argvOrRbf = nullptr);
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     // Conf FFMPEG_SWS_FLAGS: bicubic (quality) | fast_bilinear (rate ladder) | neighbor |
     // skip|none|off|identity (omit scale) | exact[_fast_bilinear|_neighbor] (force WxH,

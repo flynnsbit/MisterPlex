@@ -26,6 +26,7 @@ LOCKDIR="${MISTERPLEX_WATCH_LOCK:-/tmp/misterplex-watch.lock}"
 # Future one-pair: Plex_SDfamily.rbf + misterplexd.480p gold 5f1c8614.
 # Default LIVE_RBF stays Plex_480p until SDfamily exists on the card.
 LIVE_RBF="${MISTERPLEX_LIVE_RBF:-/media/fat/_Utility/Plex_480p.rbf}"
+RESOLVED_LIVE_RBF=
 UTILITY_DIR="${MISTERPLEX_UTILITY:-/media/fat/_Utility}"
 L4_PLXS_ADDR="${MISTERPLEX_L4_PLXS:-0x3047F100}"
 T480_PLXS_ADDR="${MISTERPLEX_T480_PLXS:-0x3007F100}"
@@ -174,6 +175,7 @@ select_bin_for_live_rbf() {
   # Plex_SDfamily.rbf (no frozen md5) → misterplexd.480p gold. Leftover L4
   # PLXJ 504C584A at 0x3047F130 must not hash Plex_720p24.
   rbf=$(resolve_loaded_rbf)
+  RESOLVED_LIVE_RBF=$rbf
   SELECTED_BIN="$DEFAULT_BIN"
   sum="missing"
   [ -f "$rbf" ] && sum=$(md5sum "$rbf" | awk '{print $1}')
@@ -268,6 +270,7 @@ ensure_daemon() {
   # 1500k + 2-slot cached ring (stick=0) is the 480p overlap path.
   MISTERPLEX_ID="$ID" MISTERPLEX_PORT="$PORT" MISTERPLEX_NAME="$NAME" \
     MISTERPLEX_CONF="$CONF" MISTERPLEXD_BIN="$BIN" \
+    MISTERPLEX_LIVE_RBF="${RESOLVED_LIVE_RBF:-$LIVE_RBF}" \
     nohup "$SUP" >>"$WATCHLOG" 2>&1 &
   i=0
   while [ "$i" -lt 10 ]; do

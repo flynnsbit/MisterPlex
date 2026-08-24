@@ -752,17 +752,35 @@ int main(int argc, char** argv) {
     } else {
         // v1 analog mux: ANALOG_RASTER → O[15:14] then pulse status[0] once
         // before idle paint so the mux latches under reset. Not live OSD poll.
-        // OSD_CONTROL stays 0. Skip L4 (parked).
-        if (misterplex::analogRasterApplyOnStart()) {
-            const auto analog = loadConf(confPath, "ANALOG_RASTER");
-            player.applyAnalogRasterOnStart(analog);
+        // Only when Main argv / LIVE_RBF contains Plex_SDfamily. Not mid-play.
+        // Must not poke ascal video_mode. OSD_CONTROL stays 0. Skip L4.
+        std::string analogArgv;
+        if (const char* e = std::getenv("MISTERPLEX_MAIN_ARGV"))
+            analogArgv = e;
+        if (analogArgv.empty()) {
+            if (const char* e = std::getenv("MISTERPLEX_LIVE_RBF"))
+                analogArgv = e;
+        }
+        if (analogArgv.empty())
+            analogArgv = misterplex::readTrimPinFile("/tmp/RBFNAME");
+        if (misterplex::analogRasterShouldApplyOnStart(analogArgv.c_str(), player.playing())) {
+            auto analog = loadConf(confPath, "ANALOG_RASTER");
+            if (analog.empty())
+                analog = "480p31";
+            player.applyAnalogRasterOnStart(analog, analogArgv.c_str());
+            const auto plan = misterplex::analogRasterStartPlan(analog.c_str());
             std::fprintf(stderr,
                          "misterplexd: ANALOG_RASTER=%s bits15:14=%u pulse_reset=%s "
-                         "live=%s OSD_CONTROL stays 0\n",
-                         analog.empty() ? "follow(default)" : analog.c_str(),
-                         misterplex::analogRasterMenuBitsFromConf(analog.c_str()),
-                         misterplex::analogRasterPulseResetOnStart() ? "1" : "0",
-                         misterplex::analogRasterApplyOnOsdChange() ? "1" : "0");
+                         "live=%s video_mode=%s argv_sdfam=1 OSD_CONTROL stays 0 "
+                         "set_status %s\n",
+                         analog.c_str(), plan.bits15_14, plan.pulseReset ? "1" : "0",
+                         plan.applyLive ? "1" : "0",
+                         plan.pokeVideoMode ? "1" : "0", plan.setStatusCli);
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: analogRasterApplyOnStart skip argv=%s playing=%d\n",
+                         analogArgv.empty() ? "(empty)" : analogArgv.c_str(),
+                         player.playing() ? 1 : 0);
         }
         // Paint the idle screen at boot so the core never shows a stale frame store.
         player.startIdle();

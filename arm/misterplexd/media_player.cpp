@@ -1155,9 +1155,16 @@ void MediaPlayer::applyOsd(uint16_t word) {
         " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
 }
 
-void MediaPlayer::applyAnalogRasterOnStart(const std::string& analogRasterConf) {
-    if (!analogRasterApplyOnStart())
+void MediaPlayer::applyAnalogRasterOnStart(const std::string& analogRasterConf,
+                                          const char* argvOrRbf) {
+    if (!analogRasterShouldApplyOnStart(argvOrRbf, playing_.load())) {
+        log("media: analog raster skip (not Plex_SDfamily start / playing)");
         return;
+    }
+    if (analogRasterPokesVideoMode()) {
+        log("media: analog raster skip (must not poke video_mode / 15 kHz ascal)");
+        return;
+    }
     if (liveGlass_ == LiveGlass::L4) {
         log("media: analog raster skip (L4 parked)");
         return;
@@ -1167,13 +1174,17 @@ void MediaPlayer::applyAnalogRasterOnStart(const std::string& analogRasterConf) 
         return;
     }
     const AnalogRasterStartPlan plan = analogRasterStartPlan(analogRasterConf.c_str());
+    if (plan.videoModeCmd && plan.videoModeCmd[0]) {
+        log("media: analog raster skip (plan must not carry video_mode)");
+        return;
+    }
     if (!fpga_.setStatusBits(plan.pairs, plan.nPairs)) {
         log("media: analog raster setStatusBits failed: " + fpga_.lastError());
         return;
     }
     log(std::string("media: ANALOG_RASTER bits15:14=") + std::to_string(plan.bits15_14) +
         " pulse_reset=" + (plan.pulseReset ? "1" : "0") +
-        " live=" + (plan.applyLive ? "1" : "0"));
+        " live=" + (plan.applyLive ? "1" : "0") + " set_status " + plan.setStatusCli);
 }
 
 void MediaPlayer::latchAndApplyDisplayRaster(const ContentResolution& display) {

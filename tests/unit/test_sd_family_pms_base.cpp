@@ -83,10 +83,13 @@ int main() {
     CHECK_EQ(buildPlexBase("http", "localhost", "32400", lan), lan);
     CHECK_EQ(buildPlexBase("http", "::1", "32400", lan), lan);
     CHECK_EQ(buildPlexBase("http", "169.254.1.20", "32400", lan), lan);
+    CHECK_EQ(buildPlexBase("http", "169.254.12.34", "32400", lan), lan);
+    CHECK_EQ(buildPlexBase("http", "http://127.0.0.1:32400", "32400", lan), lan);
     CHECK_EQ(buildPlexBase("https",
                            "192-168-2-1.f29ec2ab5a084cad97407d2004a85125.plex.direct", "32400",
                            lan),
              lan);
+    CHECK_EQ(buildPlexBase("http", "abc.plex.direct", "32400", lan), lan);
 
     CHECK(isUnreachableHost("127.0.0.1"));
     CHECK(isUnreachableHost("localhost"));

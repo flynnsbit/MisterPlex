@@ -163,6 +163,7 @@ bool isUnreachableHost(const std::string& hostOrUrl) {
     const std::string h = lowerCopy(hostOnly(hostOrUrl));
     if (h.empty())
         return false;
+#ifndef PMS_REWRITE_FAULT_LEFTOVER_127
     // Loopback / resolver aliases. 127/8 covers 127.0.0.1 and friends.
     if (h == "localhost" || h == "::1" || h == "0:0:0:0:0:0:0:1")
         return true;
@@ -177,6 +178,9 @@ bool isUnreachableHost(const std::string& hostOrUrl) {
     if (h == "plex.direct" ||
         (h.size() >= kPdLen && h.compare(h.size() - kPdLen, kPdLen, kPlexDirect) == 0))
         return true;
+#endif
+    // PMS_REWRITE_FAULT_LEFTOVER_127: planted leftover 127 / plex.direct /
+    // 169.254 stay reachable so the GREEN checker fails (docker-bridge only).
     if (h.rfind("172.17.", 0) == 0 || h.rfind("172.18.", 0) == 0 ||
         h.rfind("172.20.", 0) == 0 || h.rfind("172.21.", 0) == 0)
         return true;

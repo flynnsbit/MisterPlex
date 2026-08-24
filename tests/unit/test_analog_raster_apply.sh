@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# analogRasterApplyOnStart GREEN + RED twins (swap bits / live apply).
+# analogRasterApplyOnStart GREEN + RED twins (swap bits / live / mid-play / 15 kHz).
 set -u
 set -o pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -13,10 +13,26 @@ ok() { echo "OK: $*"; }
 
 [ -f "$SRC" ] || { echo "missing $SRC" >&2; exit 1; }
 
-grep -q 'analogRasterApplyOnStart' "$ROOT/arm/misterplexd/main.cpp" || \
-  fail "main.cpp must call analogRasterApplyOnStart"
+grep -q 'analogRasterShouldApplyOnStart' "$ROOT/arm/misterplexd/main.cpp" || \
+  fail "main.cpp must gate analogRasterShouldApplyOnStart on Plex_SDfamily argv"
 grep -q 'applyAnalogRasterOnStart' "$ROOT/arm/misterplexd/media_player.cpp" || \
   fail "media_player must apply analog raster via setStatusBits"
+grep -q 'analogRasterPokesVideoMode' "$ROOT/arm/misterplexd/media_player.cpp" || \
+  fail "applyAnalogRasterOnStart must refuse video_mode / 15 kHz ascal"
+fn_analog=$(awk '/void MediaPlayer::applyAnalogRasterOnStart\(/,/^void MediaPlayer::latchAndApplyDisplayRaster\(/' \
+  "$ROOT/arm/misterplexd/media_player.cpp")
+if printf '%s\n' "$fn_analog" | grep -q 'writeMisterCmdLine\|kMisterCmdPath\|kVideoModeCmd'; then
+  fail "applyAnalogRasterOnStart must not poke /dev/MiSTer_cmd video_mode"
+else
+  ok "applyAnalogRasterOnStart does not write video_mode"
+fi
+fn_osd=$(awk '/void MediaPlayer::applyOsd\(/,/^void MediaPlayer::applyAnalogRasterOnStart\(/' \
+  "$ROOT/arm/misterplexd/media_player.cpp" | sed '$d')
+if printf '%s\n' "$fn_osd" | grep -vE '^[[:space:]]*//' | grep -q 'applyAnalogRasterOnStart(\|analogRasterStartPlan('; then
+  fail "applyOsd must not analog-apply (live hop / mid-play)"
+else
+  ok "applyOsd does not analog-apply"
+fi
 if grep -q 'OSD_CONTROL=1' "$ROOT/scripts/misterplex_pair_conf.sh"; then
   fail "pair_conf must not ship OSD_CONTROL=1"
 else
@@ -24,6 +40,12 @@ else
 fi
 grep -q 'ANALOG_RASTER=480p31' "$ROOT/scripts/misterplex_pair_conf.sh" || \
   fail "pair_conf default overlay must echo ANALOG_RASTER=480p31"
+grep -q 'MISTERPLEX_LIVE_RBF=' "$ROOT/scripts/misterplex_core_watch.sh" || \
+  fail "watcher must export MISTERPLEX_LIVE_RBF so analog argv gate can see Plex_SDfamily"
+grep -q 'setStatusBits' "$ROOT/arm/misterplexd/media_player.cpp" || \
+  fail "current-tree analog apply uses setStatusBits (gold recast is set_status CLI)"
+grep -q -- '--bit 14' "$ROOT/host/libmisterplex/analog_raster.hpp" || \
+  fail "analog_raster.hpp must document set_status --bit 14/--bit 15/--pulse 0"
 
 mkdir -p "$ROOT/build"
 green="$ROOT/build/test_analog_raster_apply"
@@ -31,41 +53,50 @@ if ! $CXX $INC -o "$green" "$SRC" "$RES"; then
   echo "GREEN compile failed" >&2
   exit 1
 fi
-if ! "$green"; then
+set +e
+"$green"
+grc=$?
+set -e
+echo "analogRasterApplyOnStart GREEN true rc=$grc"
+if [ "$grc" -ne 0 ]; then
   echo "GREEN run failed" >&2
   exit 1
 fi
 ok "GREEN analogRasterApplyOnStart rc=0"
 
-red_swap="$ROOT/build/test_analog_raster_apply_red_swap"
-if ! $CXX $INC -DANALOG_RASTER_FAULT_SWAP_BITS -o "$red_swap" "$SRC" "$RES"; then
-  fail "RED SWAP compile should succeed (runtime must fail)"
-else
-  set +e
-  "$red_swap" >/tmp/analog-raster-red-swap.out 2>/tmp/analog-raster-red-swap.err
-  rc=$?
-  set -e
-  if [ "$rc" -eq 0 ]; then
-    fail "RED SWAP twin ran rc=0 (480p31 must not encode as bits=1)"
-  else
-    ok "RED SWAP twin true rc=$rc (480p31 bits != 2)"
+run_red() {
+  local def="$1" bin="$2" note="$3"
+  if ! $CXX $INC -D"$def" -o "$bin" "$SRC" "$RES"; then
+    fail "RED $def compile should succeed (runtime must fail)"
+    return
   fi
-fi
+  set +e
+  "$bin" >/tmp/analog-raster-red.out 2>/tmp/analog-raster-red.err
+  local rc=$?
+  set -e
+  echo "analogRasterApplyOnStart RED $def true rc=$rc"
+  if [ "$rc" -eq 0 ]; then
+    fail "RED $def twin ran rc=0 ($note)"
+  else
+    ok "RED $def twin true rc=$rc ($note)"
+  fi
+}
 
-red_live="$ROOT/build/test_analog_raster_apply_red_live"
-if ! $CXX $INC -DANALOG_RASTER_FAULT_LIVE_APPLY -o "$red_live" "$SRC" "$RES"; then
-  fail "RED LIVE compile should succeed (runtime must fail)"
-else
-  set +e
-  "$red_live" >/tmp/analog-raster-red-live.out 2>/tmp/analog-raster-red-live.err
-  rc=$?
-  set -e
-  if [ "$rc" -eq 0 ]; then
-    fail "RED LIVE twin ran rc=0 (live OSD rewrite must fail)"
-  else
-    ok "RED LIVE twin true rc=$rc (applyOnOsdChange must not be true)"
-  fi
-fi
+run_red ANALOG_RASTER_FAULT_SWAP_BITS \
+  "$ROOT/build/test_analog_raster_apply_red_swap" \
+  "480p31 bits != 2"
+run_red ANALOG_RASTER_FAULT_LIVE_APPLY \
+  "$ROOT/build/test_analog_raster_apply_red_live" \
+  "applyOnOsdChange must not be true"
+run_red ANALOG_RASTER_FAULT_MID_PLAY \
+  "$ROOT/build/test_analog_raster_apply_red_midplay" \
+  "must not fire mid-play"
+run_red ANALOG_RASTER_FAULT_VIDEO_MODE \
+  "$ROOT/build/test_analog_raster_apply_red_videomode" \
+  "must not poke 15 kHz ascal video_mode"
+run_red ANALOG_RASTER_FAULT_IGNORE_ARGV \
+  "$ROOT/build/test_analog_raster_apply_red_argv" \
+  "must not apply without Plex_SDfamily argv"
 
 if [ "$fails" -ne 0 ]; then
   echo "test_analog_raster_apply.sh: $fails failure(s)" >&2

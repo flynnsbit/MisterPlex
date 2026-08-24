@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # SD-family: 480p / True480 must not prefer the 720p-only 127.0.0.1:9324 proxy.
+# GREEN: 127 / 127:9324 / *.plex.direct / 169.254.* → http://192.168.2.1:32400
+# RED: planted leftover 127 must fail the checker (true rc=1).
 # Do not weaken tests/unit/test_p720_av_match_480p_policy.sh (parked 720p24).
 set -u
 set -o pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+CXX="${CXX:-g++}"
 MP="$ROOT/arm/misterplexd/main.cpp"
 P720="$ROOT/tests/unit/test_p720_av_match_480p_policy.sh"
+SRC="$ROOT/tests/unit/test_sd_family_pms_base.cpp"
+RES="$ROOT/arm/misterplexd/plex_resolve.cpp"
+INC="-std=c++17 -O2 -Wall -Wextra -I$ROOT/host -I$ROOT/arm/misterplexd"
 fails=0
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 ok() { echo "OK: $*"; }
@@ -59,12 +65,50 @@ else
 fi
 
 # isUnreachableHost (not merely a comment elsewhere) must classify the 0:00 class.
-RES="$ROOT/arm/misterplexd/plex_resolve.cpp"
 body=$(awk '/^bool isUnreachableHost\(/,/^std::string plexHttpGet\(/' "$RES")
 printf '%s\n' "$body" | grep -q 'localhost' || fail "isUnreachableHost must reject localhost"
 printf '%s\n' "$body" | grep -q '169.254' || fail "isUnreachableHost must reject 169.254"
 printf '%s\n' "$body" | grep -q 'plex.direct' || fail "isUnreachableHost must reject *.plex.direct"
 printf '%s\n' "$body" | grep -q '127.' || fail "isUnreachableHost must reject 127/8"
+printf '%s\n' "$body" | grep -q 'PMS_REWRITE_FAULT_LEFTOVER_127' || \
+  fail "isUnreachableHost must plant leftover-127 RED via PMS_REWRITE_FAULT_LEFTOVER_127"
+
+mkdir -p "$ROOT/build"
+green="$ROOT/build/test_sd_family_pms_base"
+if ! $CXX $INC -o "$green" "$SRC" "$RES"; then
+  echo "GREEN PMS rewrite compile failed" >&2
+  exit 1
+fi
+set +e
+GREEN_OUT=$("$green" 2>&1)
+GREEN_RC=$?
+set -e
+printf '%s\n' "$GREEN_OUT"
+echo "pms_rewrite GREEN true rc=$GREEN_RC"
+if [ "$GREEN_RC" -ne 0 ]; then
+  fail "GREEN PMS rewrite true rc=$GREEN_RC"
+else
+  ok "GREEN 127 / 9324 / plex.direct / 169.254 → http://192.168.2.1:32400"
+fi
+
+red="$ROOT/build/test_sd_family_pms_base_red"
+if ! $CXX $INC -DPMS_REWRITE_FAULT_LEFTOVER_127 -o "$red" "$SRC" "$RES"; then
+  fail "RED leftover-127 compile should succeed (runtime must fail)"
+else
+  set +e
+  RED_OUT=$("$red" 2>&1)
+  RED_RC=$?
+  set -e
+  printf '%s\n' "$RED_OUT"
+  echo "pms_rewrite RED leftover-127 true rc=$RED_RC"
+  if [ "$RED_RC" -eq 0 ]; then
+    fail "RED leftover-127 twin ran rc=0 (planted 127 must fail the checker)"
+  elif ! printf '%s\n' "$RED_OUT" | grep -q "127.0.0.1"; then
+    fail "RED twin must quote leftover 127 base"
+  else
+    ok "RED planted leftover 127 true rc=$RED_RC"
+  fi
+fi
 
 if [ "$fails" -ne 0 ]; then
   echo "test_sd_family_pms_base.sh: $fails failure(s)" >&2

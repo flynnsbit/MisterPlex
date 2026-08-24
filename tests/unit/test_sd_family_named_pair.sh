@@ -138,6 +138,8 @@ ok "SDfamily pair_conf ANALOG_RASTER OSD_CONTROL=0 PLEX_BASE untouched"
 grep -q 'pair_bin_glass_for_loaded_rbf' "$WATCH" || \
   fail "watch must pair via pair_bin_glass_for_loaded_rbf"
 grep -q 'Plex_SDfamily.rbf' "$NAMED" || fail "named_rbf must name Plex_SDfamily.rbf"
+grep -q 'MISTERPLEX_LIVE_RBF=' "$WATCH" || \
+  fail "watch must export MISTERPLEX_LIVE_RBF so analogRasterApplyOnStart sees Plex_SDfamily"
 
 if [ "$fails" -ne 0 ]; then
   echo "test_sd_family_named_pair: $fails failure(s)" >&2
