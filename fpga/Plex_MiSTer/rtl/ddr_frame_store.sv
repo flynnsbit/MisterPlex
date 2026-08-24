@@ -1326,7 +1326,10 @@ module ddr_frame_store #(
 
 				// mux5 hold: DDRAM_WE from registered PLXJ sample, not S_IDLE combo.
 				S_PLXJ_ISSUE: begin
-					if (!DDRAM_BUSY && !DDRAM_WE) begin
+					// mux12: mux11 Hold general[2] −0.011 (WE vs RD same beat).
+					// Enter ISSUE without waiting RD (mux11 S_IDLE take); assert
+					// registered WE only when !RD (mux10 STA Hold +0.279).
+					if (!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= plxj_addr_r;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= plxj_din_r;
