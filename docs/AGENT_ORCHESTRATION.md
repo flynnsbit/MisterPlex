@@ -8,6 +8,17 @@
 **Default harness (all projects):** `~/.grok/rules/00-multi-agent-build.md` + skill `/multi-agent-build`  
 (`~/.grok/skills/multi-agent-build/SKILL.md`). Repo entry: root `AGENTS.md`.
 
+**Living pickup (2026-08-24):** [`PHASE1A_PICKUP.md`](PHASE1A_PICKUP.md). Parent = Chief of Staff.
+
+## Lab map (pinned 2026-08-24)
+
+- **Quartus exclusive:** Docker on **node-worker1** (`192.168.1.24`, SSH host `node-worker1` / `docker`). Detect: `pgrep -f quartus_` or docker `*quartus*`. At most one fit.
+- **MiSTer SSH:** `root@192.168.2.2` **via node-worker1** (farm `enp90s0` = 192.168.2.1). Studio has no route. WiFi `192.168.1.183` is **DOWN** (`wlan0` unassociated).
+- **HDMI eyes:** node-worker1 MacroSilicon `534d:2109` **`/dev/video0`** MJPEG 1280×720. Not YUYV. Discard first-frame `e74e3559`. L58: grab yourself.
+- **PMS:** `http://192.168.1.24:32400` (docker `plex`). Never `127.0.0.1` for the portal.
+- **Power cycle (lockup only):** Enbrighten plug `192.168.1.91` — `./scripts/enbrighten_mister_power_cycle.sh`. Keys in `~/.config/misterplex/enbrighten-mister.env` (not git). After cycle wait SSH on **192.168.2.2**.
+- **Deploy:** `DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh` with `MISTER_HOST=192.168.2.2` from a host that can route there (usually node-worker1). ONE menu. No kill-9 storms.
+
 ## Goal
 Keep **5–8 worker agents** busy until `docs/PHASE_BACKLOG.md` gates are green.
 Parent (top-level) verifies count and **refills the bucket** every tick.

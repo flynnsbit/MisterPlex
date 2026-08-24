@@ -3,6 +3,7 @@
 // The ARM writes planar YUV420 frames into two HPS DDR banks using the layout
 // from host/libmisterplex/ddr_frame_layout.hpp. The FPGA reads Y, U, and V
 // source lines directly from HPS DDR into bank-tagged M10K line buffers.
+// Phase 1a: ST_PAINT RGB565 320x240 writes the same Y (+U/V=128) bank HDMI reads.
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,
@@ -36,6 +37,13 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+
+	// Phase 1a 320 I/P: ST_PAINT writes the bank HDMI reads (not SDRAM void).
+	input  wire        wr_en,
+	input  wire [15:0] wr_pixel,
+	input  wire        wr_reset_ptr,
+	input  wire        swap_banks,
+	output wire        wr_ready,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -365,6 +373,15 @@ module ddr_frame_store #(
 	localparam [3:0] S_LINE_WAIT  = 4'd2;
 	localparam [3:0] S_POLL_WAIT  = 4'd3;
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
+	localparam [3:0] S_PAINT_WAIT = 4'd5;
+	// Phase 1a paint raster. Not stream_path FRAME_W. Not DPB.
+	localparam int PAINT_W = 320;
+	localparam int PAINT_H = 240;
+	localparam int PAINT_Y_QWORDS = PAINT_W / 8;
+	localparam int PAINT_C_QWORDS = PAINT_W / 16;
+	localparam [1:0] PCMD_PIXEL = 2'd0;
+	localparam [1:0] PCMD_RESET = 2'd1;
+	localparam [1:0] PCMD_SWAP  = 2'd2;
 
 	reg [3:0] state_ddr;
 	reg [LINE_SLOTS-1:0] y_valid, c_valid;
@@ -403,6 +420,41 @@ module ddr_frame_store #(
 		.wr_full(), .wr_almost_full(),
 		.rd_clk(clk_ddr), .rd_reset(reset), .rd_en(cmd_pop), .rd_data(cmd_rdata), .rd_empty(cmd_empty)
 	);
+
+	wire paint_afull, paint_empty;
+	wire [17:0] paint_rdata;
+	reg  paint_pop;
+	wire paint_accept = !paint_afull && !swap_pending;
+	wire paint_push = (wr_en || wr_reset_ptr || swap_banks) && paint_accept;
+	assign wr_ready = paint_accept;
+	async_fifo #(.WIDTH(18), .AW(5)) paint_fifo (
+		.wr_clk(clk), .wr_reset(reset),
+		.wr_en(paint_push),
+		.wr_data(wr_reset_ptr ? {PCMD_RESET, 16'd0} :
+		         swap_banks  ? {PCMD_SWAP,  16'd0} :
+		                       {PCMD_PIXEL, wr_pixel}),
+		.wr_full(), .wr_almost_full(paint_afull),
+		.rd_clk(clk_ddr), .rd_reset(reset),
+		.rd_en(paint_pop), .rd_data(paint_rdata), .rd_empty(paint_empty)
+	);
+	reg [8:0]  paint_x;
+	reg [7:0]  paint_y;
+	reg [2:0]  paint_n;
+	reg [63:0] paint_gath;
+	reg        paint_bank;
+	reg        paint_chr;
+	reg [4:0]  paint_ci;
+	reg        paint_uv;
+	reg        paint_swap_hold;
+	wire [7:0] paint_y8 = {paint_rdata[15:11], paint_rdata[15:13]};
+	wire [28:0] paint_bank_base = paint_bank ? BASE_W1 : BASE_W0;
+	wire [28:0] paint_y_addr = paint_bank_base
+		+ {{(29-8){1'b0}}, paint_y} * Y_LINE_QWORDS_W
+		+ {{(29-6){1'b0}}, paint_x[8:3]};
+	wire [28:0] paint_c_addr = paint_bank_base
+		+ (paint_uv ? V_PLANE_BASE : U_PLANE_BASE)
+		+ {{(29-7){1'b0}}, paint_y[7:1]} * C_LINE_QWORDS_W
+		+ {{(29-5){1'b0}}, paint_ci};
 
 	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
 		integer sum;
@@ -626,6 +678,16 @@ module ddr_frame_store #(
 			frame_mbox_valid <= 1'b0;
 			frame_mbox_hb <= 18'd0;
 			cmd_pop <= 1'b0;
+			paint_pop <= 1'b0;
+			paint_x <= 9'd0;
+			paint_y <= 8'd0;
+			paint_n <= 3'd0;
+			paint_gath <= 64'd0;
+			paint_bank <= 1'b1;
+			paint_chr <= 1'b0;
+			paint_ci <= 5'd0;
+			paint_uv <= 1'b0;
+			paint_swap_hold <= 1'b0;
 			imbox_seq <= 16'd0;
 			imbox_cmd_seq <= 8'd0;
 			fill_qword <= '0;
@@ -642,6 +704,7 @@ module ddr_frame_store #(
 			u_wr <= '0;
 			v_wr <= '0;
 			cmd_pop <= 1'b0;
+			paint_pop <= 1'b0;
 
 			disp_bank_d1 <= disp_bank;
 			disp_bank_d2 <= disp_bank_d1;
@@ -689,7 +752,8 @@ module ddr_frame_store #(
 
 			case (state_ddr)
 				S_IDLE: begin
-					pending_ready_ddr <= pending_ready_c;
+					pending_ready_ddr <= pending_ready_c && paint_empty
+						&& !paint_chr && !paint_swap_hold && (paint_n == 3'd0);
 					poll_div <= poll_div + 16'd1;
 					if (need_y_cur_c || (swap_pending_d2 && need_y_prep_c)) begin
 						fill_bank <= need_y_cur_c ? disp_bank_d2 : pending_bank_d2;
@@ -713,6 +777,62 @@ module ddr_frame_store #(
 						fill_qword <= '0;
 						qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 						state_ddr <= S_LINE_ISSUE;
+					end else if (paint_chr && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= paint_c_addr;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= 64'h8080_8080_8080_8080;
+						DDRAM_WE <= 1'b1;
+						if (paint_ci == 5'd19) begin
+							paint_ci <= 5'd0;
+							if (paint_uv) begin
+								paint_chr <= 1'b0;
+								paint_y <= paint_y + 8'd1;
+							end else
+								paint_uv <= 1'b1;
+						end else
+							paint_ci <= paint_ci + 5'd1;
+						state_ddr <= S_PAINT_WAIT;
+					end else if (paint_swap_hold && paint_empty && !paint_chr && (paint_n == 3'd0)) begin
+						pending_bank_ddr <= paint_bank;
+						swap_req_t_ddr <= ~swap_req_t_ddr;
+						paint_swap_hold <= 1'b0;
+					end else if (!paint_empty && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						paint_pop <= 1'b1;
+						if (paint_rdata[17:16] == PCMD_RESET) begin
+							paint_x <= 9'd0;
+							paint_y <= 8'd0;
+							paint_n <= 3'd0;
+							paint_gath <= 64'd0;
+							paint_bank <= ~disp_bank_d2;
+							paint_chr <= 1'b0;
+							paint_ci <= 5'd0;
+							paint_uv <= 1'b0;
+							paint_swap_hold <= 1'b0;
+						end else if (paint_rdata[17:16] == PCMD_SWAP) begin
+							paint_swap_hold <= 1'b1;
+						end else begin
+							paint_gath <= {paint_y8, paint_gath[63:8]};
+							if (paint_n == 3'd7) begin
+								DDRAM_ADDR <= paint_y_addr;
+								DDRAM_BURSTCNT <= 8'd1;
+								DDRAM_DIN <= {paint_y8, paint_gath[63:8]};
+								DDRAM_WE <= 1'b1;
+								paint_n <= 3'd0;
+								state_ddr <= S_PAINT_WAIT;
+							end else
+								paint_n <= paint_n + 3'd1;
+							if (paint_x == 9'(PAINT_W - 1)) begin
+								paint_x <= 9'd0;
+								if (paint_y[0]) begin
+									// Keep odd y so chroma addr uses this pair (y>>1).
+									paint_chr <= 1'b1;
+									paint_ci <= 5'd0;
+									paint_uv <= 1'b0;
+								end else
+									paint_y <= paint_y + 8'd1;
+							end else
+								paint_x <= paint_x + 9'd1;
+						end
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= 8'd1;
@@ -822,6 +942,11 @@ module ddr_frame_store #(
 				end
 
 				S_WRITE_WAIT: begin
+					if (!DDRAM_BUSY && !DDRAM_WE)
+						state_ddr <= S_IDLE;
+				end
+
+				S_PAINT_WAIT: begin
 					if (!DDRAM_BUSY && !DDRAM_WE)
 						state_ddr <= S_IDLE;
 				end

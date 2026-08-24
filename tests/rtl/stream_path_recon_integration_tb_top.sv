@@ -113,7 +113,9 @@ module stream_path_recon_integration_tb_top #(
 		.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel),
 		.fs_wr_reset(fs_wr_reset),
-		.fs_swap(fs_swap)
+		.fs_swap(fs_swap),
+		.fs_wr_ready(1'b1),
+		.fs_present_sel(1'b1)
 	);
 
 	assign recon_sig = FAULT_RECON_SIG_ZERO ? 8'h00 : recon_sig_dut;

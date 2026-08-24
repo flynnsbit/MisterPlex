@@ -223,7 +223,6 @@ module present_core #(
 	wire [7:0]  frame_sdram_state;
 
 `ifdef DDR_FRAME_STORE
-	assign fs_wr_ready = 1'b1;
 	assign wr_count = 32'd0;
 	assign wr_done = 1'b0;
 	assign sdram_sel = 1'b0;
@@ -262,6 +261,11 @@ module present_core #(
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.wr_en(fs_wr_en),
+		.wr_pixel(fs_wr_pixel),
+		.wr_reset_ptr(fs_wr_reset),
+		.swap_banks(fs_swap),
+		.wr_ready(fs_wr_ready),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),

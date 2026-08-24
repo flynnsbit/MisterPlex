@@ -53,6 +53,8 @@ module h264_mb_ctrl #(
 	output reg  [7:0]  recon_dbg,
 	output reg         recon_dbg_valid,
 	output reg         recon_valid,
+	input  wire        wr_ready,  // present accept_cmd (same as F1 ioctl_wait)
+	input  wire        present_sel,  // fpga_wr | stub_allow; drives fs_wr_en/fs_swap
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
 	output reg         wr_reset_ptr,
@@ -75,6 +77,8 @@ module h264_mb_ctrl #(
 	// Follows gold I420 compare (TB/host latch). Not assign 1'b1 / not hardwired 0.
 	reg clip_gold_match /*verilator public_flat_rw*/;
 	assign product_recon_ok = clip_gold_match;
+	// Muxed present strobe. Do not advance on bare wr_ready (phantom accept).
+	wire paint_ack = wr_ready & present_sel;
 
 	`include "h264_chroma_nc.svh"
 
@@ -269,6 +273,8 @@ module h264_mb_ctrl #(
 	reg [4:0] nload_i;
 	reg [3:0]  stamp_i;
 	reg        paint_hold;
+	reg        paint_reset_hold;
+	reg        paint_swap_hold;
 	reg [31:0] we_n;
 	reg [7:0]  y0_lat;
 	reg        stop_br_eof;
@@ -567,6 +573,12 @@ module h264_mb_ctrl #(
 	reg         dpb_after_db; // 1 → ST_DB_LD after fetch, 0 → H_CBP
 	reg         dpb_frm_done;
 	reg  [1:0]  frm_done_hold;
+	wire        dpb_bank_sel;
+	reg  [31:0] paint_base;
+	// y*320 = (y<<8)+(y<<6). No * (Q17).
+	wire [17:0] paint_y320 = {y, 8'd0} + {2'b00, y, 6'd0};
+	wire [31:0] paint_raddr = paint_base + {14'd0, paint_y320} + {22'd0, x};
+	wire        paint_on    = (phase == ST_PAINT);
 	reg signed [15:0] mv_kick_x, mv_kick_y;
 	reg        mc_hold;
 	reg        mc_int_copy; // DPB packed 16x16; MC wants 21x21 at +2,+2
@@ -582,8 +594,9 @@ module h264_mb_ctrl #(
 	assign dpb_mem_we    = dpb_we;
 	assign dpb_mem_waddr = dpb_waddr;
 	assign dpb_mem_wdata = dpb_wdata;
-	assign dpb_mem_rd    = dpb_rd;
-	assign dpb_mem_raddr = dpb_raddr;
+	// ST_PAINT shares the DPB read port (walker not in MC). Bypass ~bank_sel.
+	assign dpb_mem_rd    = paint_on ? 1'b1 : dpb_rd;
+	assign dpb_mem_raddr = paint_on ? paint_raddr : dpb_raddr;
 	// Same-cycle COMMIT store so mb_index=1 cannot leave dpb_pic all-zero.
 	// Integer 16x16 (P_Skip / MV=0): DPB int_copy packs THIS mb at luma[0:255]
 	// / chroma[0:63]. 21x21 qpel on that layout makes Y(2,10)=win[256]=0.
@@ -651,7 +664,8 @@ module h264_mb_ctrl #(
 		.luma_window_valid(dpb_luma_wv), .luma_window_idx(dpb_luma_wi),
 		.luma_window_sample(dpb_luma_ws),
 		.chroma_u_window_valid(dpb_cu_wv), .chroma_v_window_valid(dpb_cv_wv),
-		.chroma_window_idx(dpb_chroma_wi), .chroma_window_sample(dpb_chroma_ws)
+		.chroma_window_idx(dpb_chroma_wi), .chroma_window_sample(dpb_chroma_ws),
+		.bank_sel(dpb_bank_sel)
 	);
 	reg  mc_start;
 	wire mc_done;
@@ -803,10 +817,7 @@ module h264_mb_ctrl #(
 		recon_dbg_comb[7] = recon_ok;
 	end
 
-	// Stub display: tile last MB (mb_pix). No full-frame Y RAM.
-	wire [7:0] paint_y = mb_pix[{y[3:0], x[3:0]}];
-	wire [15:0] px_comb = {paint_y[7:3], paint_y[7:2], paint_y[7:3]};
-
+	// Present is ST_PAINT DPB Y raster (paint_base+y*320+x). Not last-MB tile.
 	integer pi;
 	integer di;
 
@@ -955,6 +966,9 @@ module h264_mb_ctrl #(
 			win_hold        <= 2'd0;
 			res_bit_start   <= 17'd0;
 			paint_hold      <= 1'b0;
+			paint_reset_hold<= 1'b0;
+			paint_swap_hold <= 1'b0;
+			paint_base      <= 32'd0;
 			we_n            <= 32'd0;
 			y0_lat          <= 8'd0;
 			vcl_lock        <= 1'b0;
@@ -1111,13 +1125,14 @@ module h264_mb_ctrl #(
 					phase        <= ST_PAINT;
 					x            <= 10'd0;
 					y            <= 10'd0;
-					wr_reset_ptr <= 1'b1;
+					paint_reset_hold <= 1'b1;
+					paint_swap_hold  <= 1'b0;
 					paint_hold   <= 1'b1;
-					// Grid done: snap DPB ref NOW (not after 76800 paint beats).
-					// One-pic wrap: P MC must see F0 at (0,32)=235, not F1 I-in-P 160.
+					// WRITE bank (bank_sel not toggled yet). frm_done_hold still
+					// pulses frame_done for the NEXT P; paint keeps paint_base.
+					paint_base    <= dpb_bank_sel ? 32'd115200 : 32'd0;
 					done          <= 1'b1;
 					frm_done_hold <= 2'd3;
-					swap_req      <= 1'b1;
 					frames_out    <= frames_out + 16'd1;
 					// synopsys translate_off
 					$display("GRID_DONE mb_index=%0d frames_out=%0d we_n=%0d",
@@ -2087,33 +2102,50 @@ module h264_mb_ctrl #(
 			end
 
 			ST_PAINT: begin
+				// DPB Y → RGB565. Advance only on paint_ack (wr_ready AND present_sel).
+				// Reset, then Q, then wr_en held until accepted. swap after last pixel,
+				// held until present accepts. Never wr_en+swap same cycle (cmd mux).
 				// synopsys translate_off
 				if (paint_hold)
-					$display("ST_PAINT phase=%0d hdr_st=%0d br_eof=%0d br_syn_ok=%0d ue_val=%0d mb_index=%0d lat_mb_w=%0d lat_mb_h=%0d mb_count=%0d rbsp_bytes=%0d br_bit_pos=%0d we_n=%0d Y0=%0d frames_out=%0d",
-					         phase, hdr_st, br_eof, br_syn_ok, ue_val, mb_index, lat_mb_w, lat_mb_h, mb_count, rbsp_bytes, bit_pos, we_n, y0_lat, frames_out);
+					$display("ST_PAINT phase=%0d hdr_st=%0d br_eof=%0d br_syn_ok=%0d ue_val=%0d mb_index=%0d lat_mb_w=%0d lat_mb_h=%0d mb_count=%0d rbsp_bytes=%0d br_bit_pos=%0d we_n=%0d Y0=%0d frames_out=%0d paint_base=%0d paint_ack=%0d",
+					         phase, hdr_st, br_eof, br_syn_ok, ue_val, mb_index, lat_mb_w, lat_mb_h, mb_count, rbsp_bytes, bit_pos, we_n, y0_lat, frames_out, paint_base, paint_ack);
 				// synopsys translate_on
-				if (paint_hold) begin
-					paint_hold <= 1'b0;
-				end else begin
-					wr_en     <= 1'b1;
-					wr_pixel  <= px_comb;
-					if ((x == (width_w - 10'd1)) && (y == (height_w - 10'd1))) begin
+				if (paint_reset_hold) begin
+					if (wr_reset_ptr && paint_ack)
+						paint_reset_hold <= 1'b0;
+					else
+						wr_reset_ptr <= 1'b1;
+				end else if (paint_swap_hold) begin
+					if (swap_req && paint_ack) begin
+						paint_swap_hold <= 1'b0;
 						phase      <= ST_IDLE;
 						busy       <= 1'b0;
 						vcl_lock   <= 1'b0;
-						// done/frames_out only if walker reached mb_count (300 @ 20x15).
-						// residual_ok=0 / recon_sig=0 must not claim a frame.
-						if (mb_index >= mb_count) begin
-							done          <= 1'b1;
-							// frames_out / DPB ref snap already on GRID_DONE.
-						end
 						x          <= 10'd0;
 						y          <= 10'd0;
-					end else if (x == (width_w - 10'd1)) begin
-						x <= 10'd0;
-						y <= y + 10'd1;
+						paint_hold <= 1'b0;
 					end else
-						x <= x + 10'd1;
+						swap_req <= 1'b1;
+				end else if (paint_hold) begin
+					// raddr = paint_base + y*320 + x already on dpb_mem_raddr
+					paint_hold <= 1'b0;
+				end else begin
+					// Latch-then-slice (Q17): dpb_mem_rdata is the registered Y.
+					wr_pixel <= {dpb_mem_rdata[7:3], dpb_mem_rdata[7:2], dpb_mem_rdata[7:3]};
+					if (wr_en && paint_ack) begin
+						if ((x == 10'd319) && (y == 10'd239)) begin
+							paint_swap_hold <= 1'b1;
+							paint_hold      <= 1'b0;
+						end else if (x == 10'd319) begin
+							x          <= 10'd0;
+							y          <= y + 10'd1;
+							paint_hold <= 1'b1;
+						end else begin
+							x          <= x + 10'd1;
+							paint_hold <= 1'b1;
+						end
+					end else
+						wr_en <= 1'b1;
 				end
 			end
 
@@ -2173,10 +2205,10 @@ module h264_dpb_one_ref_320 (
 	output wire               chroma_u_window_valid,
 	output wire               chroma_v_window_valid,
 	output wire [6:0]         chroma_window_idx,
-	output wire [7:0]         chroma_window_sample
+	output wire [7:0]         chroma_window_sample,
+	output reg                bank_sel
 );
 	localparam [31:0] PIC_BYTES = 32'd115200;
-	reg  bank_sel;
 	reg  have_ref;
 	reg  frame_done_d;
 	wire frame_done_pulse = frame_done & ~frame_done_d;

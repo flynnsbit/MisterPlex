@@ -69,6 +69,8 @@ module stream_path #(
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
 	output wire        fs_swap,
+	input  wire        fs_wr_ready,  // present accept_cmd (Plex wires F1 wr_ready)
+	input  wire        fs_present_sel,  // fpga_wr | stub_allow; no default (Q17 10231)
 	// Phase-1: sticky 0 until a full MB grid is reconstructed (skeleton = 0).
 	output wire        product_recon_ok
 );
@@ -176,8 +178,10 @@ module stream_path #(
 	wire [16:0] sl_bit_pos_hdr, sl_bit_pos_resid;
 	wire        sl_bit_pos_valid;
 
-	// residual_csum / residual_coeff connect straight to module outputs (no
-	// unpacked-array continuous assign — Quartus-friendly).
+	// residual_coeff stays a direct port. residual_csum / residual_place_pulse
+	// are muxed after use_mb so walker select does not publish the 48B place stub.
+	wire [7:0] place_csum;
+	wire       place_pulse;
 	slice_hdr_parser slp (
 		.clk(clk), .reset(reset | flush),
 		.cap_clear(sl_cap_clear), .cap_en(sl_cap_en),
@@ -197,9 +201,9 @@ module stream_path #(
 		.first_mb_type(sl_mbt), .has_mb_type(sl_has_mbt),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
-		.residual_csum(residual_csum),
+		.residual_csum(place_csum),
 		.residual_coeff(residual_coeff),
-		.residual_place_pulse(residual_place_pulse),
+		.residual_place_pulse(place_pulse),
 		.residual_place_ok(sl_place_ok),
 		.residual_place_tc(sl_place_tc),
 		.residual_place_t1(sl_place_t1),
@@ -219,7 +223,6 @@ module stream_path #(
 	assign slice_qp      = sl_qp;
 	assign residual_tc   = sl_rtc;
 	assign residual_t1   = sl_rt1;
-	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
 
 	wire [7:0]  stub_recon_sig, stub_recon_dbg;
@@ -247,7 +250,7 @@ module stream_path #(
 		.residual_ok(sl_place_ok),
 		.residual_tc(sl_place_tc),
 		.residual_dc(sl_place_dc),
-		.residual_valid(residual_place_pulse),
+		.residual_valid(place_pulse),
 		.slice_qp(sl_place_qp),
 		.residual_coeff(sl_place_coeff),
 		.recon_sig(stub_recon_sig),
@@ -301,7 +304,7 @@ module stream_path #(
 		.slice_qp(sl_place_qp),
 		.residual_ok(sl_place_ok),
 		.residual_coeff(sl_place_coeff),
-		.residual_place_pulse(residual_place_pulse),
+		.residual_place_pulse(place_pulse),
 		.first_mb(sl_first),
 		.first_mb_type(sl_mbt),
 		.pps_nref(pps_nref),
@@ -318,6 +321,8 @@ module stream_path #(
 		.recon_dbg(mb_recon_dbg),
 		.recon_dbg_valid(mb_recon_dbg_valid),
 		.recon_valid(mb_recon_valid),
+		.wr_ready(fs_wr_ready),
+		.present_sel(fs_present_sel),
 		.wr_en(mb_wr_en),
 		.wr_pixel(mb_wr_pixel),
 		.wr_reset_ptr(mb_wr_reset),
@@ -336,18 +341,25 @@ module stream_path #(
 		.dpb_mem_rvalid(dpb_mem_rvalid)
 	);
 
-	// Prefer mb_ctrl paint + decode status when the walker is busy or has
-	// completed a frame; keep decode_stub as the idle/diagnostic source.
-	wire use_mb = mb_busy | mb_done;
+	// Prefer mb_ctrl paint + decode status when the walker is busy, done, or
+	// has GRID_DONE frames_out; keep decode_stub as the idle/diagnostic source.
+	wire use_mb = mb_busy | mb_done | (mb_frames != 16'd0);
+	assign residual_ok = use_mb ? (mb_done | (mb_frames != 16'd0)) : sl_res_ok;
+	// Gate product place pulse/csum so sticky cannot re-freeze 48B 0x2F stub.
+	assign residual_place_pulse = use_mb ? 1'b0 : place_pulse;
+	assign residual_csum        = use_mb ? 8'h00 : place_csum;
 	assign recon_sig       = use_mb ? mb_recon_sig       : stub_recon_sig;
 	assign recon_dbg       = use_mb ? mb_recon_dbg       : stub_recon_dbg;
 	assign recon_dbg_valid = use_mb ? mb_recon_dbg_valid : stub_recon_dbg_valid;
-	assign recon_valid     = use_mb ? mb_recon_valid     : stub_recon_valid;
-	assign frames_out      = use_mb ? mb_frames          : stub_frames_w;
-	assign fs_wr_en        = use_mb ? mb_wr_en           : stub_wr_en;
-	assign fs_wr_pixel     = use_mb ? mb_wr_pixel        : stub_wr_pixel;
-	assign fs_wr_reset     = use_mb ? mb_wr_reset        : stub_wr_reset;
-	assign fs_swap         = use_mb ? mb_swap            : stub_swap;
+	assign recon_valid     = mb_recon_valid | stub_recon_valid;
+	assign frames_out      = mb_frames;  // walker GRID_DONE counter, not gated by use_mb
+	// Phase 1a: only ST_PAINT after GRID_DONE may wr_en/swap HDMI DDR.
+	// Stub must not write or swap this path (fit22 black+bar / recon_dbg=0xc1).
+	wire paint_mb = (mb_frames != 16'd0);
+	assign fs_wr_en        = paint_mb ? mb_wr_en    : 1'b0;
+	assign fs_wr_pixel     = mb_wr_pixel;
+	assign fs_wr_reset     = paint_mb ? mb_wr_reset : 1'b0;
+	assign fs_swap         = paint_mb ? mb_swap     : 1'b0;
 	assign stub_busy       = stub_busy_w;
 	assign stub_frames     = stub_frames_w;
 

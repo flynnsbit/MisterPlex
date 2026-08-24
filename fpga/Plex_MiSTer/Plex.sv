@@ -603,6 +603,8 @@ stream_path spath (
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
 	.fs_swap(stub_swap),
+	.fs_wr_ready(fs_wr_ready),
+	.fs_present_sel(fpga_wr | stub_allow),
 	.product_recon_ok(product_recon_ok)
 );
 
@@ -622,17 +624,30 @@ end
 
 wire        stub_allow  = ~host_owns_fs & ~ingest_dl & ~ddr_busy;
 // product_recon_ok / clip_gold_match is TB status only. Never 1'b1. Not a present gate.
-wire decode_frame_valid = recon_valid | (frames_out != 16'd0);
+(* preserve *) reg [15:0] st_frames_out;
+(* preserve *) reg        st_recon_seen;
+always @(posedge clk_sys) begin
+	if (reset) begin
+		st_frames_out <= 16'd0;
+		st_recon_seen <= 1'b0;
+	end else begin
+		st_frames_out <= frames_out;
+		// GRID_DONE / frames_out increment is enough (not place residual_ok / recon_valid)
+		if (frames_out != 16'd0)
+			st_recon_seen <= 1'b1;
+	end
+end
+wire decode_frame_valid = st_recon_seen | (st_frames_out != 16'd0);
 wire fpga_allow = status[16] & decode_frame_valid & ~ingest_dl & ~ddr_busy;
 always @(posedge clk_sys) begin
 	if (reset | status[11])
 		fpga_claim <= 1'b0;
-	else if (fpga_allow & recon_valid & ~host_owns_fs)
+	else if (fpga_allow & decode_frame_valid & ~host_owns_fs)
 		fpga_claim <= 1'b1;
 end
-// FPGA recon owns glass only with O[16], decode_frame_valid, completed-frame
-// recon_valid, and no host F1/DDR claim. host_owns_fs still blocks FPGA.
-wire        fpga_wr     = fpga_allow & ~host_owns_fs & (fpga_claim | recon_valid);
+// FPGA recon owns glass with O[16], decode_frame_valid (GRID_DONE / frames_out),
+// and no host F1/DDR claim. host_owns_fs still blocks FPGA. Not place residual_ok.
+wire        fpga_wr     = fpga_allow & ~host_owns_fs & (fpga_claim | decode_frame_valid);
 wire        host_wr     = ingest_dl | f1_wr_en | ddr_wr_en;
 wire        fs_wr_en    = ingest_dl ? f1_wr_en
 	                      : ddr_busy  ? ddr_wr_en
@@ -754,7 +769,7 @@ assign AUDIO_R = ar_audio;
 reg [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1;
 wire led_base = has_frame ? act_cnt[24] : (act_cnt[26] ? act_cnt[25:18] > act_cnt[7:0] : act_cnt[25:18] <= act_cnt[7:0]);
-assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
+assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0] ^ st_frames_out[0])
 	: (has_audio ? act_cnt[22] : led_base);
 
 // --- Core status → HPS (UIO_GET_STATUS / status_set) ---
@@ -778,7 +793,7 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [127:120] p3_recon_dbg     (coeff/dequant/idct/recon non-zero flags for silicon RCA)
 //   [122:121] forced from status (Aspect ratio) — overlaps stream debug only
 wire [7:0] telem_flags = {
-	pps_valid, sps_valid, stub_busy, has_idr,
+	pps_valid, sps_valid, stub_busy | (|st_frames_out), has_idr,
 	audio_underrun, has_stream, has_audio, has_frame
 };
 

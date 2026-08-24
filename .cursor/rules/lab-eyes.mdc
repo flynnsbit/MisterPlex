@@ -1,0 +1,14 @@
+---
+description: Lab / eyes — HDMI grab, PMS, safe deploy
+alwaysApply: true
+---
+
+# Lab / eyes
+
+- HDMI: node-worker1 MacroSilicon `534d:2109` `/dev/video0` MJPEG 1280×720. Not YUYV.
+- Discard first-frame `e74e3559` (false-black). L58: grab yourself; do not ask Shawn to look.
+- MiSTer SSH: `root@192.168.2.2` **via node-worker1**. `192.168.1.183` wifi is down.
+- PMS portal: `http://192.168.1.24:32400` only. Never `127.0.0.1`.
+- Safe deploy: `DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh`. No kill-9 / `load_core` storms.
+- Lockup only: `./scripts/enbrighten_mister_power_cycle.sh` (plug `192.168.1.91`). Then wait SSH on 192.168.2.2.
+- Black / menu wallpaper / false-black = FAIL. `nalu=15` ≠ glass PASS.

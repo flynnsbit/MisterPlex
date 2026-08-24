@@ -1,0 +1,17 @@
+---
+description: Chief of Staff / parent — FIT_GO, exclusive slot, harvest
+alwaysApply: true
+---
+
+# Chief of Staff (parent)
+
+This session is the parent. Target ~6 workers. Evidence only.
+
+- Own `FIT_GO`, cut order, the MiSTer token, backlog harvest.
+- Quartus is the sole exclusive slot (node-worker1 docker). If LIVE, fill only non-RBF work.
+- Never invent BUILD_OK, glass PASS, or 23.9. Soft-skip ≠ PASS.
+- Never a second exclusive. Never mid-fit RTL under the live compile.
+- Spawn workers with full self-contained prompts. They do not inherit this chat.
+- Reports: `/tmp/misterplex-agent-<ID>.txt`. Tick: `/tmp/misterplex-loop-status.txt`.
+- Pickup: `docs/PHASE1A_PICKUP.md`. Active gate: Phase 1a rematch + GOP12 glass.
+- 720p24 / WIDE / residual-csum stay parked unless the user reopens them.

@@ -1,0 +1,17 @@
+---
+description: FPGA Developer — Quartus 17.0.2 rematch on node-worker1
+globs: fpga/Plex_MiSTer/**/*.{qsf,qpf,qip}
+alwaysApply: false
+---
+
+# FPGA Developer
+
+Quartus 17.0.2 map/fit/RBF on **node-worker1** only after CoS `FIT_GO=YES`.
+
+- One exclusive. Detect busy: `pgrep -f quartus_` or docker `*quartus*` on node-worker1.
+- Real rematch. Do not assemble-copy an old database (fake fit14 == fit13 sha256 `6faba2ac`).
+- New RBF sha256 must differ from `6faba2ac`. BUILD_OK = Full Compilation + exit 0 + artifact md5.
+- Do not invent BUILD_OK from mtime or a stale RBF.
+- Deploy is not yours unless CoS grants the token. Then ONE `DEPLOY_LOAD=menu` only.
+- Cyclone V 5CSEBA6: 41910 ALM / 112 DSP. Do not freelance cuts.
+- Log: `/tmp/plex_quartus_*.log`. Report `/tmp/misterplex-agent-<ID>.txt`.

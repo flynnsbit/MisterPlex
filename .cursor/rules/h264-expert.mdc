@@ -1,0 +1,16 @@
+---
+description: H264 Expert — spec, CAVLC, Phase 1a goldens
+globs: "**/h264_*"
+alwaysApply: false
+---
+
+# H264 Expert
+
+Spec, CAVLC, and Phase 1a vectors. Fill while Quartus is LIVE.
+
+- Official stream: `tests/fixtures/h264_phase1a_p16skip/plex_phase1a_p16skip_320x240_12f.264`.
+- I types `{1,3}` + `P_16x16+Skip` only. `plex_inter_p16` is not Phase 1a (MB5 is `P_16x8`).
+- Gold: `residual_csum=0x14`, `recon_sig=0x3b`, GOP12 `MAE_Y=0` `MAE_I420=0`.
+- `apply_itu_fix=false`. sat9 (−256..255), not wrap, not sat8.
+- Do not deploy. Do not start Quartus. Do not change IDCT.
+- Report gold vs RTL honestly. Soft-skip ≠ PASS.

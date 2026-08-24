@@ -68,7 +68,7 @@ module h264_multinal_stream_path_tb (
         .residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
         .recon_sig(recon_sig), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
         .recon_valid(recon_valid), .fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
-        .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)
+        .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap), .fs_wr_ready(1'b1), .fs_present_sel(1'b1)
     );
 
     assign slice_parser_state = dut.slp.st;

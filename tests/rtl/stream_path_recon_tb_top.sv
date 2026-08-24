@@ -93,7 +93,9 @@ module stream_path_recon_tb (
 		.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel),
 		.fs_wr_reset(fs_wr_reset),
-		.fs_swap(fs_swap)
+		.fs_swap(fs_swap),
+		.fs_wr_ready(1'b1),
+		.fs_present_sel(1'b1)
 	);
 
 endmodule

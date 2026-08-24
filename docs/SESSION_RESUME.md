@@ -1,4 +1,12 @@
-# MiSTerPlex session resume — 2026-07-25 (avsync + seek)
+# MiSTerPlex session resume
+
+**Living 2026-08-24:** Phase 1a 320 FPGA H.264 rematch. Read
+[`PHASE1A_PICKUP.md`](PHASE1A_PICKUP.md) first. 720p24 and this 2026-07-25
+avsync note are historical / parked.
+
+---
+
+# Historical — 2026-07-25 (avsync + seek)
 
 **Repo:** `/home/shawn/Projects/misterplex`  
 **Lab:** `root@192.168.1.183`  
