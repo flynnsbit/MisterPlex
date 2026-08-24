@@ -1,0 +1,83 @@
+WORKER=L-n4-copy
+UTC=2026-08-14T04:27:09Z
+STATUS=DONE
+VERDICT=PASS
+COPY_OK=YES
+COPY_ACTION=SKIPPED
+NAMED_ONBOX_MD5=e8960391f6126d2f89ef3cd3054cfe2d
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+COPY_ONTO_PLEX_RBF=NO
+FPGA=NO
+PLAY=NO
+unique24=FAIL
+pfps=NONE
+ZERO_QUARTUS=YES
+NO_LOAD_CORE=YES
+NO_MENU=YES
+NO_BIN_FPGA=YES
+
+GOAL=named-copy ONLY n4 BUILD_OK RBF as sidecar; never overwrite product Plex.rbf
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST=192.168.1.183
+SRC=/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n4/Plex.720p24.e8960391.rbf
+DEST=/media/fat/_Utility/Plex.720p24.e8960391.rbf
+
+# --- 1. local SRC ---
+SRC_MD5=e8960391f6126d2f89ef3cd3054cfe2d
+SRC_BYTES=2813844
+SRC_MTIME=2026-08-13 23:22
+SRC_MATCH=YES
+
+# --- 2. product pin (pre + post; no write to Plex.rbf) ---
+PLEX_RBF=/media/fat/_Utility/Plex.rbf
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PLEX_RBF_BYTES=3831312
+PLEX_RBF_MTIME=2026-08-13 23:05
+CORENAME=/tmp/CORENAME=Plex
+PRODUCT_IS_720P=NO
+RESTORE_NEEDED=NO
+
+# --- 3. true480 bak ---
+TRUE480=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+TRUE480_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+TRUE480_BYTES=3831312
+TRUE480_CREATE=SKIPPED_ALREADY_PRESENT
+
+# --- 4. named sidecar ---
+DEST_EXISTED=YES
+DEST_MD5=e8960391f6126d2f89ef3cd3054cfe2d
+DEST_BYTES=2813844
+DEST_MODE=-rwxr-xr-x
+DEST_MTIME=2026-08-13 23:25
+SCP=SKIPPED
+# constraint: sidecar already exists with correct md5 → SKIPPED copy, still PASS
+
+# --- 5. other named sidecars (not deleted) ---
+SIDECAR_D191=/media/fat/_Utility/Plex.720p24.d1910177.rbf
+SIDECAR_D191_MD5=d19101778905687efb869fbf3ac8628b
+SIDECAR_0FC=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+SIDECAR_0FC_MD5=0fc77c10f47a33d5e4379fe129658e93
+SIDECARS_PRESERVED=YES
+
+# --- 6. daemon observe only; did not kill ---
+DAEMON_PIN1=1098 {mpx-main} /media/fat/misterplex/bin/misterplexd --port 3005
+DAEMON_PIN2=ABSENT /proc/1098 missing on later SSH
+DAEMON_KILLED_BY_ME=NO
+# first pin saw 1098; later pin gone. I did not stop/kill it. Not restored here.
+
+# --- constraints honored ---
+QUARTUS=NO
+BIN_FPGA=NO
+LOAD_CORE=NO
+MENU=NO
+PLAY=NO
+RUN_720P24_LIVE_GATE=NO
+UNIQUE24_CLAIMED=NO
+PFPS_INVENTED=NO
+CARDS=NO
+PHASE_BACKLOG_EDIT=NO
+
+BACKLOG_SUGGEST=n4 named sidecar on-box e8960391; product Plex.rbf still 07f54d9f; L-n4-play may proceed
+BLOCKERS=none
+EVIDENCE=/tmp/misterplex-agent-L-n4-copy.txt
+STORE=/home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-L-n4-copy.txt

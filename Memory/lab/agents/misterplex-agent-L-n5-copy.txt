@@ -1,0 +1,103 @@
+# misterplex agent L-n5-copy
+Date: 2026-08-14T04:45:10Z
+Worker: L-n5-copy
+Status: DONE
+COPY_OK: YES
+SCP: SCP (not SKIPPED)
+NAMED: /media/fat/_Utility/Plex.720p24.4554fdb3.rbf
+NAMED_MD5: 4554fdb392b1030ed523dfb082e3bad8
+NAMED_BYTES: 2846036
+PLEX_RBF: 07f54d9f8f0eda2fe75d9cc314f6de54
+FPGA: NO
+unique24: FAIL
+DEPLOY_PLEX_RBF: NO
+LAB_PLEX_RBF_TOUCHED: NO
+cards: none
+PHASE_BACKLOG: none
+exclusive: not taken
+
+## Goal
+Named-scp ONLY the n5 BUILD_OK RBF to /media/fat/_Utility/Plex.720p24.4554fdb3.rbf.
+Never copy onto Plex.rbf. Never /bin/fpga. Never load_core. Never play.
+
+## Verdict
+COPY_OK YES. SCP performed (dest did not exist). Dest md5 MATCH. Glass Plex.rbf UNTOUCHED 07f54d9f. FPGA=NO. unique-24 FAIL (NOT claimed).
+
+## Constraints obeyed
+- ZERO Quartus. Did not edit store.
+- NEVER copied onto /media/fat/_Utility/Plex.rbf.
+- NEVER /bin/fpga. NEVER load_core. NEVER play.
+- Host 192.168.1.183 pass 1 (sshpass).
+- No cards. No PHASE_BACKLOG. unique-24 NOT claimed.
+- Dest was missing → SCP, not SKIPPED.
+
+## Steps / evidence
+
+### 1) Local SRC md5
+SRC=/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n5/Plex.720p24.4554fdb3.rbf
+md5 4554fdb392b1030ed523dfb082e3bad8
+bytes 2846036
+mtime 2026-08-13 23:39
+MATCH required. NOT banned {a69a62f9,752fc1e2,cc9dbd74,0fc77c10,d1910177,e8960391,8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0}.
+
+BUILD_OK already proven (not re-fit):
+- /tmp/misterplex-agent-M-fitmon-n5.txt BUILD_OK YES RBF_MD5=4554fdb392b1030ed523dfb082e3bad8
+- /tmp/misterplex-agent-X-n5.txt BUILD_OK YES RBF_MD5=4554fdb392b1030ed523dfb082e3bad8
+- /tmp/plex_quartus_slot720p24n5.log FIT_WRAPPER_RC=0 FIT_WRAPPER_DONE
+
+### 2) Glass Plex.rbf PRE (must be 07f54d9f) — PASS, then SCP allowed
+ssh md5 /media/fat/_Utility/Plex.rbf
+07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/_Utility/Plex.rbf
+size 3831312 mtime Aug 13 23:27
+
+### 3) true480 bak
+/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+07f54d9f8f0eda2fe75d9cc314f6de54  (MATCH glass)
+
+### 4) Dest PRE
+/media/fat/_Utility/Plex.720p24.4554fdb3.rbf: No such file or directory
+→ not SKIPPED; proceed to SCP.
+
+Existing named 720p24 siblings (untouched):
+  Plex.720p24.0fc77c10.rbf
+  Plex.720p24.4f16350e.rbf
+  Plex.720p24.968b828a.rbf
+  Plex.720p24.cc9dbd74.rbf
+  Plex.720p24.d1910177.rbf
+  Plex.720p24.e8960391.rbf
+  Plex.720p24k.a69a62f9.rbf
+
+### 5) SCP
+method: scp -O
+SRC → root@192.168.1.183:/media/fat/_Utility/Plex.720p24.4554fdb3.rbf
+SCP_RC=0
+ssh dest POST:
+4554fdb392b1030ed523dfb082e3bad8  /media/fat/_Utility/Plex.720p24.4554fdb3.rbf
+-rwxr-xr-x 1 root root 2846036 Aug 13 23:44
+MATCH required md5 + size.
+
+### 6) Glass Plex.rbf POST (must still be 07f54d9f)
+07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/_Utility/Plex.rbf
+-rwxr-xr-x 1 root root 3831312 Aug 13 23:27
+UNCHANGED. true480 bak still 07f54d9f8f0eda2fe75d9cc314f6de54.
+No daemon changes.
+
+## What this worker did NOT do
+- No Quartus / no fit / no docker
+- No /bin/fpga, no load_core, no menu bounce, no play
+- No write to Plex.rbf
+- No store edits
+- No cards / no PHASE_BACKLOG
+- unique-24 not claimed (soft-skip ≠ PASS)
+
+## Backlog status suggestion
+N/A (no PHASE_BACKLOG per constraints). Sibling L-n5-play may proceed on COPY_OK=YES named dest only.
+
+## Blockers
+None.
+
+## Sibling handoff
+L-n5-play: COPY_OK=YES. Named dest ready:
+  /media/fat/_Utility/Plex.720p24.4554fdb3.rbf
+  md5 4554fdb392b1030ed523dfb082e3bad8
+Glass stays 07f54d9f. FPGA not loaded by this worker.

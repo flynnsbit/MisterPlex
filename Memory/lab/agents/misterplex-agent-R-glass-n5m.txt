@@ -1,0 +1,153 @@
+WORKER=R-glass-n5m
+UTC=2026-08-14T04:59:14Z
+UTC_START=2026-08-14T04:59:14Z
+UTC_END=2026-08-14T04:59:20Z
+STATUS=DONE
+GOAL=After L-n5-menu finishes (or 8 min timeout), confirm lab glass is True480 07f54d9f + daemon --id misterplex :3005. If 4554 was left as Plex.rbf AND the L-n5-menu window is over, restore bak. Do NOT second-load while L-n5-menu is live.
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST=192.168.1.183
+ZERO_QUARTUS=YES
+NO_N6=YES
+NO_SECOND_EXCLUSIVE=YES
+NO_CARDS=YES
+NO_PHASE_BACKLOG_WRITE=YES
+NO_STORE_STATUS_MD=YES
+NO_FPGA_NAMED=YES
+NO_FPGA_N2=YES
+NO_FPGA_N3=YES
+NO_FPGA_N4=YES
+NO_FPGA_N5=YES
+NO_LOAD_CORE_NAMED_720P24=YES
+NO_PLAY=YES
+PLAY_RAN=NO
+unique24=FAIL
+DID_NOT_INVENT_PFPS=YES
+SOFT_SKIP_NE_PASS=YES
+FPGA_NAMED_COUNT=0
+LOAD_CORE_COUNT=0
+
+# --- poll (step 1) ---
+POLL_CADENCE_S=20
+POLL_MAX_S=480
+POLL_WAITED_S=0
+L_N5_MENU_ALREADY_DONE_AT_ARRIVAL=YES
+L_N5_MENU_PATH=/tmp/misterplex-agent-L-n5-menu.txt
+L_N5_MENU_STATUS=DONE
+L_N5_MENU_VERDICT=STAY_UP_YES
+L_N5_MENU_UTC=2026-08-14T04:57:30Z
+L_N5_MENU_UTC_START=2026-08-14T04:56:32Z
+L_N5_MENU_UTC_END=2026-08-14T04:57:12Z
+L_N5_MENU_RESTORE_OK=YES
+L_N5_MENU_RECONFIRM_PLEX_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+L_N5_MENU_RECONFIRM_CORE=Plex
+L_N5_MENU_RECONFIRM_FB=640,480
+L_N5_MENU_RECONFIRM_DAEMON=2365 --id misterplex :3005
+LOCK_PATH=/tmp/misterplex-n5-lab.lock
+LOCK_PEEK=PRESENT
+LOCK_OWNER=tick-04:56Z-sched-019ffdf53ea2
+LOCK_ROLE=L-n5-menu
+LOCK_RBF=4554fdb392b1030ed523dfb082e3bad8
+LOCK_CREATED=2026-08-14T04:56:10Z
+WINDOW_STILL_LIVE=NO
+# report STATUS=DONE so SSH-load ban lifted; this worker did not load anyway
+# lock file leftover (stale after DONE) — not cleared by this worker
+
+# --- independent SSH probe 2026-08-14T04:59:14Z (step 2) ---
+PROBE_UTC=2026-08-14T04:59:14Z
+PROBE_SSH=0
+PROBE_UPTIME=510.93
+PROBE_UPTIME_HUMAN=23:59:15 up 0:08, 0 users, load 1.06 0.00 0.91
+# continuous series vs L-n5-menu 350.24→411.65; no HPS reboot between their restore and this probe
+SOC_REBOOT=NO
+SSH_DIED=NO
+
+PLEX_RBF=/media/fat/_Utility/Plex.rbf
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PLEX_RBF_BYTES=3831312
+PLEX_RBF_IS_4554=NO
+PLEX_RBF_IS_TRUE480=YES
+
+TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+TRUE480_BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+TRUE480_BAK_BYTES=3831312
+BAK_MATCHES_PLEX=YES
+
+SIDECAR_4554=/media/fat/_Utility/Plex.720p24.4554fdb3.rbf
+SIDECAR_4554_MD5=4554fdb392b1030ed523dfb082e3bad8
+SIDECAR_4554_BYTES=2846036
+SIDECAR_4554=PRESENT_KEPT
+SIDECAR_NOT_LOADED_AS_PLEX_RBF=YES
+
+CORE=Plex
+RBFNAME=Plex
+FB=640,480
+FB_CLASS=True480
+FBSET=mode 640x480-0 geometry 640 480 640 480 32
+
+DAEMON=YES
+DAEMON_PID=2365
+DAEMON_CMDLINE=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+DAEMON_ID=misterplex
+DAEMON_PORT=3005
+DAEMON_NAME=MiSTerPlex
+LISTEN=YES
+LISTEN_ADDR=0.0.0.0:3005
+NOT_MISTERPLEX_T7=YES
+
+# --- restore decision (steps 3-5) ---
+# Plex.rbf already 07f54d9f AND CORE/FB True480 class → do nothing (step 4)
+RESTORE_NEEDED=NO
+RESTORE_BY_THIS_WORKER=NO
+CP_BAK_TO_PLEX=NO
+FPGA_DID=NO
+FPGA_NAMED_DID=NO
+LOAD_CORE_DID=NO
+LOAD_CORE_MENU_DID=NO
+LOAD_CORE_PLEX_DID=NO
+DAEMON_START_BY_THIS_WORKER=NO
+SECOND_EXPERIMENT=NO
+WINDOW_STILL_LIVE=NO
+LEFTOVER_RISK=NO
+
+# --- score ---
+PLEX_RBF_MD5_OK=YES
+CORE_PLEX_OK=YES
+FB_640_480_OK=YES
+DAEMON_MISTERPLEX_3005_OK=YES
+SIDECAR_4554_KEPT_OK=YES
+GLASS_OK=YES
+
+# --- contract ---
+unique24=FAIL
+unique24_CLAIMED=NO
+PFPS=NONE
+PLAY_RAN=NO
+# unique-24 FAIL by contract (not measured; do not invent pfps>=23.9). Soft-skip ≠ PASS.
+
+# --- deliverable ---
+GLASS_OK=YES
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+CORE=Plex
+FB=640,480
+DAEMON=pid=2365 --name MiSTerPlex --id misterplex --port 3005
+SIDECAR_4554=4554fdb392b1030ed523dfb082e3bad8 PRESENT_KEPT
+RESTORE_BY_THIS_WORKER=NO
+FPGA_DID=NO
+LOAD_CORE_DID=NO
+unique24=FAIL
+
+VERDICT=GLASS_OK_YES
+# Independent probe after L-n5-menu STATUS=DONE. Disk+glass already True480.
+# Did not restore (already 07f54d9f). Did not /bin/fpga. Did not load_core.
+# Did not play. Did not invent unique-24. ZERO Quartus. No n6.
+
+BACKLOG_SUGGEST=do not write PHASE_BACKLOG (constraint). Glass already 07f54d9f + product daemon 2365 :3005 after L-n5-menu restore. unique-24 remains FAIL (no play). Stale lock /tmp/misterplex-n5-lab.lock still role=L-n5-menu after DONE — parent may clear; this worker did not.
+
+BLOCKERS=none for glass. unique-24 FAIL by contract (not a glass fail). Leftover lock file is stale (report DONE); not a live load window.
+
+EVIDENCE:
+  /tmp/misterplex-agent-R-glass-n5m.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-glass-n5m.txt
+  /tmp/misterplex-agent-L-n5-menu.txt
+  /tmp/misterplex-n5-lab.lock
+  SSH probe 2026-08-14T04:59:14Z host 192.168.1.183

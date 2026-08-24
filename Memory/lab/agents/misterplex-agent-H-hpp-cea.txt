@@ -1,0 +1,73 @@
+H-hpp-cea  2026-08-14T19:35Z
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons  branch=lessons/true480-720p24
+exclusive=not touched (loop TICK 19:29Z said FREE / PLAY_GO_CEA; this worker ZERO Quartus/RTL/play)
+unique24=FAIL  (host dual-header only; IMPL_OK ≠ unique-24)
+
+## Verdict
+HOST_CEA_DUAL_HEADER=OK. New CEA names sit beside unchanged lab 1312×762 @ 24 MHz
+pins. Score/memcpy still use kPlex720p24*. Switch-over waits for CEA play.
+unique24=FAIL. Soft-skip ≠ PASS. IMPL_OK ≠ unique-24.
+
+## New names (host)
+Lab (UNCHANGED — current silicon d8d376f2 + memcpy score):
+  kPlex720p24BeamHTotal     = 1312
+  kPlex720p24BeamVTotal     = 762
+  kPlex720p24BeamHDe        = 1280
+  kPlex720p24BeamVActive    = 720
+  kPlex720p24ClkSysHz       = 20000000
+  kPlex720p24ClkPixHz       = 24000000
+
+CEA (PLEX_PRESENT_720P_CEA RTL; host pin only, not live score):
+  kPlex720pCeaBeamHTotal    = 1650
+  kPlex720pCeaBeamVTotal    = 758
+  kPlex720pCeaBeamHDe       = 1280
+  kPlex720pCeaBeamVActive   = 720
+  kPlex720pCeaClkPixHz      = 30000000   // pll_0002-legal 30.00 MHz
+
+## Arith (computed; comment honestly)
+  1650 * 758                 = 1_250_700     PIX_PER_FRAME
+  1650 * 758 * 24            = 30_016_800    ≠ 30e6
+  1650 * 750 * 24            = 29_700_000    first illegal pll_0002 attempt
+  30e6 / 1_250_700           = 23.986567 Hz  (integer milli 23986)
+  24e6 / (1312*762)          = 24.006 Hz     (lab; milli 24006; unchanged)
+
+Not cinema 23.976. Not 24.000. Brief 29_889_600 / ≈24.088 Hz is a miscalc
+(that 24.088 is 30e6/1_245_400, not 1650*758). Pix is legal 30.00 PLL, not
+exact 24*H*V. 29.70 MHz was illegal (Quartus hint 30000000 Hz).
+
+## Files
+  host/libmisterplex/ddr_frame_layout.hpp
+    + CEA constexprs + comments + static_asserts
+    + extra 1312/24.006 asserts (names/values unchanged)
+  tests/unit/test_rtl_invariants.py
+    + sv_const_all (not first-match) for ifdef-block dual-cut
+    + pair kPlex720p24* ↔ else 1312/24e6
+    + pair kPlex720pCea* ↔ ifdef 1650/30e6
+    first-match product pins (HDe/VActive/ClkSys, 480p, doorbells) unchanged
+  tests/unit/test_720p_clk_ddr_arith.py
+    + 1650×758 arith + hpp name pins + 23.976/24.000/24.088 negatives
+  tests/unit/test_cached_src_phys.cpp
+    + CHECKs (file was already untracked in this WT; Makefile already builds it)
+
+ZERO RTL/QSF/store/sdram. ZERO Quartus. ZERO play/deploy/lab.
+
+## Unit RC
+  test_720p_clk_ddr_arith.py              RC=0
+  test_present_720p_l4_static.py          RC=0  (1312 first-match still green)
+  test_present_geom_params_static.py      RC=0  (L4_H_TOTAL_P=1312 still present)
+  build/test_cached_src_phys              RC=0
+  g++ -c ddr_frame_layout.hpp             RC=0
+  check_ddr_frame_layout_contract()       RC=0  (isolated)
+  test_rtl_invariants.py (full main)      RC=1  PRE-EXISTING
+      check_plex_reset_domains dies before layout:
+      Plex.sv now `ifdef SDRAM_I420_STORE` / `elsif DDR_FRAME_STORE`
+      (regex still wants `ifdef DDR_FRAME_STORE` only).
+      NOT a 1312/CEA pin fail. ZERO RTL edit this worker. Note only.
+
+## Backlog suggestion
+host CEA dual-header OK. Switch-over after CEA play (do not retarget
+kPlex720p24* onto 1650/30e6). unique24=FAIL. P3-720P24 stays IN_PROGRESS.
+
+## Blockers
+None for host header. unique24=FAIL until play measures ≥23.9.
+CEA play / ARM switch-over is a sibling. This worker did not play.

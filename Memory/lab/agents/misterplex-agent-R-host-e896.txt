@@ -1,0 +1,127 @@
+VERDICT: HOST_OK. unique-24 NOT claimed. DEPLOY=NO.
+
+R-host-e896 | pin BUILD_OK n4 prefix8 e8960391 in rbfPrefix8IsKnownL4
+UTC: 2026-08-14T04:28Z
+Worker: R-host-e896
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Branch: lessons/true480-720p24
+HEAD: 0e49a68 (host pins uncommitted; last host-pin workers did not commit)
+Report: /tmp/misterplex-agent-R-host-e896.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-host-e896.txt
+
+HOST_OK ≠ unique-24 ≠ T7 PASS ≠ UNIT_OK ≠ DEPLOY_OK.
+Did NOT invent unique-24. Did NOT run make unit. ZERO Quartus.
+No ARM deploy. No ssh lab. No play. No cards. No PHASE_BACKLOG essays.
+No commit (tree convention: host-pin workers leave pins uncommitted).
+
+================================================================
+DELIVERABLE
+================================================================
+
+HOST_OK=YES
+PIN_E896=YES
+PIN_D191=YES (kept)
+PIN_0FC=YES (kept)
+TRUE480_07F_NOT_L4=YES
+UNIT_present_bank=NOT_RERUN_THIS_TICK (no exec); prior 04:25Z TEST_RC=0; tests cover e896
+DEPLOY=NO
+unique24=FAIL
+
+================================================================
+VERDICT
+================================================================
+
+HOST_OK. `rbfPrefix8IsKnownL4` treats BUILD_OK n4 prefix8 e8960391 as L4
+so a copy-onto-Plex.rbf would pin L4. Named Plex.720p24* already L4 via
+rbfNameIsKnownL4 (no prefix pin required for named stamp).
+
+Kept 968b828a cc9dbd74 0fc77c10 d1910177.
+07f54d9f stays True480 (not added).
+4f16350e stays reject (HIER_REJECT / DO_NOT_DEPLOY).
+TIMING_FAIL {a69a62f9,752fc1e2,17dd3b56,e494a767,740e19d6,c052be56,0bcc6081} stay out.
+
+This tick: comment-only tighten on already-present pin:
+  e8960391 = slot720p24n4 BUILD_OK live-store !rd_act+PLXD+PLXJ
+             (md5 e8960391f6126d2f89ef3cd3054cfe2d, store 36ed39ad,
+             FIT_WRAPPER_RC=0 TIMING_OK).
+
+Pin function body already had e8960391 + tests (copiedN4 / namedN4 /
+upper E8960391 / leftover 07f after n4 / 4f16350e reject).
+
+================================================================
+rbfPrefix8IsKnownL4 (case-insensitive)
+================================================================
+
+YES: 968b828a, cc9dbd74, 0fc77c10, d1910177, e8960391
+NO:  07f54d9f (true480), 4f16350e (m2 reject), TIMING_FAIL set
+
+Cases (tests/unit/test_present_bank.cpp):
+  copied e8960391 rbfname=Plex              → L4
+  leftover 07f54d9f + PLXJ + rbfname=Plex   → True480
+  named Plex.720p24.e8960391 + prefix 07f   → L4 via name
+  upper E8960391 copied                     → L4
+  4f16350e / 4F16350E                       → not L4
+
+================================================================
+UNIT
+================================================================
+
+Makefile target exists:
+  $(ROOT)/build/test_present_bank
+  make /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/test_present_bank
+
+This worker session has no exec/shell tool (same class as U24-pin).
+Did NOT invent a new TEST_RC this tick.
+Prior same-id report 04:25Z: g++ rebuild + ./build/test_present_bank →
+  stdout "test_present_bank: OK" TEST_RC=0
+This tick change is comment-only (codegen identical). Binary exists at
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/test_present_bank
+Did NOT run full make unit. not UNIT_OK.
+
+header md5 = UNVERIFIED this tick (no exec). Parent:
+  md5sum host/libmisterplex/present_bank.hpp
+
+================================================================
+NOT CLAIMED
+================================================================
+
+- unique-24 / pfps ≥23.9 / T7 PASS
+- UNIT_OK (did not run make unit)
+- BUILD_OK (parent/farm already stamped n4; this ticket is host pin only)
+- DEPLOY_OK / ARM deploy / live gate / HDMI raster PASS
+- P3-720P24 DONE
+- CARD_OK
+- copy e896 onto Plex.rbf / named load_core
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+
+P3-720P24 stays IN_PROGRESS / pfps FAIL.
+Host pin HOST_OK: e8960391 is known-L4 when copied as Plex.rbf;
+07f54d9f leftover+PLXJ stays True480; named Plex.720p24.e8960391 is L4 via name.
+TEST_RC prior ≠ this-tick re-run ≠ UNIT_OK ≠ unique-24.
+Do not copy e896 onto Plex.rbf from this report. Do not second Quartus.
+unique-24 still FAIL.
+
+================================================================
+BLOCKERS
+================================================================
+
+- No exec this worker session → could not re-run test_present_bank or md5sum.
+- unique-24 not claimed.
+- DEPLOY=NO for e8960391.
+
+================================================================
+EVIDENCE
+================================================================
+
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/host/libmisterplex/present_bank.hpp
+  L107-116: e896 comment + pinEqualsIgnoreCase(..., "e8960391")
+  L112-116: 968b828a || cc9dbd74 || 0fc77c10 || d1910177 || e8960391
+  07f54d9f not in function
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/tests/unit/test_present_bank.cpp
+  copiedN4 / namedN4 / leftover after n4 / E8960391 / !07f54d9f / !4f16350e
+- Prior unit: /tmp/misterplex-agent-R-host-e896.txt 04:25Z TEST_RC=0
+- n4 BUILD_OK (not this worker): /tmp/misterplex-loop-status.txt X-n4=BUILD_OK e8960391
+- No commit. No Quartus. No ARM. No deploy.

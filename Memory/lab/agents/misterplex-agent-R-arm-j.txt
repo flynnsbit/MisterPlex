@@ -1,0 +1,140 @@
+VERDICT: ARM_OK LOCAL. DEPLOY=NO. MAKE_RC=0. unique-24 NOT claimed.
+
+R-arm-j | local ARM rebuild after present_bank.hpp 4554fdb3 pin
+UTC: 2026-08-14T04:45:29Z
+Worker: R-arm-j
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+HEAD: 0e49a68 lessons/true480-720p24
+Report: /tmp/misterplex-agent-R-arm-j.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-arm-j.txt
+
+DEPLOY=NO
+MAKE_RC=0
+LOCAL_ARM_MD5=54a43d446b518c5c616945fb468508ad
+PREV_LOCAL_ARM_MD5=00eb62e5285befaed585d98ea9b02f3c
+ONBOX_TOUCHED=NO
+unique24=FAIL
+pfps=NONE
+
+ZERO Quartus. Did not edit sdram_i420_store.sv.
+Did not scp misterplexd. Did not ssh. Did not kill product daemon.
+Did not /bin/fpga. Did not play. Did not write cards.
+Did not invent pfps. unique-24 NOT claimed.
+
+================================================================
+DELIVERABLE
+================================================================
+
+DEPLOY=NO
+MAKE_RC=0
+LOCAL_ARM_MD5=54a43d446b518c5c616945fb468508ad
+ONBOX_TOUCHED=NO
+unique24=FAIL
+
+================================================================
+VERDICT
+================================================================
+
+ARM_OK LOCAL. DEPLOY=NO. MAKE_RC=0.
+
+  present_bank.hpp mtime 2026-08-13 23:42:03 -0500 was NEWER than
+  local ARM binary mtime 2026-08-13 23:26:22 -0500
+  (R-arm-h / R-arm-i hash 00eb62e5285befaed585d98ea9b02f3c).
+  Header now includes 4554fdb3 (R-host-4554 HOST_OK). Rebuild required.
+
+  LOCAL_ARM_MD5 changed:
+    was 00eb62e5285befaed585d98ea9b02f3c (13040836 bytes, 23:26)
+    now 54a43d446b518c5c616945fb468508ad (13040836 bytes, 23:45)
+
+  strings(new binary):
+    4554fdb3     PRESENT
+    e8960391     PRESENT
+    d1910177     PRESENT
+    0fc77c10     PRESENT
+    cc9dbd74     PRESENT
+    968b828a     PRESENT
+    Plex.720p24  PRESENT
+    07f54d9f     ABSENT   (true480 prefix not L4)
+
+  On-box binary NOT read (ssh skipped) and NOT overwritten.
+
+================================================================
+STEPS
+================================================================
+
+1. md5/stat pre-rebuild:
+   /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/arm/misterplexd
+   md5 00eb62e5285befaed585d98ea9b02f3c  size 13040836
+   mtime 2026-08-13 23:26:22 -0500
+   header host/libmisterplex/present_bank.hpp
+   md5 7eb63926696207050e1aabcb760c8d13  size 7557
+   mtime 2026-08-13 23:42:03 -0500  NEWER than binary → rebuild
+
+2. Pre-rebuild strings on old binary:
+   e8960391 PRESENT  4554fdb3 ABSENT
+   (R-arm-h built after e896 pin; before R-host-4554)
+
+3. cwd SoT: make arm-plexd
+   ARM_CXX=/home/shawn/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin/arm-none-linux-gnueabihf-g++
+   MAKE_RC=0
+   log /tmp/misterplex-R-arm-j-make.log
+   Warnings only: snprintf truncation media_player.cpp:82;
+   GCC 7.1 ABI note on vector<QueueItem>. Not failures.
+
+4. strings new binary:
+   4554fdb3=PRESENT e8960391=PRESENT
+   d1910177=PRESENT 0fc77c10=PRESENT
+   cc9dbd74=PRESENT 968b828a=PRESENT
+   Plex.720p24=PRESENT 07f54d9f=ABSENT
+
+5. ssh: SKIP
+   /tmp/misterplex-agent-L-n5-play.txt MISSING (also loop 04:42Z
+   listed L-n5-play LIVE; 04:45Z killed_dupe=L-n5-play, L-n5-gate LIVE).
+   Instruction: skip ssh if L-n5-play missing or LIVE.
+   No scp. No kill. ONBOX_TOUCHED=NO.
+
+================================================================
+NOT CLAIMED
+================================================================
+
+- DEPLOY_OK / on-box ARM update
+- unique-24 / pfps ≥23.9 / T7 PASS
+- UNIT_OK / CARD_OK
+- BUILD_OK (FPGA; this is host ARM only)
+- P3-720P24 DONE
+- On-box binary left alone (play/gate owns box)
+
+================================================================
+EVIDENCE
+================================================================
+
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/arm/misterplexd
+  md5 54a43d446b518c5c616945fb468508ad
+  ELF 32-bit LSB ARM EABI5 static, 13040836 bytes
+  mtime 2026-08-13 23:45:09 -0500 (> header 23:42:03)
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/host/libmisterplex/present_bank.hpp
+  md5 7eb63926696207050e1aabcb760c8d13
+  rbfPrefix8IsKnownL4 includes 4554fdb3 + e8960391
+  rbfNameIsKnownL4 treats Plex.720p24* as L4
+- /tmp/misterplex-agent-R-host-4554.txt HOST_OK TEST_RC=0
+- /tmp/misterplex-R-arm-j-make.log MAKE_RC=0
+- /tmp/misterplex-agent-L-n5-play.txt MISSING → SSH SKIP
+- No ssh / no scp / no kill: ONBOX_TOUCHED=NO
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+
+Local ARM now embeds 4554fdb3 + e8960391 L4 pins.
+DEPLOY=NO this tick (play/gate owns box; do not scp).
+unique-24 still FAIL. Do not invent pfps.
+Do not overwrite on-box binary. rbfNameIsKnownL4 already
+treats Plex.720p24* as L4 so play can use on-box daemon.
+
+================================================================
+BLOCKERS
+================================================================
+
+- unique-24 not claimed; pfps=NONE this worker.
+- On-box ARM not read and not updated; deploy is a later parent ticket.
+- Did not race L-n5-play / L-n5-gate. Did not ssh.

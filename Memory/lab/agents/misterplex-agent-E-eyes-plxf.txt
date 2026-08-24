@@ -1,0 +1,89 @@
+# E-eyes-plxf — farm HDMI glass after PLXF play
+UTC: 2026-08-14T20:10Z
+WORKER: E-eyes-plxf
+STATUS: DONE
+SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-E-eyes-plxf.txt
+Card: Memory/lab/status/FARM_HDMI_EYES.md  Lesson: L58
+Dongle: node-worker1 MacroSilicon 534d:2109 /dev/video0 MJPEG 1280x720 (not YUYV)
+
+======== VERDICT ========
+unique24=FAIL (this worker does not stamp PASS)
+PLAY_RAN=YES (score 20:06Z; P-plxf-play 20:07Z STATUS=DONE)
+EYES_OK=YES (video0 free when I grabbed; FFMPEG_A/B RC=0; JPEGs pulled and READ)
+PICTURE=NO
+HDMI_PHY_PASS=NO
+OSD 24Hz ≠ unique-24
+BLACK ≠ unique-24
+EYES-ON ≠ unique-24
+USB grab ≠ CRT
+GRABBER_BUSY=NO (waited out sibling 20-frame warmup; did not fight)
+
+PLAY=NO this worker. Quartus=NO. /bin/fpga=NO. n29=NO.
+Did NOT ssh 192.168.1.183. Did NOT send OSD keys. Did NOT ask user to look at TV.
+
+======== WAIT ========
+Score /tmp/pfps-720p24-plxf-after-build.txt already PLAY_RAN=YES at first read 20:06:34Z.
+play_slot720p24plxf: NOT running after score.
+P-plxf-play was still IN_PROGRESS at first poll; STATUS=DONE by 20:07Z.
+Did not start a play. Did not timeout. No plxf-pre-timeout grab.
+
+======== FIVE GATES (cite score; I do not restamp) ========
+pfps>=23.9          FAIL  12.8
+hw_fps>=23.9        FAIL  NONE
+drops=0             PASS  0
+presented>0         PASS  194
+MAGIC_F@+0x118      FAIL  NO (F@110 leftover)
+→ unique24=FAIL (2/5). PREFIX8=849bc600 HOST_MISPIN=NO.
+
+======== OFFICIAL GRABS (I looked at the JPEGs) ========
+cmdA 20:07:28Z: ssh node-worker1 ffmpeg … /tmp/misterplex-eyes/plxf-after-play.jpg ; scp
+cmdB 20:07:40Z: sleep 1; same → plxf-after-play-b.jpg
+FFMPEG_A_RC=0 FFMPEG_B_RC=0
+
+| path | B | md5 | MEAN | I SAW |
+|------|--:|-----|-----:|-------|
+| /tmp/misterplex-eyes/plxf-after-play.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | 7.000 | Uniform near-black. Known first-frame FALSE-BLACK. Do not claim glass-is-black from this alone. No OSD/movie/chevron/fill. |
+| /tmp/misterplex-eyes/plxf-after-play-b.jpg | 7402 | 14c877c3a5242510de438ebbb58494f8 | 0.000 | Uniform TRUE black (not e74e3559). No OSD. No movie. No chevron. No fill. USB scaler after play = black / no-lock. |
+
+Both JPEG 1280x720 sRGB. identify + PIL + image-read.
+
+======== PHY (last non-black OSD this session; NOT after-play) ========
+Did not send OSD keys. After-play frames have no OSD, so I cannot reconfirm PHY from post-play glass.
+
+Pre-play wait probe (20:04Z, same session, I looked):
+
+| path | B | md5 | MEAN | I SAW |
+|------|--:|-----|-----:|-------|
+| /tmp/misterplex-eyes/plxf-wait-probe-ss1.jpg | 16995 | 3c7e869f1ccf95d21f08d7616a452d7c | 2.144 | OSD UL dark-red box: "1280x720 18.19KHz 24.0Hz" over "640x480 25.18MHz 59.9Hz". Rest black. No picture. BYTE_IDENTICAL modeline-720p.jpg. |
+
+PHY note: last readable OSD still shows 640x480 25.18MHz 59.9Hz as the actual output line. Selected/CEA line is 1280x720 24.0Hz. That is scaler/OSD text, not unique-24, not HDMI PHY PASS (L55). video_mode modeline write ≠ PHY PASS.
+
+======== SIBLING CONTEXT (not my tags; do not treat as my official after-play) ========
+Sibling also grabbed plxf-play.jpg = e74e3559 FALSE-BLACK; plxf-play-ss1 / ss1b = 14c877c3 MEAN=0 BLACK; 20-frame warmup plxf-play-warm20 / ss2 = 2edafa1a MEAN=0 BLACK. Same class as my after-play-b. 15:05 17018 B plxf-play-ss1 was overwritten before I could read it.
+
+======== BACKLOG SUGGESTION ========
+E-eyes-plxf DONE. unique24=FAIL.
+After-play glass: false-black then MEAN=0 black. PICTURE=NO.
+PHY last seen (pre-play OSD) still 640x480 59.9. HDMI_PHY_PASS=NO.
+slot720p24plxf ONE play already scored (P-plxf-play + C-score-plxf).
+Do NOT second-play 849bc600. Do NOT play 347bb7ea. Do NOT restore 07f54d9f.
+Do NOT n29. Do NOT Quartus unless parent FIT_GO a new design.
+FIT_GO=NO. PLAY=NO. Soft-skip ≠ PASS.
+
+======== BLOCKERS ========
+unique24 still FAIL (pfps=12.8, hw_fps=NONE, F@118=NO).
+After-play USB glass black — cannot reconfirm OSD 640x480 without OSD keys (forbidden).
+USB grab ≠ CRT. Black/no-lock ≠ unique-24.
+
+Evidence:
+  /tmp/misterplex-eyes/plxf-after-play.jpg
+  /tmp/misterplex-eyes/plxf-after-play-b.jpg
+  /tmp/misterplex-eyes/plxf-wait-probe-ss1.jpg
+  /tmp/pfps-720p24-plxf-after-build.txt
+  /tmp/misterplex-agent-P-plxf-play.txt
+  /tmp/misterplex-agent-C-score-plxf.txt
+  Memory/lab/eyes/plxf-after-play.jpg
+  Memory/lab/eyes/plxf-after-play-b.jpg
+  Memory/lab/eyes/plxf-wait-probe-ss1.jpg
+  Memory/lab/agents/misterplex-agent-E-eyes-plxf.txt

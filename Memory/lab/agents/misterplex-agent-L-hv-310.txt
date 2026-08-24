@@ -1,0 +1,178 @@
+WORKER=L-hv-310
+ROLE=HARVEST ONLY
+UTC=2026-08-14T03:07Z
+UTC_FIRST_PS=2026-08-14T03:04:43Z
+UTC_BOX_PIN1=2026-08-14T03:06:25Z
+UTC_BOX_PIN2=2026-08-14T03:07:04Z
+REPO_SOT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+GOAL=harvest LIVE named-load gate pid 310569 (run_720p24_live_gate.sh 15, PLEX_720P24_RBF=Plex.720p24.0fc77c10.rbf)
+ZERO_QUARTUS=YES
+NO_SECOND_GATE=YES
+NO_MENU=YES NO_LOAD_CORE=YES NO_PLAY=YES
+NO_KILL=YES
+NO_OVERWRITE_PLEX_RBF=YES
+NO_CARDS=YES
+NO_INVENT_PFPS=YES
+
+# --- VERDICT ---
+VERDICT=FAIL
+UNIQUE24=FAIL
+UNIQUE24_PASS=NO
+PID_310569_STILL_LIVE=NO
+HUNG_AFTER_120S_WAIT=NO
+FIRST_SEEN=DEAD (03:04:43Z; no 120s wait — already gone)
+HUNG_CLASS=HUNG_SSH / GPI31_MENU_LIKELY
+GATE_SCRIPT_RC=255
+THIS_RUN_PFPS=NONE
+LAST_HONEST_PFPS=NONE
+PFPS=NONE
+PLAY_RC=NONE
+ACK=NONE
+frames=NONE
+presented=NONE
+hw_fps=NONE
+drops=NONE
+GLASS_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+NAMED_0FC_PRESENT=YES
+CORENAME=Plex
+RBFNAME=Plex
+NAME_PIN_L4=NO
+DAEMON_ID_MISTERPLEX_3005=NO @ 03:06:25Z and 03:07:04Z (this worker pins)
+SELF_RESTORE=NOT_DONE (gate dead; Plex.rbf already 07f54d9f; not 0fc/720p)
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_0FC_NE_UNIQUE24=YES
+24HZ_NE_UNIQUE24=YES
+
+# --- 1) pid 310569 ---
+FIRST_SEEN=2026-08-14T03:04:43Z
+  ps -p 310569 = PID_310569_NOT_FOUND
+  pgrep run_720p24_live_gate = none (false-positive only this worker cmdline)
+  leftover sshpass/ssh 192.168.1.183 / load_core / play-file = NONE
+RECHECK=2026-08-14T03:07:03Z still DEAD
+KILLED_BY_THIS_WORKER=NO
+WAIT_120S=NOT_NEEDED (already dead at first sample)
+PARENT_TICK_03:04Z claimed named-load=LIVE 310569 elapsed~40s+ (may hang GPI31)
+  (process had already exited by 03:04:43Z)
+
+# --- 2) this-run gate log (NOT a pfps score) ---
+GATE_LOG=/tmp/l-n2-gate-run.log
+GATE_LOG_MTIME=2026-08-13 22:04:12.811689083 -0500 = 2026-08-14T03:04:12Z
+GATE_LOG_DONE_STAMP=2026-08-14T03:04Z
+quoted (this named-load 0fc77c10; play never reached):
+  720p24 live gate 15s host=192.168.1.183
+  j=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+  restore=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+  BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+  J_MD5=0fc77c10f47a33d5e4379fe129658e93
+  PRODUCT_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+  PRE_OK
+  CORENAME=Plex
+  CORENAME=MENU
+  Timeout, server 192.168.1.183 not responding.
+  RESTORE: ... true480.07f54d9f.rbf -> Plex.rbf (want md5 07f54d9f*)
+  ssh: connect to host 192.168.1.183 port 22: Connection timed out
+  GATE_SCRIPT_RC=255
+  DONE 2026-08-14T03:04Z
+Parent 03:03Z pin: CORENAME=MENU RBFNAME=MENU, Plex.rbf still 07f54d9f
+  (matches CORENAME=MENU line then SSH die; disk never swapped)
+
+# --- 3) this-run score ---
+SCORE=/tmp/pfps-720p24-live-gate.txt
+SCORE_MTIME=2026-08-13 21:22:13.952174351 -0500 = 2026-08-14T02:22:13Z
+SCORE_CUTOFF=2026-08-14T03:02:00Z
+SCORE_THIS_RUN=NO  (mtime 02:22Z < 03:02Z — STALE; do not quote as 0fc/310569)
+THIS_RUN_PFPS=NONE
+T7GATE_LOCAL=/tmp/misterplexd.t7gate.log
+  mtime=2026-08-13 22:01:22.833357767 -0500 = 2026-08-14T03:01:22Z
+  (BEFORE 03:02Z cutoff; body is copy-gate "play-file failed: source display aspect unavailable"
+   glass=true480 doorbell=0x300FF000 — NOT this named-load)
+# stale SCORE body is L-n-gate2 / cc9dbd74 PLAY_RC=1 ACK=NO pfps=NONE GATE=FAIL — NOT this run.
+unique-24 FAIL (this-run pfps is not ≥23.9; there is no this-run pfps).
+
+# --- 4) PRIOR copy score (cite only as prior; NOT this named-load) ---
+COPY_SCORE=/tmp/pfps-720p24-live-gate-0fc77c10-copy.txt
+COPY_MTIME=2026-08-13 22:04:15.271024167 -0500 = 2026-08-14T03:04:15Z
+  DIFFERENT run (true480 FAIL). Do not treat as 310569 named-load pfps.
+  PLAY_RC=1 ACK=NO pfps=NONE doorbell=0x300FF000
+  GLASS-MAX glass=true480 content=1280x720 → bank=640x480
+  play failed: source display aspect unavailable
+  UNIQUE24=FAIL
+
+# --- 5) read-only box AFTER exit (this worker) ---
+# SSH1 03:06:25Z and SSH2 03:07:04Z; ConnectTimeout=15; no FIFO write.
+PLEX_RBF=/media/fat/_Utility/Plex.rbf
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+MATCH_WANT_07F54D9F=YES
+PLEX_RBF_IS_0FC=NO
+PLEX_RBF_IS_720P=NO
+TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+TRUE480_BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+NAMED=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf PRESENT
+NAMED_MD5=0fc77c10f47a33d5e4379fe129658e93
+CORENAME=Plex
+RBFNAME=Plex
+  SSH1 names mtime=2026-08-13 22:06:03.177 -0500 = 03:06:03Z (4 bytes each)
+  SSH2 names mtime=2026-08-13 22:06:34.143 -0500 = 03:06:34Z (restamp; still Plex/Plex)
+  /dev/MiSTer_cmd mtime SSH1 03:06:27Z / SSH2 03:06:34Z
+  (sibling bounce window after MENU; this worker did not write FIFO)
+NAME_PIN_L4=NO  (RBFNAME is Plex, not Plex.720p24*)
+DAEMON_PS_THIS_PIN=NONE
+LISTEN_3005_THIS_PIN=NO  (netstat/ss empty; /proc/net/tcp no :3005 / 0BB9)
+ONBOX_BIN_PRESENT=/media/fat/misterplex/bin/misterplexd + misterplexd_supervise.sh
+THIS_RUN_MISTER_MAIN_LOG=ABSENT (ls /tmp/mister-main*.log empty both pins)
+# contemporaneous sibling (not this harvest; do not score as 310569):
+#   R-daemon-0fc 03:05:35Z: pid 1435 --id misterplex --port 3005 LISTEN
+#     on-box ARM md5 6214f77568fa2303405603747e5dd5e7
+#   this worker 03:06:25Z / 03:07:04Z: daemon GONE (not killed here)
+#   CORENAME/RBFNAME + FIFO restamped 03:06:03–03:06:34Z (R-glass-win class)
+
+# --- class (310569) ---
+# Named-load started ~03:03Z (parent elapsed~40s+ at 03:04Z; MENU pin 03:03Z).
+# scripts/run_720p24_live_gate.sh named-load:
+#   load_core /media/fat/menu.rbf then load_core $J_RBF (0fc77c10)
+# Gate log: CORENAME Plex → MENU, then SSH ServerAlive timeout;
+# EXIT restore SSH connect timed out; RC=255; no SCORE rewrite.
+# Same class as 301328 / 304633 HUNG_MISTER_CMD / GPI31_MENU:
+#   Main often quits on menu.rbf when GPI[31]==1; FIFO has no reader;
+#   play never runs; stamp Plex.720p24.0fc77c10 never landed.
+# This-run Main log NOT on box at harvest pin (cannot quote GPI[31] line for 310569).
+# Class remains GPI31_MENU_LIKELY from CORENAME=MENU + SSH die + prior identical gates.
+
+# --- restore decision ---
+# Gate DEAD. Plex.rbf is 07f54d9f (not 0fc/720p).
+# Constraint: restore bak + daemon --id misterplex :3005 ONLY if disk is 0fc/720p.
+# SELF_RESTORE=NOT_DONE. Did not cp Plex.rbf. Did not start daemon.
+# EXIT trap restore also failed (ssh timeout) but disk was already product.
+
+# --- what this worker did NOT do ---
+# no run_720p24_live_gate.sh; no menu; no load_core; no play-file;
+# no kill 310569; no overwrite Plex.rbf; ZERO Quartus; no cards;
+# did not invent pfps; did not quote copy-score as this named-load.
+
+BACKLOG_SUGGEST=P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+  Harvest 310569: DEAD at first sample 03:04:43Z; GATE_SCRIPT_RC=255;
+  THIS_RUN_PFPS=NONE; unique-24 FAIL.
+  Class HUNG_SSH / GPI31_MENU_LIKELY (same as 301328/304633).
+  Glass stays 07f54d9f. Named 0fc sidecar present. RBFNAME=Plex (no L4 stamp).
+  Product daemon --id misterplex :3005 DOWN at 03:06:25Z+ (was 1435 at 03:05:35Z).
+  Parent 03:06Z: named_load=BAN. Do not invent pfps. Do not second-gate.
+  Do not leave 0fc as Plex.rbf (it is not).
+
+BLOCKERS=named load_core menu.rbf → CORENAME=MENU → SSH timeout
+  → EXIT restore also timed out → play never starts → no this-run score.
+  unique-24 cannot PASS without this-run pfps≥23.9.
+
+EVIDENCE:
+  /tmp/misterplex-agent-L-hv-310.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-L-hv-310.txt
+  /tmp/l-n2-gate-run.log (this named-load; RC=255; CORENAME=MENU; SSH timeout)
+  /tmp/pfps-720p24-live-gate.txt (STALE 02:22Z — not this run)
+  /tmp/pfps-720p24-live-gate-0fc77c10-copy.txt (PRIOR copy true480 FAIL — not this)
+  /tmp/misterplexd.t7gate.log (03:01:22Z copy-gate aspect fail — not this)
+  this-worker box pin 03:06:25Z + 03:07:04Z md5 Plex.rbf=07f54d9f* named 0fc present
+    CORENAME=Plex RBFNAME=Plex DAEMON=NONE :3005=NONE
+  /tmp/misterplex-agent-R-daemon-0fc.txt (03:05:35Z daemon 1435 then; ARM 6214f775)
+  /tmp/misterplex-agent-L-hv-304.txt (prior 304633 same class)
+  /tmp/misterplex-agent-R-cmd-hang.txt (prior GPI31_MENU Main log)
+  /tmp/misterplex-loop-status.txt TICK=03:04Z then 03:06Z
+  /tmp/misterplex-agent-bucket.json tick 03:04Z live_gate 310569

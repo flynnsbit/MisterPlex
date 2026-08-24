@@ -1,0 +1,41 @@
+# misterplex agent R-n7-nop2
+Status PIN_OK
+lab_plex_rbf=07f54d9f
+named_n6=a0ae0b45
+listen=:3005
+play=NO
+fpga_bin=NO
+unique24=FAIL (last measured 0.75 on n6; not re-measured)
+## Evidence
+host=192.168.1.183 when=2026-08-14T06:11:55Z
+method=sshpass ssh root@192.168.1.183 READ-ONLY (md5/ls/ss/pid/fb only)
+no /bin/fpga, no load_core, no menu, no copy a0ae0b45 over Plex.rbf, no play, no misterplexd start/kill, no Quartus
+
+Plex.rbf:
+  md5 07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/_Utility/Plex.rbf
+  inode=159 size=3831312 date=Aug 14 00:44
+  matches Plex.true480.07f54d9f.rbf (inode=163 same md5)
+  PLEX_IS_A0AE=NO  (not BLOCKED)
+
+named 720p24 (NOT default):
+  md5 a0ae0b45ff23ca240096889b8cc48c27  /media/fat/_Utility/Plex.720p24.a0ae0b45.rbf
+  inode=1779 size=2822504 date=Aug 14 00:44
+  DISTINCT_OK vs Plex.rbf (different inode, size, md5)
+  named-only; not copied over product default
+
+fb:
+  /sys/class/graphics/fb0/virtual_size=640,480
+  (640,480 glass as expected)
+
+identity:
+  ss: LISTEN 0.0.0.0:3005 users:(("mpx-main",pid=10332,fd=8))
+  cmdline=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+  pid=10332 comm=mpx-main
+  CORE: not queried via /bin/fpga; no FPGA reload
+
+## Verdict
+PIN_OK. Product default Plex.rbf is 07f54d9f (not a0ae0b45). Named n6 RBF a0ae0b45 exists beside it. MiSTerPlex/misterplex/:3005 is up (pid 10332). Glass 640x480. No play, no FPGA reload, no daemon mutate. unique24 remains FAIL (0.75 last n6; this worker did not measure).
+
+## Blockers
+none
+backlog suggestion: leave product glass 07f54d9f pinned; a0ae0b45 stays named-only; unique24 still FAIL

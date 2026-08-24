@@ -1,0 +1,143 @@
+HEAL_PIN. PIN_OK. glass=true480 bank=640x480 doorbell=0x300FF000.
+HEAL_PIN ≠ T7 PASS. Leftover PLXJ still 0x504C584A (corroborate, not clear).
+
+W-glass-pin | RO-confirm parent glass heal (true480 0x300FF000)
+UTC: 2026-08-13T23:54Z (ssh 23:54:12Z; cards 23:55Z)
+Worker: W-glass-pin
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Cite-only dirty: /home/shawn/Projects/MisterPlex
+Report: /tmp/misterplex-agent-W-glass-pin.txt
+Card: /home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/GLASS_HEALED_TRUE480.md
+
+ZERO Quartus / FIT_GO / menu / load_core / deploy / play-file / HDMI grab.
+Did not kill misterplexd 3490 / supervise 3479. Did not overwrite Plex.rbf
+(07f54d9f stays). Did not /dev/mem WRITE or PLXP poke. Did not zero
+0x3047F130. Did not edit PHASE_BACKLOG.md or RTL. No host C++.
+Soft-skip ≠ PASS. Did not invent ≥23.9 / T7 PASS / HDMI PASS.
+
+================================================================
+VERDICT
+================================================================
+
+HEAL_PIN. PIN_OK. glass=true480.
+
+  Last live GLASS-MAX (misterplexd.log line 57711):
+    glass=true480 bank=640x480 doorbell=0x300FF000
+  MATCH expect. Parent 23:50Z heal confirmed.
+
+  Companion fa2f7a7c pid=3490 supervise=3479 start 23:47:00Z.
+  2397/2385 GONE. decode=640x480 (not snapped 1280x720).
+  Disk Plex.rbf 07f54d9f. CORE=Plex RBFNAME=Plex.
+
+  Leftover 0x3047F130 = 0x504C584A STABLE (same as 23:28Z probe).
+  Heal is corroborateLiveGlass, not a zero. Do not poke.
+
+  NOT T7 PASS. Unique still FAIL 14.1 B_NO_GAIN_15.
+  HEAL_PIN ≠ T7 PASS ≠ FIT_GO ≠ mix PASS.
+
+Backlog suggestion: P3-720P24 IN_PROGRESS / pfps FAIL; T7 FAIL class
+stays B_NO_GAIN_15. Side class GLASS_PROBE_STALE_PLXJ is HEALED
+(corroborate; leftover word still present). No poke. No kill 3490.
+No second T7. FIT_GO=NO. W-backlog-* owns PHASE_BACKLOG.md.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+
+- ZERO Quartus / docker / FIT_GO / RBF overwrite
+- ZERO menu / load_core / deploy / play-file / HDMI grab
+- Did not kill / SIGSTOP / SIGHUP 3490 or 3479
+- /dev/mem: O_RDONLY + mmap PROT_READ only. WRITE=none. No busybox
+  devmem write. No PLXP poke. Did not zero leftover word.
+- Soft-skip ≠ PASS. No invented ≥23.9 / unique-24 / T7 PASS
+- PHASE_BACKLOG.md not rewritten
+- RTL / present_bank.hpp / main.cpp not edited (card + stamp only)
+
+================================================================
+STEP 1 — last GLASS-MAX (RO ssh 23:54:12Z)
+================================================================
+
+Host 192.168.1.183 root. grep GLASS-MAX misterplexd.log | tail.
+
+  last: misterplexd: GLASS-MAX glass=true480 bank=640x480 doorbell=0x300FF000
+  line 57711 / 57732   log mtime 23:47:03Z
+  prior stale: 57663 + 57689  glass=L4 bank=1280x720 doorbell=0x3047F000
+  3490 running: decode=640x480 weak=480p/640x480@2500k
+
+Expect true480 / 640x480 / 0x300FF000. MATCH.
+Matches dirty GLASS_CORROBORATE_LANDED.md.
+
+================================================================
+STEP 2 — leftover RO peek (optional; O_RDONLY)
+================================================================
+
+os.open(O_RDONLY|O_SYNC) + mmap PROT_READ page 0x3047F000.
+Two reads +0x130. WRITE=none.
+
+  0x3047F130 PLXJ_a=0x504C584A PLXJ_b=0x504C584A STABLE MAGIC_PLXJ=YES
+  PLXJ_hi=0x02009010  → DAR 16:9 token=2 (T7b leftover)
+  PLXD_hi=0x00DB0002 frames_done=219 FROZEN
+  PLXF_hi=0xFFFF1054 FROZEN
+  0x3007F130 PLXJ=0x00000000 (true480 idle)
+
+Heal is corroborate, not necessarily clear. Word unchanged since
+W-glass-probe 23:28:22Z. Do not zero.
+
+================================================================
+PIN (corroborateLiveGlass)
+================================================================
+
+present_bank.hpp md5 9201dc245ea10b7750aee91e2c8e7212
+corroborateLiveGlass: known-L4 pin (968b828a disk or Plex.720p24* name)
+→ L4; else True480. classifyLiveGlass still word-only for unit.
+
+  CORENAME=Plex  RBFNAME=Plex
+  Plex.rbf md5=07f54d9f8f0eda2fe75d9cc314f6de54 size=3831312
+  named j kept Plex.720p24.968b828a.rbf md5=968b828a8ec572bccf43b7bc2d31625a
+  3490 ALIVE exe fa2f7a7c681c08239052fe29b9aae359 start 23:47:00Z
+  2397 GONE  2385 GONE
+  DECODE=640x480  DISPLAY_RES=480p
+
+prefix8=07f54d9f + rbfname=Plex → True480 even with leftover magic.
+
+================================================================
+STEP 3 — HEAL_HOLD stamp
+================================================================
+
+GLASS_STALE_PLXJ_HEAL_HOLD.md header stamped HEALED vs 23:50Z.
+History kept (HOLD_OK body from 23:34Z unchanged below stamp).
+
+================================================================
+≠ 14.1 / ≠ T7 PASS
+================================================================
+
+W-pfps-rca: leftover PLXJ REJECTED as T7b 14.1 cause.
+T7b ACK 16:9 was live j. Unique FAIL is B_NO_GAIN_15 (14.1 < 23.9).
+This ticket is glass-safety pin after parent corroborate bounce.
+Does not move 14.1. HEAL_PIN ≠ T7 PASS.
+
+================================================================
+EVIDENCE
+================================================================
+
+  Memory/lab/status/GLASS_HEALED_TRUE480.md
+  Memory/lab/status/GLASS_STALE_PLXJ_HEAL_HOLD.md   (header stamp)
+  /home/shawn/Projects/MisterPlex/Memory/lab/status/GLASS_CORROBORATE_LANDED.md  (cite-only dirty)
+  host/libmisterplex/present_bank.hpp          md5 9201dc245ea10b7750aee91e2c8e7212
+  tests/unit/test_present_bank.cpp             leftover+07f54d9f → True480
+  live /media/fat/misterplex/misterplexd.log   last GLASS-MAX line 57711
+  /tmp/misterplex-loop-status.txt              TICK=23:52Z glass=HEALED
+  /tmp/misterplex-agent-W-glass-probe.txt      leftover 23:28Z
+  /tmp/misterplex-agent-W-glass-hold.txt       HOLD_OK 23:34Z
+
+================================================================
+BLOCKERS
+================================================================
+
+- None for this pin. Last GLASS-MAX is true480 0x300FF000.
+- Leftover word still live — do not poke; corroborate already ignores it.
+- HEAL_PIN ≠ T7 PASS. Do not treat as unique-24 / mix / HDMI / FIT_GO.
+- Do not kill 3490. Do not play from this ticket.
+
+wrote=card + HEAL_HOLD stamp + this report. wrote_devmem=none.
+killed=none. played=none. PHASE_BACKLOG.md not edited.

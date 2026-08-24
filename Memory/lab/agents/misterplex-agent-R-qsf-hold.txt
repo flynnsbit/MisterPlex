@@ -1,0 +1,61 @@
+# misterplex agent R-qsf-hold
+Date: 2026-08-14T03:32Z
+Worker: R-qsf-hold
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Status: RESTORE_OK
+RESTORE: YES
+unique24: FAIL
+
+## md5
+pre-restore:
+  Plex.qsf           84c2f4b2e85f150e073578e7e4406b69  (n2 overlay; content matched Plex_720p24n2.qsf)
+  Plex_720p24n2.qsf  84c2f4b2e85f150e073578e7e4406b69
+  bak                b049c94413d02a1a63dfd03b7234d7e1  /tmp/Plex.qsf.product-480p.slot720p24n3.bak
+post-restore:
+  Plex.qsf           b049c94413d02a1a63dfd03b7234d7e1  (product 480p)
+  Plex_720p24n2.qsf  84c2f4b2e85f150e073578e7e4406b69  (untouched)
+  bak                b049c94413d02a1a63dfd03b7234d7e1
+
+PLEX_CLK_SYS_24: commented in n2 overlay L123
+  `#set_global_assignment -name VERILOG_MACRO "PLEX_CLK_SYS_24=1"`
+Product Plex.qsf has no PLEX_CLK_SYS_24 token (never enabled).
+
+## Decision
+RESTORE=YES. Farm had already copied files.
+- First sample: n3 log 715B docker/rsync banner through NUM_PARALLEL_PROCESSORS
+  (printed AFTER rsync in build_rbf_remote.sh REMOTE_BUILD).
+- Parent TICK 03:30Z: exclusive=LIVE slot720p24n3 quartus_fit (map done).
+- M-fitmon-n3: docker mplex-fit-flynnsbit-slot720p24n3-20260813222614 + quartus_fit.
+- Map-done ⇒ source rsync complete; restoring local Plex.qsf cannot poison the fit.
+Copied bak → fpga/Plex_MiSTer/Plex.qsf. Wrapper EXIT also trap-restored and
+printed: `Restored product Plex.qsf b049c94413d02a1a63dfd03b7234d7e1`.
+Post content: TRUE_480P / FRAME 640x480; n2 overlay header gone.
+
+## n3 log (harvest while this ticket ran)
+Log grew past 715B to FIT_WRAPPER_DONE (not a BUILD_OK claim by this worker):
+  exit_code=0 wall_seconds=390
+  FIT_WRAPPER_RC=0
+  FARM_RBF_MD5=d19101778905687efb869fbf3ac8628b (remote_out/slot720p24n3 only)
+  DEPLOY=NO LAB_PLEX_RBF_TOUCHED=NO
+  sdram_i420_store:fstore present (6978/4836)
+  PASS timing: no negative slack
+FIT_WRAPPER_RC=0 ≠ BUILD_OK ≠ unique-24. Parent/fitmon harvests.
+
+## Constraints
+- No second Quartus.
+- Did not edit sdram_i420_store.sv.
+- Never PLEX_CLK_SYS_24.
+- Did not deploy. Did not ssh 192.168.1.183.
+- unique24=FAIL. Soft-skip ≠ PASS.
+
+## Backlog suggestion
+QSF overlay HOLD closed. Product Plex.qsf restored b049c944.
+P3-720P24 stays IN_PROGRESS / unique24 FAIL.
+Do not invent BUILD_OK from this ticket.
+
+## Evidence
+/tmp/plex_quartus_slot720p24n3.log
+/tmp/Plex.qsf.product-480p.slot720p24n3.bak
+/tmp/misterplex-loop-status.txt
+fpga/Plex_MiSTer/Plex.qsf
+fpga/Plex_MiSTer/Plex_720p24n2.qsf

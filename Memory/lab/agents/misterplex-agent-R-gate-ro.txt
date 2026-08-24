@@ -1,0 +1,141 @@
+WORKER=R-gate-ro
+UTC=2026-08-14T02:43Z
+WT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+SCRIPT=scripts/run_720p24_live_gate.sh
+GATE_RAN=NO
+UNIQUE_24=NO
+QUARTUS=ZERO
+CARDS=NO
+MENU=NO
+LOAD_CORE=NO
+PLEX_RBF_OVERWRITE=NO
+EDITS=ZERO
+OWNER_LIVE_GATE=L-n-gate2
+
+VERDICT=RO_OK named-load already in script; copy-onto-Plex.rbf is NOT the play-window path. unique-24 NO. GATE_RAN=NO.
+
+###############################################################################
+# 1) How J_RBF / PLEX_720P24_RBF is loaded
+###############################################################################
+
+Binding (script L18):
+  J_RBF="${PLEX_720P24_RBF:-/media/fat/_Utility/Plex.720p24.968b828a.rbf}"
+Default without env is still slot j 968b828a (not 0fc77c10).
+
+STALE HEADER (script L3) still says:
+  "Named 720p RBF is copied onto Plex.rbf for the play window only."
+IGNORE that line. There is no `cp "$J_RBF" "$PRODUCT_RBF"` anywhere.
+
+ACTUAL PLAY-WINDOW LOAD (script L240–286):
+  # Do NOT copy named bytes onto Plex.rbf — product 07f54d9f stays on disk.
+  # Main writes RBFNAME=Plex for any Plex*.rbf; stamp the named basename so
+  # rbfNameIsKnownL4 (Plex.720p24*) can pin L4. SWAP_DONE=1 for EXIT bounce.
+  printf '%s\n' 'load_core /media/fat/menu.rbf' > /dev/MiSTer_cmd
+  printf '%s\n' "load_core $J_RBF" > /dev/MiSTer_cmd
+  want=$(basename "$J_RBF" .rbf)     # e.g. Plex.720p24.0fc77c10
+  if RBFNAME does not contain 'Plex.720p24':
+    printf '%s' "$want" > /tmp/RBFNAME
+  Assert CORENAME ~ plex AND RBFNAME ~ Plex.720p24 else SWAP_FAIL.
+
+So: named-path load_core + stamp RBFNAME. NOT copy-onto-Plex.rbf.
+Plex.rbf md5 is printed as PRODUCT_RBF_STAYS (true480 07f54d9f expected).
+
+Only `cp` in the file is RESTORE: TRUE480_BAK → PRODUCT_RBF (L78).
+
+Score echo L361 still prints `named_copy_window_only=1` (stale label).
+SWAP_DONE=1 is still set so EXIT menu-bounces product even though disk was not swapped.
+
+Name refuse (L174–180): basename MUST match Plex.720p24.*.rbf.
+Banned prefix8 (L36): a69a62f9 e494a767 740e19d6 c052be56 0bcc6081 17dd3b56 752fc1e2.
+0fc77c10 is NOT banned → name check would accept Plex.720p24.0fc77c10.rbf.
+
+###############################################################################
+# 2) Why named-load for 0fc77c10 (L4 name pin)
+###############################################################################
+
+host/libmisterplex/present_bank.hpp:
+  rbfNameIsKnownL4(base):
+    true if base contains "968b828a" OR base starts with "Plex.720p24"
+  rbfNameIsKnownL4("Plex") == false
+  rbfNameIsKnownL4("Plex.720p24.0fc77c10") == true   (unit test_present_bank.cpp)
+
+  rbfPrefix8IsKnownL4: 968b828a | cc9dbd74 | 0fc77c10
+  (sibling pin; comment says "copied as Plex.rbf" — that is disk pin, NOT name pin)
+
+readLiveGlassPin md5s /media/fat/_Utility/Plex.rbf (not the named file) and
+reads /tmp/RBFNAME. corroborateLiveGlass = L4 if disk-prefix OR name.
+
+Copy 0fc77c10 onto Plex.rbf:
+  Main writes RBFNAME=Plex → NAME PIN FAILS.
+  Disk prefix8 0fc77c10 would L4 via rbfPrefix8IsKnownL4 (this tree only).
+  Product 07f54d9f is clobbered for the window — bad vs L23 / restore contract.
+
+Named load Plex.720p24.0fc77c10.rbf + stamp:
+  RBFNAME starts with Plex.720p24 → NAME PIN WORKS.
+  Plex.rbf stays 07f54d9f (prefix8 pin stays true480; name wins).
+
+###############################################################################
+# 3) Exact env for later owner (L-n-gate2)
+###############################################################################
+
+  PLEX_720P24_RBF=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+
+Copy-window is NOT default. Do not cp 0fc77c10 onto Plex.rbf.
+Do not omit the env (default is still j 968b828a).
+On-box file MUST exist under that exact basename (PRE_FAIL missing_named_720p).
+On-box existence NOT verified this worker (no SSH / no device).
+
+Example later owner (NOT this worker; L-n-gate2 owns live):
+  PLEX_720P24_RBF=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf \
+    scripts/run_720p24_live_gate.sh 15
+
+###############################################################################
+# 4) Restore contract (EXIT trap restore_product)
+###############################################################################
+
+ALWAYS on EXIT (even PRE_FAIL after trap is armed L160):
+  TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+  PRODUCT_RBF=/media/fat/_Utility/Plex.rbf
+  want md5 prefix 07f54d9f
+  cp bak → Plex.rbf if disk ≠ 07f54d9f OR SWAP_DONE=1
+  Menu bounce + load_core PRODUCT_RBF if SWAP_DONE=1 or disk was not product
+
+Daemon restore if DAEMON_STOPPED or bounce:
+  skip leftover --id misterplex-* (play identity misterplex-t7)
+  require --id misterplex :3005
+  prefer misterplexd_supervise.sh
+  else: misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf product
+
+Restore MUST put 07f54d9f back on Plex.rbf + daemon --id misterplex :3005.
+This worker did not run restore (GATE_RAN=NO).
+
+###############################################################################
+# 5) Edit decision
+###############################################################################
+
+ZERO edits. Load block already documents "Do NOT copy named bytes onto Plex.rbf".
+A hash-specific comment is unnecessary. Header L3 is stale — later owner must
+not treat it as the load path.
+
+###############################################################################
+# Evidence / backlog / blockers
+###############################################################################
+
+EVIDENCE:
+  /tmp/misterplex-agent-R-gate-ro.txt (this report)
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/run_720p24_live_gate.sh
+    L18 J_RBF bind; L240-286 named load_core + RBFNAME stamp; L47-158 restore
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/host/libmisterplex/present_bank.hpp
+    rbfNameIsKnownL4 / rbfPrefix8IsKnownL4
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/tests/unit/test_present_bank.cpp
+    namedN2 rbfname=Plex.720p24.0fc77c10 → L4
+
+BACKLOG_SUGGESTION:
+  R-gate-ro RO inspect DONE. Do not mark unique-24. P3-720P24 stays
+  IN_PROGRESS / pfps FAIL. Live gate remains L-n-gate2. Soft-skip ≠ PASS.
+  Script-exists ≠ unique-24 PASS. GATE_RAN=NO ≠ T7 PASS.
+
+BLOCKERS:
+  None for this RO ticket. Did not run gate. Did not touch /dev/MiSTer_cmd.
+  Did not overwrite Plex.rbf. Did not start Quartus. On-box named file
+  Plex.720p24.0fc77c10.rbf existence unverified (L-n-gate2 preflight).

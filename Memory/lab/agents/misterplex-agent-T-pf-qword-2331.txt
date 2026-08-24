@@ -1,0 +1,10 @@
+WORKER=T-pf-qword-2331
+UTC=2026-08-14T23:37Z
+PAGEFILL_QWORD_OK=YES
+STORE=1882c5e88ce751de76438f52f37de603
+WRITER=a3f18674 (bound; was missing → IVL rc=2)
+IVL_RC=0 VVP_RC=0
+A one qword=1 ISSUE+WAIT wr>=4; B DE no steal
+log=build/iverilog/sdram_i420_store_pagefill/store_pagefill_tb.log
+unique24=FAIL FIT_GO=NO BUILD_OK=NO 23.9=NO
+TB_OK≠unique-24

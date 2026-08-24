@@ -1,0 +1,111 @@
+# misterplex agent W-hdmi-eyes
+Date: 2026-08-13 (parent TICK 23:15Z / eyes 23:14Z)
+Worker: W-hdmi-eyes
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Status: EYES_OK
+HDMI: PLUGGED
+video4: PRESENT (ls/sysfs only; NOT opened)
+Grab: NONE
+Deploy: NONE (parent already 6f1afebe DEPLOYED pid 2397)
+FIT_GO: NO
+
+VERDICT: EYES_OK. P4-DISPLAY TODO. EYES_OK ≠ HDMI PASS.
+PHY still 640x480@59.9 before and after parent video_mode 5 write.
+T7b after still request 1280x720@24 / PHY 640x480@59.9.
+L55 confirmed on hardware this tick.
+NOT HDMI PASS. NOT raster PASS. NOT 240p TV PASS. NOT unique-24. NOT P4 DONE.
+RECIPE ran ≠ HDMI PASS. video_mode write ≠ raster PASS. Chevron ≠ raster PASS.
+Soft-skip ≠ PASS. IMPL_OK ≠ HDMI PASS.
+
+## Constraints obeyed
+- ZERO ffmpeg / v4l2-ctl / hdmi_capture / open of any /dev/video*
+- ls / list_dir /dev + sysfs video4 only (existence). Did not grab.
+- ZERO Quartus / play / menu / load_core / deploy / kill 2397 / overwrite Plex.rbf
+- Did not reload 968b828a as Plex.rbf
+- Did not edit PHASE_BACKLOG (W-backlog-u)
+- Did not invent HDMI PASS / raster PASS / 240p TV PASS / unique-24 / P4 DONE
+- Did not write MiSTer.ini
+
+## Step 1 — video4 existence + PNG harvest
+- /dev/video4 PRESENT (list_dir /dev). Missing video4 is NOT the case.
+- sysfs /sys/class/video4linux/video4 (not /dev/video4):
+    name=UVC Camera (534d:2109): USB Vid
+    index=0
+    dev=81:4
+    uevent DEVNAME=video4
+- video5 same UVC name (metadata). Not opened.
+- file/identify CLI not re-run (harvest-only; parent may own dongle).
+- Parent-stated sizes/times + this-worker overlay transcription:
+
+  true480_now.png          640x480 18:08  V.info 640x480 14.88kHz 30.0Hz / PHY 640x480 25.18MHz 59.9Hz + chevron
+  after_vm5_640.png        640x480 18:11  SAME overlay class as true480_now
+  after_vm5_1280.png       1280-wide      SAME overlay (640x480 / 640x480@59.9)
+  after_vm5_800.png        800-wide req   SAME overlay — not 800x600 PHY
+  true480_now_1280.png     1280-wide      same overlay class as true480_now
+  t7b_after.png            1280x720       request 1280x720 0.00kHz 24.0Hz / PHY 640x480 25.18MHz 59.9Hz + chevron
+  t7b_after_640.png        640x480        same overlay as t7b_after
+  j.png                    1280x720 16:12 historical same request@24 / PHY@59.9 split
+
+- true480_now vs after_vm5_640: SAME overlay class. video_mode=5 write did not change PHY.
+- Recipe expect mode 5 = 800x600@60 ~40 MHz. Observed still 640x480@59.9.
+
+## Step 2 — INI (optional RO)
+- This worker did NOT ssh / grep on-box MiSTer.ini (optional; no INI write).
+- Parent pin: live INI after parent = video_mode=6 (restored).
+- Do not treat restored 6 as 240p TV PASS.
+
+## Step 3 — card
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/P4_DISPLAY_PHY_STILL_640x480.md
+
+## Step 4 — STALE hold card
+HDMI_UNPLUGGED_HOLD.md already had a 23:14Z PLUGGED STALE line (historical body kept).
+This worker added cite to P4_DISPLAY_PHY_STILL_640x480.md. Did not delete history.
+
+## Did
+- Harvest parent eyes on disk
+- Confirm video4 PRESENT without opening it
+- Write P4_DISPLAY_PHY_STILL_640x480.md
+- Cross-cite STALE on HDMI_UNPLUGGED_HOLD.md
+
+## Did not
+- grab, ffmpeg, v4l2, hdmi_capture, open /dev/video*
+- Quartus, play, menu, deploy, kill 2397, overwrite 07f54d9f
+- invent HDMI PASS / raster PASS / P4 DONE
+- treat video_mode write / RECIPE ran / chevron as PASS
+- edit PHASE_BACKLOG
+- write INI
+
+## Evidence paths
+- /tmp/plex-hdmi-eyes/true480_now.png
+- /tmp/plex-hdmi-eyes/after_vm5_640.png
+- /tmp/plex-hdmi-eyes/after_vm5_1280.png
+- /tmp/plex-hdmi-eyes/after_vm5_800.png
+- /tmp/plex-hdmi-eyes/t7b_after.png
+- /tmp/plex-hdmi-eyes/t7b_after_640.png
+- /tmp/plex-hdmi-eyes/j.png
+- /tmp/misterplex-loop-status.txt (TICK 23:15Z HDMI=PLUGGED display=video_mode 5 WROTE; PHY still 640x480@59.9)
+- /tmp/misterplex-agent-bucket.json (p4_display TODO; 6f1afebe DEPLOYED)
+- $HOME/Projects/MisterPlex/Memory/lab/status/T7B_PARENT.md
+- $HOME/Projects/MisterPlex/Memory/lab/status/HDMI_USB_EYES.md
+- Memory/lab/status/P4_DISPLAY_PHY_STILL_640x480.md
+- Memory/lab/status/HDMI_UNPLUGGED_HOLD.md
+- this report
+
+## Backlog suggestion
+P4-DISPLAY: TODO (EYES_OK; RECIPE ran; PHY still 640x480@59.9; L55 on glass).
+P4-720P-MIX: TODO.
+P3-720P24: IN_PROGRESS / pfps FAIL (T7b 14.1 — not this card).
+Next P4 = real raster-change design (not another video_mode write).
+No Quartus unless parent FIT_GO.
+FIT_GO=NO.
+
+## Next
+- Do not grab.
+- Do not re-write video_mode as a PASS attempt.
+- Parent names any raster design / FIT_GO. This worker exits.
+
+## Blockers
+- PHY still 640x480@59.9 after recipe video_mode 5 write — L55; host cmd is not a raster PASS.
+- Next step is a real raster-change design, not another write. Not this worker.
+
+VERDICT: EYES_OK. P4-DISPLAY TODO. EYES_OK ≠ HDMI PASS.

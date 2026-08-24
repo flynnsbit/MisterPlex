@@ -1,0 +1,116 @@
+# misterplex agent S-bl4-live
+UTC=2026-08-14T15:13Z
+WORKER=S-bl4-live
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+branch=lessons/true480-720p24 @ 0e49a68
+Report=/tmp/misterplex-agent-S-bl4-live.txt
+
+## Verdict
+Status=DONE
+PAGEFILL_BL4_OK=NO
+ACT=1
+extra_ACT=0
+CMD_WRITE=1
+DQ_NWE_LOW=1
+DQ_CONSEC=1
+DQ_TOTAL=1
+A10_ON_WRITE=1
+A10_LAST_BEAT=0
+A10_OK=0
+POST_CAS_OBS=6
+POST_CAS_PARAM=6
+T_RP=2
+BL=4
+PAYING_BL_PLUS_TRP_1BEAT=YES
+NWB=1
+ST_WR_BURST=ABSENT
+MRS_A=0222
+MRS_A9=1
+MRS_BL=010
+SYNTH_OK=NO
+unique24=FAIL
+FIT_GO=NO
+BUILD_OK=NO
+PLAY=NO
+DEPLOY=NO
+LAB_SSH=NO
+Quartus=ZERO
+/bin/fpga=ZERO
+EDITED_LIVE_RTL=NO
+INSTANTIATED_sdram_n7=NO
+NOT_RUN=NO
+Soft-skip ≠ PASS
+SYNTH_OK ≠ unique-24 ≠ FIT_GO ≠ BUILD_OK
+compile≠gate (IVL_RC=0 is not PAGEFILL_BL4_OK)
+
+Snapshot live sdram.sv (28ccb6e4, NWB=1 word-at-a-time) does **not** consume programmed BL=4. One qword-aligned client WR is 1 ACT + 1 WRITE + 1 DQ beat, then unused POST_CAS = BURST_LENGTH+T_RP = 6 for that 1-beat write. Gate not loosened.
+
+## Exclusive
+exclusive=FREE before run (loop 15:02Z exclusive=FREE; no quartus_map/fit/sta/asm/sh; no mplex-fit docker; no FIT_GO.parent).
+exclusive=FREE after run (pgrep -x quartus_fit empty).
+This worker did **not** stamp FIT_GO, did **not** start Quartus, did **not** play, did **not** SSH.
+
+## Snapshot bind (only DUT)
+SNAP=/tmp/misterplex-pagefill-snap-1502/sdram.sv
+SNAP_MD5=28ccb6e4854a003e7fd070a2de28ec56  MATCH required
+SNAP_UTC=2026-08-14T15:04:30Z (dir utc.txt)
+module=sdram (not sdram_n7)
+NO_WRITE_BURST=1'b1  (random single-word client writes)
+ST_WR_BURST=ABSENT
+BURST_LENGTH=4 / BURST_CODE=010 programmed in MODE (MRS A=0222 A9=1)
+POST_CAS_CYCLES=BURST_LENGTH+T_RP_CYCLES (4+2=6)
+
+Worktree fpga/Plex_MiSTer/rtl/sdram.sv was **not** compiled and **not** edited by this worker.
+S-baseline 15:08Z still had live=28ccb6e4. At 15:13Z worktree sdram.sv mtime advanced (git dirty +137/−18, md5 ≠ 28ccb6e4) — sibling D-pagefill-rtl (or similar), not this worker. Gate remains on the frozen snapshot.
+
+## TB / runner (new, tests/rtl only)
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/tests/rtl/sdram_pagefill_live_tb.sv
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/tests/rtl/sdram_pagefill_live_tb.sh
+Instantiates `sdram #(.SDRAM_CLK_HZ(10_000_000))` only. After init: one qword-aligned WR (addr[2:1]==00). Offers beats 1..3 only if ready asks mid-burst (n7 handshake). Does not require NWB=0. Does not instantiate sdram_n7.
+
+PAGEFILL_BL4_OK only if ALL of:
+  exactly 1 ACT, extra_ACT=0, 4 consecutive DQ write beats after that ACT,
+  A10=1 only on last beat OR A10 on WRITE with BL=4 auto-pre after last beat (n7),
+  not paying POST_CAS=BURST_LENGTH+T_RP for a 1-beat write.
+
+Icarus adapt (same as tests/rtl/sdram_n7_tb.sh): inout reg → wire+drv; chip/command declared before assign. View is /tmp only, not qip, not product RTL. NBA rewrites=2 (live has Z + one WRITE data).
+
+## Run
+IVL=/home/shawn/.local/oss-cad-suite/bin/iverilog
+VVP=/home/shawn/.local/oss-cad-suite/bin/vvp
+IVL_RC=0  (empty compile log; compile ≠ gate)
+VVP printed PAGEFILL_BL4_OK=NO; wrapper SCRIPT_RC=1
+(Icarus $finish(1) does not set vvp process status; wrapper greps PAGEFILL_BL4_OK=YES — absent.)
+
+Command: tests/rtl/sdram_pagefill_live_tb.sh
+Compile list: TB + /tmp/misterplex-synth-pagefill/sdram_live_ivl.sv + tests/rtl/verilator_altddio_stub.sv
+DUT SOURCE: /tmp/misterplex-pagefill-snap-1502/sdram.sv
+
+Trace (10 MHz param, init 1237 cycles, MRS A=0222 NWB=1 BL=4):
+  accept: ACT nCS=0 ready=0
+  WRITE:  nWE=0 A10=1 DQ=a011 (one beat) ready=0
+  POST_CAS: 6 cycles NOP (param 6 = 4+2)
+  back_IDLE ready=1; offer_accepted=1 (ready never asked for beats 1..3)
+
+## Why FAIL (honest; expected)
+Snapshot programs BL=4 in MRS but NO_WRITE_BURST=1. ST_CAS issues one CMD_WRITE + one DQ, then ST_POST_CAS for BURST_LENGTH+T_RP even though only 1 beat was written. No ST_WR_BURST. Ready stays 0 until the unused tail completes. Programmed BL=4 is not consumed.
+
+## Evidence
+/tmp/misterplex-synth-pagefill/sdram_pagefill_live_tb.log
+/tmp/misterplex-synth-pagefill/S-bl4-live-tb.log          (copy)
+/tmp/misterplex-synth-pagefill/sdram_pagefill_live_tb_compile.log
+/tmp/misterplex-synth-pagefill/S-bl4-live-compile.log     (copy)
+/tmp/misterplex-synth-pagefill/sdram_live_ivl.sv
+/tmp/misterplex-synth-pagefill/S-bl4-live-snap.md5
+/tmp/misterplex-pagefill-snap-1502/sdram.sv
+/tmp/misterplex-pagefill-snap-1502/md5.txt
+/tmp/misterplex-loop-status.txt  (tick 15:02Z exclusive=FREE FIT_GO=NO unique24=FAIL)
+
+## Backlog suggestion
+P3-720P24 IN_PROGRESS / unique24 FAIL.
+Live sdram 28ccb6e4 PAGEFILL_BL4_OK=NO (word-at-a-time; 1 ACT + 1 DQ + POST_CAS=6 unused tail).
+SYNTH_OK=NO. FIT_GO=NO. Do not stamp FIT_GO on this result.
+Next product work is a design that actually consumes BL=4 (NWB=0 + ST_WR_BURST or equivalent), then re-run this gate on that source. Sibling n7 TB remains the known-good consume shape (S-baseline N7_TB_OK=YES) — not this snapshot.
+
+## Blockers
+None for this worker. Gate ran. Result is FAIL as specified. Parent must not treat compile-OK or n7 sibling PASS as live PAGEFILL_BL4_OK.

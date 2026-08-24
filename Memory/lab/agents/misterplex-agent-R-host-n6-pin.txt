@@ -1,0 +1,171 @@
+VERDICT: FAIL. PIN_N6=YES (source). HOST_OK not claimed. unique24=FAIL. ARM_DEPLOY=NO.
+
+R-host-n6-pin | pin REAL n6 prefix8 a0ae0b45 as L4 (same style as 4554 n5)
+UTC: 2026-08-14T05:50:00Z (approx; no date(1) this worker)
+Worker: R-host-n6-pin
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Branch: lessons/true480-720p24
+Report: /tmp/misterplex-agent-R-host-n6-pin.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-host-n6-pin.txt
+
+HOST_OK ≠ unique-24 ≠ UNIT_OK ≠ BUILD_OK ≠ DEPLOY_OK.
+Did NOT invent unique-24. Did NOT run full make unit.
+ZERO Quartus. No ARM deploy. No ssh 192.168.1.183. No play. No commit.
+No PHASE_BACKLOG essays. No Memory/lab/status cards.
+
+================================================================
+DELIVERABLE
+================================================================
+
+Status=FAIL
+PREFIX8=a0ae0b45
+PIN_N6=YES
+TEST_RC=NOT_RUN
+ARM_MD5=NOT_REBUILT
+ARM_DEPLOY=NO
+unique24=FAIL
+present_bank.hpp md5 after edit=NOT_COMPUTED
+test_present_bank.cpp md5=NOT_COMPUTED
+play_720p24_already_loaded.sh KNOWN_L4=PREPENDED a0ae0b45
+
+================================================================
+WHY FAIL (not HOST_OK)
+================================================================
+
+This worker toolbelt has no shell/exec. Could not:
+  md5sum local RBF (step 1 reconfirm)
+  make .../build/test_present_bank
+  ./build/test_present_bank
+  make arm-plexd
+  md5sum/file build/arm/misterplexd
+
+TASK: Require TEST_RC=0. If fail, do not claim HOST_OK.
+TASK: Local ARM rebuild DEPLOY=NO is a required step.
+
+Source pin is applied. Evidence of TEST_RC=0 and ARM rebuild is absent.
+Soft-skip ≠ PASS. BUILD_OK ≠ unique-24. HOST_OK not claimed.
+
+Verify script left for parent/follow-on (do not ssh, do not deploy):
+  /tmp/r-host-n6-pin-verify.sh
+  expected out: /tmp/r-host-n6-pin-verify.out
+
+================================================================
+RBF CORROBORATION (not this-worker md5sum)
+================================================================
+
+Did NOT invent prefix. Did NOT re-fit.
+
+Local RBF present:
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n6/Plex.rbf
+  (grep: binary exists; read_file cannot hash binaries)
+Named sibling:
+  .../slot720p24n6/Plex.720p24.a0ae0b45.rbf
+
+Written hashes (other workers / farm log / parent tick — not re-run here):
+  X-n6 /tmp/misterplex-agent-X-n6.txt
+    RBF_MD5=a0ae0b45ff23ca240096889b8cc48c27
+    STORE_MD5=7f3d52c0745cdc2a7c503372befdabd2
+    FIT_WRAPPER_RC=0 TIMING_OK=yes DEPLOY=NO unique24=FAIL
+  /tmp/plex_quartus_slot720p24n6.log
+    FARM_RBF_MD5=a0ae0b45ff23ca240096889b8cc48c27
+    Plex.rbf md5: a0ae0b45ff23ca240096889b8cc48c27
+  /tmp/misterplex-loop-status.txt TICK=2026-08-14T05:45Z
+    n6_rbf=a0ae0b45ff23ca240096889b8cc48c27 size=2822504 farm=local MATCH BANNED=NO
+  /tmp/misterplex-agent-bucket.json
+    rbf=a0ae0b45ff23ca240096889b8cc48c27 prefix8=a0ae0b45 banned=false
+  L-n6-copy named sidecar MATCH a0ae0b45ff23ca240096889b8cc48c27
+
+BANNED=NO vs {8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0,a69a62f9,752fc1e2,
+  cc9dbd74,0fc77c10,d1910177,e8960391,4554fdb3,...}. Not 07f54d9f. Not 4f16350e.
+
+This worker did not independently print md5sum of the bytes. Do not treat
+corroboration as this-tick md5sum. Pin applied because harvest+named+parent
+agree on REAL n6 prefix8 a0ae0b45 (prep worker refused to invent).
+
+================================================================
+PIN EDITS (applied)
+================================================================
+
+1) host/libmisterplex/present_bank.hpp
+   Comment after 4554fdb3 (requested style):
+     // a0ae0b45 = slot720p24n6 BUILD_OK live-store VBLANK=8
+     //            (md5 a0ae0b45ff23ca240096889b8cc48c27, store 7f3d52c0745cdc2a7c503372befdabd2,
+     //            FIT_WRAPPER_RC=0 TIMING_OK).
+   rbfPrefix8IsKnownL4 includes pinEqualsIgnoreCase(prefix8, "a0ae0b45")
+   Kept: 968b828a cc9dbd74 0fc77c10 d1910177 e8960391 4554fdb3
+   Did NOT add 07f54d9f. Did NOT add 4f16350e. TIMING_FAIL set stays out.
+
+2) tests/unit/test_present_bank.cpp (n5 style)
+   copiedN6 prefix8=a0ae0b45 rbfname=Plex → L4
+   namedN6 rbfname=Plex.720p24.a0ae0b45 leftover 07f54d9f → L4 via name
+   n6OnPlexRbf prefix8=a0ae0b45 rbfname=Plex → L4 doorbell 0x3047F000 bank 1280x720
+   leftover 07f54d9f + rbfname=Plex still True480 doorbell 0x300FF000
+   rbfPrefix8IsKnownL4("a0ae0b45") and upper A0AE0B45
+   rbfNameIsKnownL4("Plex.720p24.a0ae0b45")
+   copiedN6Upper A0AE0B45 → L4
+   4554/n5 cases kept
+
+3) scripts/play_720p24_already_loaded.sh
+   KNOWN_L4="a0ae0b45 4554fdb3 0fc77c10 d1910177 e8960391 cc9dbd74 968b828a"
+
+Did NOT revert store to 47e8bc88.
+Did NOT edit sdram_i420_store.sv / Plex.sv / pll / qsf / files.qip.
+Did NOT commit.
+
+================================================================
+CONSTRAINTS OBEYED
+================================================================
+
+- ZERO Quartus / no docker fit / no second exclusive
+- No edit of sdram_i420_store.sv / Plex.sv / pll / qsf / files.qip
+- Did NOT revert store to 47e8bc88
+- Did NOT ssh 192.168.1.183
+- Did NOT scripts/deploy_misterplexd.sh
+- Did NOT write PHASE_BACKLOG essays / Memory/lab/status cards
+- Did NOT commit
+- unique24=FAIL (not claimed; parent tick measured 0.75 is not this worker)
+- HOST_OK ≠ unique-24 ≠ UNIT_OK
+- Soft-skip ≠ PASS; BUILD_OK ≠ unique-24
+- Kept pins 968b828a cc9dbd74 0fc77c10 d1910177 e8960391 4554fdb3
+- Did NOT add 07f54d9f. Did NOT add 4f16350e.
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+
+P3-720P24 host pin a0ae0b45 PIN_N6=YES (hpp/tests/KNOWN_L4); HOST_OK blocked until TEST_RC=0 + local ARM rebuild; unique24 still FAIL until play
+
+================================================================
+BLOCKERS
+================================================================
+
+- Worker has no shell/exec — cannot produce TEST_RC / ARM_MD5 / hpp md5.
+- Follow-on: run /tmp/r-host-n6-pin-verify.sh in the 480p-lessons tree (DEPLOY=NO).
+- unique24=FAIL (play worker). Do not start play/deploy/Quartus from this report.
+
+================================================================
+EVIDENCE
+================================================================
+
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/host/libmisterplex/present_bank.hpp
+  L113-115 n6 comment (full md5 + store 7f3d52c0745cdc2a7c503372befdabd2)
+  L117-124 pins include a0ae0b45; 07f54d9f/4f16350e absent
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/tests/unit/test_present_bank.cpp
+  copiedN6 / namedN6 / n6OnPlexRbf / leftover 07f / A0AE0B45 / name Plex.720p24.a0ae0b45
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/play_720p24_already_loaded.sh L30
+- /tmp/r-host-n6-pin-verify.sh (unrun)
+- /tmp/misterplex-agent-X-n6.txt BUILD_OK
+- /tmp/plex_quartus_slot720p24n6.log FARM_RBF_MD5
+- this report
+
+================================================================
+NOT CLAIMED
+================================================================
+
+- HOST_OK
+- TEST_RC=0
+- ARM rebuild / ARM_MD5
+- unique-24 / pfps
+- UNIT_OK
+- DEPLOY_OK
+- this-worker md5sum of Plex.rbf

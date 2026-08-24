@@ -1,0 +1,21 @@
+# misterplex agent D-n20-freeze
+Date: 2026-08-14T11:00Z
+Worker: D-n20-freeze
+Status: FREEZE_OK
+unique24: FAIL
+FIT_GO: NO
+BUILD_OK: NO
+FREEZE_OK≠FIT_GO≠BUILD_OK
+
+Card: /home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/N20_FREEZE.md
+Also: /home/shawn/Projects/MisterPlex/Memory/lab/status/N20_FREEZE.md
+Report live: /tmp/misterplex-agent-D-n20-freeze.txt
+
+store 8ff71759d7b8ffd6634b1ab518b674b4 ≠ 7f3d52c0 ≠ 0b01ffa8
+reader 532b4dac538a5220b30b9a5ab5347abb
+qsf 667fd155fbce70642c2569cbca5db78b
+Plex.sv 0beb4f38f63cd43be05bff56b4cd9190
+sdram_n7 7ccc5777b0cb2d8d935f14a8dfabfb83
+arbiter NOT_RUN this worker (PRESENT, no n20 edit)
+
+Did not write FIT_GO_N20.parent. Did not Quartus/play/deploy. Did not replay 5bfd2e42.

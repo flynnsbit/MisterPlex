@@ -1,0 +1,190 @@
+VERDICT: WAIT. unique24=FAIL. PREFIX8_N6=UNKNOWN. DEPLOY=NO. ZERO Quartus. No lab ssh.
+
+R-host-n6-prep | host pin path ready; n6 Plex.rbf ABSENT — do not invent prefix
+UTC: 2026-08-14T05:34:40Z
+Worker: R-host-n6-prep
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Branch: lessons/true480-720p24
+HEAD: 0e49a68
+Report: /tmp/misterplex-agent-R-host-n6-prep.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-host-n6-prep.txt
+
+WAIT ≠ PIN_OK ≠ HOST_OK ≠ unique-24 ≠ T7 PASS ≠ UNIT_OK ≠ BUILD_OK ≠ DEPLOY_OK.
+Did NOT invent a prefix8. Did NOT edit present_bank.hpp.
+Did NOT rebuild ARM. Did NOT run make unit. Did NOT ssh lab.
+ZERO Quartus / fit / QSF / store. unique24=FAIL (not claimed).
+
+================================================================
+DELIVERABLE
+================================================================
+
+WAIT=YES
+N6_RBF=ABSENT
+N6_SLOT_DIR=ABSENT
+PREFIX8_N6=UNKNOWN (not invented)
+PIN_N6=NO
+EDIT_present_bank=NO
+ARM_REBUILD=NO
+DEPLOY=NO
+LAB_SSH=NO
+WORKER_QUARTUS=NONE
+unique24=FAIL
+
+L4_NOW (rbfPrefix8IsKnownL4):
+  968b828a cc9dbd74 0fc77c10 d1910177 e8960391 4554fdb3
+HAS_4554=YES
+HAS_NEW_N6_HASH=NO
+UNEXPECTED_PREFIX=NONE
+
+================================================================
+1) rbfPrefix8IsKnownL4 — 4554fdb3 present, no n6 hash
+================================================================
+
+File: host/libmisterplex/present_bank.hpp
+md5: 7eb63926696207050e1aabcb760c8d13  (unchanged vs R-host-4554)
+
+L110-112 comment:
+  4554fdb3 = slot720p24n5 BUILD_OK live-store PLXD-after-doorbell_ok
+             (md5 4554fdb392b1030ed523dfb082e3bad8, store 47e8bc88,
+             FIT_WRAPPER_RC=0 TIMING_OK).
+
+L114-120:
+  return pinEqualsIgnoreCase(prefix8, "968b828a") ||
+         pinEqualsIgnoreCase(prefix8, "cc9dbd74") ||
+         pinEqualsIgnoreCase(prefix8, "0fc77c10") ||
+         pinEqualsIgnoreCase(prefix8, "d1910177") ||
+         pinEqualsIgnoreCase(prefix8, "e8960391") ||
+         pinEqualsIgnoreCase(prefix8, "4554fdb3");
+
+No seventh pin. No invented n6 prefix. 07f54d9f stays out (True480).
+4f16350e stays reject. TIMING_FAIL set stays out.
+
+play_720p24_already_loaded.sh L30:
+  KNOWN_L4="4554fdb3 0fc77c10 d1910177 e8960391 cc9dbd74 968b828a"
+  (no n6 prefix)
+
+================================================================
+2) remote_out/slot720p24n6/Plex.rbf
+================================================================
+
+Canonical LOCAL_RBF (scripts/fit_slot720p24n6.sh L204):
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n6/Plex.rbf
+
+DIR:  ABSENT (remote_out has n5 as newest sibling; no slot720p24n6/)
+RBF:  ABSENT
+MD5:  NONE (refused to invent)
+
+Sibling n5 (style only; NOT n6):
+  remote_out/slot720p24n5/Plex.rbf
+  md5 4554fdb392b1030ed523dfb082e3bad8
+  named Plex.720p24.4554fdb3.rbf
+  summary exit_code=0 wall=384s
+
+Parent loop TICK=2026-08-14T05:34Z exclusive=LIVE slot720p24n6.
+fit_slot720p24n6.sh is running (other agent). This worker did not
+touch that exclusive. RBF has not been rsynced yet.
+
+Also checked and ABSENT:
+  <WT>/remote_out/slot720p24n6/Plex.rbf
+  <main>/remote_out/slot720p24n6/Plex.rbf
+
+================================================================
+3) Host pin path (prepared, not applied)
+================================================================
+
+When a REAL n6 md5 exists at LOCAL_RBF, follow-on worker (same style as
+R-host-4554) must:
+
+  prefix8=$(md5sum LOCAL_RBF | awk '{print substr($1,1,8)}')
+  full=$(md5sum LOCAL_RBF | awk '{print $1}')
+
+  REFUSE if prefix8 is banned (fit_slot720p24n6.sh L208):
+    a69a62f9 752fc1e2 cc9dbd74 0fc77c10 d1910177 e8960391 4554fdb3
+    8832824e 75da8bb1 4d6ee356 4deaf6cc dabdaeb0
+  REFUSE if prefix8 == 07f54d9f (true480).
+  REFUSE if prefix8 already in rbfPrefix8IsKnownL4 (would be n5/n4/…).
+  Do not invent. Do not pin TIMING_FAIL / HIER_REJECT.
+
+  Then pin as L4 (same style as 4554):
+    A) present_bank.hpp rbfPrefix8IsKnownL4
+       comment: PREFIX8 = slot720p24n6 BUILD_OK … (full md5, store md5,
+                FIT_WRAPPER_RC, TIMING_OK) — only if those stamps exist
+       add:     pinEqualsIgnoreCase(prefix8, "PREFIX8")
+    B) tests/unit/test_present_bank.cpp
+       copiedN6 prefix8=PREFIX8 rbfname=Plex → L4
+       namedN6  rbfname=Plex.720p24.PREFIX8 leftover 07f → L4 via name
+       upper PREFIX8 → L4
+       keep leftover 07f54d9f + PLXJ + rbfname=Plex → True480
+    C) scripts/play_720p24_already_loaded.sh
+       prepend PREFIX8 onto KNOWN_L4
+    D) ARM local rebuild DEPLOY=NO:
+       make arm-plexd   (or project ARM target)
+       do NOT scripts/deploy_misterplexd.sh
+       do NOT ssh 192.168.1.183
+
+This tick: none of A–D. present_bank.hpp left untouched.
+
+================================================================
+NOT DONE (by design)
+================================================================
+
+- no prefix invented
+- no present_bank.hpp edit
+- no test_present_bank.cpp edit
+- no play script KNOWN_L4 edit
+- no ARM rebuild
+- no make unit
+- no Quartus / second exclusive
+- no lab ssh / scp / deploy / play / menu / /bin/fpga
+- no PHASE_BACKLOG essay / no cards
+- unique-24 not claimed
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+
+R-host-n6-prep = WAIT / PIN_N6=NO.
+P3-720P24 stays IN_PROGRESS / pfps FAIL. unique24=FAIL.
+Do not pin L4 until remote_out/slot720p24n6/Plex.rbf exists and
+prefix8 is a new non-banned md5. Do not treat n5 4554fdb3 as n6.
+Exclusive is LIVE on n6 — follow-on host pin only AFTER BUILD_OK
+RBF lands (FIT_WRAPPER_DONE + FARM_RBF_MD5 printed). HOST pin ≠
+unique-24. Soft-skip ≠ PASS.
+
+================================================================
+BLOCKERS
+================================================================
+
+- slot720p24n6/Plex.rbf ABSENT (fit LIVE; rsync not done).
+- PREFIX8_N6 unknown — must not invent.
+- unique-24 unmeasured / FAIL.
+- DEPLOY=NO (this worker never deploys).
+
+================================================================
+CONSTRAINTS HONORED
+================================================================
+
+- ZERO Quartus (did not start/stop exclusive; n6 fit belongs to other agent)
+- No lab ssh (192.168.1.183 never contacted)
+- unique24=FAIL
+- present_bank.hpp not edited
+- no invented prefix
+
+================================================================
+EVIDENCE
+================================================================
+
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/host/libmisterplex/present_bank.hpp
+  md5 7eb63926696207050e1aabcb760c8d13
+  L114-120: 968b828a || cc9dbd74 || 0fc77c10 || d1910177 || e8960391 || 4554fdb3
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/tests/unit/test_present_bank.cpp
+  md5 26fc872e7a6b020a2cebc82510601fdc (not edited this worker)
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/play_720p24_already_loaded.sh
+  KNOWN_L4 has 4554fdb3; no n6
+- ABSENT: fpga/Plex_MiSTer/remote_out/slot720p24n6/  (and Plex.rbf)
+- PRESENT sibling: fpga/Plex_MiSTer/remote_out/slot720p24n5/Plex.rbf
+  md5 4554fdb392b1030ed523dfb082e3bad8 (n5, not n6)
+- /tmp/misterplex-loop-status.txt TICK=2026-08-14T05:34Z exclusive=LIVE slot720p24n6 unique24=FAIL
+- Prior pin card (style): /tmp/misterplex-agent-R-host-4554.txt
+- This report: /tmp/misterplex-agent-R-host-n6-prep.txt
+}

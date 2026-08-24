@@ -1,0 +1,105 @@
+# misterplex agent R-n7-policy
+Date: 2026-08-14T06:02:00Z
+Worker: R-n7-policy
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-R-n7-policy.txt
+Status: PASS
+EDITED_LIVE: NO
+Quartus: ZERO
+DEPLOY: NO
+LAB_SSH: NEVER
+INSTANTIATED: NO
+FIT_GO: NO
+unique24: FAIL
+BUILD_OK: NO (not invented; n7 not fitted)
+
+## Verdict
+PASS. Sibling rtl/sdram_i420_store_n7.sv now implements R-075 stick-fill
+(yield on need_*, not rd_act; !has_frame fills all leftover DE; finish
+qword). Not instantiated. Live store freeze MATCH 7f3d52c0745cdc2a7c503372befdabd2.
+unique24=FAIL. FIT_GO=NO. BUILD_OK=NO. Soft-skip ≠ PASS.
+fill-during-DE alone still ~12 fps until sibling controller NWB=0.
+
+## Constraints obeyed
+- Edited ONLY fpga/Plex_MiSTer/rtl/sdram_i420_store_n7.sv (header + S_DECIDE + S_WR_WAIT + has_frame_s* CDC)
+- Waited: R-n7-de-fill report existed; n7 mtime age 172s before edit
+- Did not edit live sdram_i420_store.sv (mtime still 2026-08-14 00:31:02)
+- Did not edit sdram.sv (md5 28ccb6e4854a003e7fd070a2de28ec56)
+- Did not touch files.qip / present_core / Plex.sv / any QSF / PHASE_BACKLOG / Memory/lab/status
+- Did not add n7 to files.qip or instantiate
+- ZERO Quartus / docker / fit_slot720p24n7 / /bin/fpga
+- Did not play, deploy, or ssh the lab FPGA
+- Never PLEX_CLK_SYS_24
+- Module name remains sdram_i420_store_n7
+- unique24 not claimed; BUILD_OK not invented
+
+## Evidence
+N7_BEFORE=aceb8e7fe35d5d62d96d827578b376dd  (R-n7-de-fill LIVE)
+N7_AFTER =6e915946859c3d30a1cbaea3f739cddf
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store_n7.sv
+  module sdram_i420_store_n7  lines=1431
+LIVE=7f3d52c0745cdc2a7c503372befdabd2 MATCH freeze
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime=2026-08-14 00:31:02.323200676 -0500
+SDRAM=28ccb6e4854a003e7fd070a2de28ec56 MATCH freeze
+QIP=99b289f287eaabfd68e6c39b58c36633 UNCHANGED (live + m2 only; N7_IN_QIP=NO)
+PRES=3c534e47b53273b368a6d4b07f8f0789 UNCHANGED (m2 L642 + live L702; N7_IN_PRESENT=NO)
+N7_IN_QSF=NO  N7_IN_PLEX_SV=NO  PLEX_CLK_SYS_24_IN_N7=NO
+
+wr_stick_addr sites (unchanged):
+  reset     <= STICK_BASE
+  kick      <= stick_base(dest_kick_s2)   // dest_kick <= bank_fill
+  increment <= wr_stick_addr + 1
+  NEVER     stick_base(bank_disp*)
+prefetch pref_bank <= bank_disp_s2 only
+
+has_frame_s1/s2: two-flop clk_pix has_frame → clk_sdram (house CDC).
+S_DECIDE uses has_frame_s2 (same meaning as R-075 has_frame).
+
+### S_DECIDE (n7 after R-075)
+  fill_ready = fill_expect && (have_qw || !dma_fifo_empty) && wr_left!=0
+  if (fill_ready && !(has_frame_s2 && (need_y_cur || need_c_cur)))
+      → FILL (S_WR_ISSUE)   // DE window-hit, blank leftover, or !has_frame
+  else if (has_frame_s2 && need_y_cur) → PREFETCH Y  (pref_bank=bank_disp)
+  else if (has_frame_s2 && need_c_cur) → PREFETCH C
+  else → S_IDLE
+  !has_frame_s2: never start prefetch; FILL all leftover DE when fill_ready
+  leftover prefetch only when has_frame && need_* && !fill (or scan-wins)
+
+Was (R-n7-de-fill): rd_act_s2 ? (need_y → need_c → fill-on-HIT → IDLE)
+  : (blank fill → leftover prefetch). After has_frame, need_y=1 all DE so
+  DE fill never fired. !has_frame also prefetched empty bank_disp.
+
+### S_WR_WAIT (n7 after R-075)
+  wr_phase==3 → have_qw=0; maybe fill_done; S_IDLE
+    (next S_DECIDE yields to prefetch if need_y_r || need_c_r)
+  else → load next 16-bit stick word; ALWAYS S_WR_ISSUE
+    (do NOT abort mid-qword on rd_act_s2)
+Was: mid-qword if (rd_act_s2) S_IDLE else S_WR_ISSUE.
+
+rd_act_s1/s2 still sampled (live CDC parity); no longer a fill/yield gate.
+
+## Next (parent)
+- Do NOT instantiate n7. Do NOT start slot720p24n7 / Quartus. FIT_GO=NO.
+- Exclusive stay FREE. Live 7f3d52c0 stay FROZEN.
+- ONE next that can 25x: sibling controller NWB=0 (BL=4 / open-row) —
+  fill-during-DE alone is still cap 12.8x / ~12 fps (R-075-stick).
+- unique24 stays FAIL (last honest n6 a0ae0b45 pfps=0.75). Do not invent pfps.
+
+## Blockers
+FIT_GO=NO (parent). unique24 FAIL. BUILD_OK=NO.
+25x still blocked on burst/page stick client (not this store-only policy).
+Do not treat this PASS as product PASS.
+
+## Backlog status suggestion (not written)
+R-n7-policy DONE (SIBLING_POLICY_OK). P3-720P24 unique24 stays FAIL.
+Live store 7f3d52c0 LOCK. files.qip 99b289f2 unchanged.
+Next named RTL = sibling sdram NWB=0, still not qip, still FIT_GO=NO.
+
+## Evidence paths
+/tmp/misterplex-agent-R-n7-policy.txt
+/tmp/misterplex-agent-R-n7-de-fill.txt
+/tmp/misterplex-agent-R-075-stick.txt
+/tmp/misterplex-agent-L-n6-play.txt
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store_n7.sv
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv

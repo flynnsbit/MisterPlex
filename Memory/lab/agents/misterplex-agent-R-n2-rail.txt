@@ -1,0 +1,141 @@
+VERDICT: RAIL_MAGIC_J=PASS. PLEX_CLK_SYS_24=commented. product QSF bak MATCH b049c944. FIT_GO=NO. FIT_RAN=NO. BUILD_OK=NO. unique-24 NOT claimed.
+
+RAIL_MAGIC_J=PASS
+PLEX_CLK_SYS_24=commented
+PRODUCT_QSF_BAK_MATCH=YES (b049c94413d02a1a63dfd03b7234d7e1)
+OVERLAY_DRIFT=NO
+FIT_GO=NO
+FIT_RAN=NO
+BUILD_OK=NO
+unique24=NOT_CLAIMED
+WRAPPER_EDIT=NO (abort already says "PLXJ not landed"; no "wait for R-plxj-store")
+Quartus: ZERO
+DEPLOY: NO
+LAB_SSH: NO
+CARDS: NO
+
+================================================================
+Status
+================================================================
+
+Worker: R-n2-rail
+Tree:   /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-R-n2-rail.txt
+UTC:    2026-08-14T02:33Z
+
+Confirmed live I420 store now has PLXJ (MAGIC_J / 32'h504C_584A). Simulated
+the n2 MAGIC_J grep rail only. Did NOT execute scripts/fit_slot720p24n2.sh
+or scripts/build_rbf_remote.sh. Zero Quartus. No overlay. No deploy. No lab
+ssh. No cards. No edits (files.qip / present_core.sv / Plex.qsf /
+Plex_720p24m2.qsf / sdram_i420_store_m2.sv / sdram_i420_ddr_issue.sv /
+Plex_clk_pix_m2.sdc / fit_slot720p24n2.sh all untouched by this worker).
+
+Soft-skip ≠ PASS. Wrapper-ready ≠ BUILD_OK ≠ unique-24.
+RAIL_MAGIC_J=PASS ≠ FIT_GO ≠ BUILD_OK.
+
+================================================================
+1) Live store MAGIC_J / PLXJ PRESENT
+================================================================
+
+File: fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+md5:  3c629f4ba4ebb0373fe741c5f28b0a9a  (prefix 3c629f4b MATCH expect)
+
+grep MAGIC_J|504C584A|504C_584A → PRESENT (2 hits):
+  L109: localparam [31:0] MAGIC_J = 32'h504C_584A; // PLXJ source-aspect ACK
+  L644: wire [63:0] mailbox_j_din = {source_aspect_safe, MAGIC_J};
+
+Also (n2 wrapper second rail, not claimed as unique-24):
+  L98:  localparam [31:0] ASPECT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h130;
+
+================================================================
+2) Abort rail + simulated check only
+================================================================
+
+scripts/fit_slot720p24n2.sh MAGIC_J rail is L87–90 (not ~63–64).
+L62–63 is the PLEX_CLK_SYS_24 abort (different rail).
+
+  # Parent launches only after live store has PLXJ +0x130.
+  if ! grep -qE 'MAGIC_J|504C584A|504C_584A' "$STORE"; then
+    abort "sdram_i420_store.sv missing MAGIC_J / 504C584A (PLXJ not landed)"
+  fi
+
+Simulate (STORE=rtl/sdram_i420_store.sv; wrapper NOT run):
+  grep -qE 'MAGIC_J|504C584A|504C_584A' "$STORE"; echo RAIL_RC=$?
+  RAIL_RC=0
+
+Stale abort "wait for R-plxj-store": ABSENT. Prefer no edit — left file alone.
+
+Abort-if-LIVE remains L95–134 (local quartus_* / ^mplex-fit + remote same +
+slot720p24m2/n/n2 .build-lock; ssh fail → ABORT). Not exercised (wrapper not run).
+
+================================================================
+3) PLEX_CLK_SYS_24 still commented in Plex_720p24.qsf
+================================================================
+
+fpga/Plex_MiSTer/Plex_720p24.qsf (NOT edited):
+  L86:  # slot720p24 (PLEX_CLK_SYS_24) TIMING_FAIL: ...
+  L107: #set_global_assignment -name VERILOG_MACRO "PLEX_CLK_SYS_24=1"
+
+No enabled VERILOG_MACRO "PLEX_CLK_SYS_24=1". Never PLEX_CLK_SYS_24 this worker.
+
+================================================================
+4) Product Plex.qsf vs m2 bak — MATCH, no restore
+================================================================
+
+  Plex.qsf                                      b049c94413d02a1a63dfd03b7234d7e1
+  /tmp/Plex.qsf.product-480p.slot720p24m2.bak   b049c94413d02a1a63dfd03b7234d7e1
+  cmp RC=0
+  expect prefix b049c944 MATCH
+  OVERLAY_DRIFT=NO (did not restore; X-m2 trap already restored)
+
+n2 bak /tmp/Plex.qsf.product-480p.slot720p24n2.bak ABSENT (wrapper never ran).
+
+================================================================
+5) bash -n
+================================================================
+
+  bash -n scripts/fit_slot720p24n2.sh
+  BASH_N_RC=0
+
+================================================================
+6) FIT / exclusive / unique-24
+================================================================
+
+FIT_RAN=NO
+BUILD_OK=NO
+/tmp/plex_quartus_slot720p24n2.log ABSENT (this worker did not start n2)
+
+Assignment said exclusive slot720p24m2 LIVE. Observed at 02:33Z:
+  local quartus_*=none; local mplex-fit docker=none
+  m2 log TERMINAL FIT_WRAPPER_DONE (FIT_WRAPPER_RC=1 name false-reject;
+    FARM_RBF_MD5=4f16350e NOT deployed; product QSF restored)
+  parent loop /tmp/misterplex-loop-status.txt TICK=2026-08-14T02:32Z:
+    exclusive=FREE launching X-n2 — that is PARENT, not this worker
+  This worker FIT_GO=NO even if parent launches X-n2 separately.
+
+m2 in-flight used SDRAM_I420_STORE_M2 (hier sdram_i420_store MISSING name
+false-reject). m2 RBF 4f16350e does NOT include post-rsync live-store PLXJ.
+
+unique-24 NOT claimed. loop unique24=FAIL. Soft-skip ≠ PASS.
+
+================================================================
+Backlog suggestion
+================================================================
+
+R-n2-rail: DONE RAIL_MAGIC_J=PASS (live store md5 3c629f4b has MAGIC_J /
+504C_584A + doorbell+0x130). FIT_GO=NO this worker.
+
+After X-m2 TERMINAL, parent may FIT_GO n2 only if live store (PLXJ) is the
+next intentional RBF. m2 in-flight does not include post-rsync live-store
+PLXJ. Wrapper-ready ≠ BUILD_OK ≠ unique-24. Do not deploy 4f16350e as
+Plex.rbf. Ban a69a62f9 / 752fc1e2 / cc9dbd74 (n without PLXJ).
+
+================================================================
+Blockers
+================================================================
+
+None for this rail check. Sole exclusive still parent-owned: do not start
+a second Quartus from this worker.
+
+Evidence: this report; store md5 3c629f4b; Plex.qsf==m2 bak b049c944;
+Plex_720p24.qsf L107 commented SYS_24; bash -n RC=0; n2 fit log ABSENT.

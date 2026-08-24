@@ -1,0 +1,64 @@
+# misterplex agent R-n7-burst
+Date: 2026-08-14T01:03:13-05:00
+Status: SKETCH_OK — sibling rtl/sdram_n7.sv created, not instantiated, FIT_GO=NO
+unique24=FAIL (unchanged; no play, no pfps claim)
+
+## Constraints obeyed
+- NEW file only: fpga/Plex_MiSTer/rtl/sdram_n7.sv (module sdram_n7).
+- Did NOT edit live sdram.sv, live store, store_n7, files.qip, present_core.sv, Plex.sv, any QSF, PHASE_BACKLOG, Memory/lab/status.
+- Did NOT add sdram_n7 to files.qip. Did NOT instantiate. Did NOT create fit_slot720p24n7.sh.
+- Did NOT start Quartus / docker / /bin/fpga. No ssh. No play.
+- Never PLEX_CLK_SYS_24. Did not invent pfps. unique24=FAIL. FIT_GO=NO.
+- Pre-existing dirty tree (files.qip / present_core / Plex.sv / PHASE_BACKLOG) left untouched; none of those diffs mention sdram_n7.
+
+## Evidence (md5, NWB, burst FSM, handshake note, not in qip)
+
+### md5
+- live sdram.sv: 28ccb6e4854a003e7fd070a2de28ec56  (FROZEN prefix 28ccb6e4)
+- live store:    7f3d52c0745cdc2a7c503372befdabd2  (FROZEN prefix 7f3d52c0)
+- new sdram_n7:  e8ce90c21abf08acb8b2d10c01cdd491
+- store_n7:      6e915946859c3d30a1cbaea3f739cddf  (not edited this worker)
+
+### NWB / MODE
+- live:  NO_WRITE_BURST=1'b1
+- n7:    NO_WRITE_BURST=1'b0
+- both:  BURST_CODE=3'b010 (BL=4), CL3 `ifdef SDRAM_CL3` kept, MODE={000, NWB, OP, CL, AT, BURST}
+
+### Burst FSM
+- Ports identical to sdram.sv (sel/addr/din/wr/bs/rd/ready + unused cp*).
+- ST_IDLE request still one ACT (cas_addr A10=1, same packing as live).
+- ST_CAS write: CMD_WRITE + DQ=saved_data (beat 0), ready=1, wr_beats_left=3 → ST_WR_BURST (5'd12).
+- ST_WR_BURST x3: CMD_NOP, DQ=din if sel&&wr else last beat (no stall-and-replay). ready=1 on first two, ready=0 on last.
+- After beat 3: ST_POST_CAS for T_RP_CYCLES only (not BURST_LENGTH+tRP). Auto-pre was requested on WRITE via A10=1; takes effect after last beat. No separate PRE. Open-row TODO documented in file header.
+- Reads: single-word client unchanged (first beat only). MRS BL=4 already applied to reads on live; chip still bursts 4, only beat 0 captured. Cheaper than a read-burst client; store prefetch still 4 single-word issues.
+
+### Handshake note (for later n7 store — R-n7-policy owns that sibling)
+One qword = 4 x 16-bit. Start addr[2:1]==2'b00 (sequential BL=4 wrap box).
+1. ST_IDLE ready=1: issue beat0 (sel+wr+addr+din) exactly as today's S_WR_ISSUE.
+2. ready=0 during ACT+tRCD. Do not start a new ACT.
+3. WRITE cycle: ready=1 for 3 consecutive cycles (beat strobe). Registered store (default-clear sel/wr, pulse on ready) sees ready on cycle K and must present sel=1, wr=1, din=next beat on cycle K+1. Controller samples din on the 3 ST_WR_BURST cycles. addr on beats 1..3 ignored.
+4. After beat 3: ready=0 for tRP, then ST_IDLE.
+Live / current store_n7 still one word per ready — must NOT be wired to sdram_n7 (it would treat mid-burst ready as a new transaction).
+
+Cycle tax (tRCD=2, tRP=2, no invented pfps): ACT + tRCD + WRITE + 3 beats + tRP ≈ 9 cyc / 4 words vs live ≈ 11 cyc / 1 word.
+
+### Not in qip / not instantiated
+- files.qip lists only rtl/sdram.sv (line 31). No sdram_n7.
+- present_core.sv: no sdram_n7.
+- repo refs to sdram_n7: only the new file itself.
+- no fit_slot720p24n7.sh, no QSF mention.
+
+## Verdict
+SKETCH_OK. Sibling controller exists with NWB=0 and a 4-beat write path. Not in the fit. Live 28ccb6e4 / 7f3d52c0 frozen. unique24=FAIL. FIT_GO=NO. BUILD_OK=NO.
+
+## Next
+- R-n7-policy: n7 store must drive 4 beats per qword on the handshake above (do not stall-and-replay).
+- Parent: do not qip/instantiate/fit until store+controller siblings are paired. FIT_GO stays NO.
+- Optional later: open-row (drop A10, page-hit ACT skip). Not this sketch.
+
+## Blockers
+- unique24 still FAIL (n6 0.75 / limiter still live single-word CL3). This file does not change that until instantiated with a burst-capable store.
+- Current store_n7 is still a single-word client. Pairing without a store handshake change would be wrong.
+- No unit bench in this worker.
+
+Backlog suggestion: n7 burst controller sketched (rtl/sdram_n7.sv), not wired; leave IN_PROGRESS/open until store sibling + parent FIT_GO.

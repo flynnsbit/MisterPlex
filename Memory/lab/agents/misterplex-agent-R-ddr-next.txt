@@ -1,0 +1,88 @@
+# misterplex agent R-ddr-next
+Worker: R-ddr-next
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+UTC: 2026-08-14T02:02Z
+Quartus: ZERO
+
+## Status
+PASS (helper SV syntax + registered outputs + qip untouched)
+BUILD_OK: NO
+TIMING_OK: NO
+unique-24: NOT claimed
+WIRED: NO (not instantiated; not in files.qip)
+SOFT_SKIP ≠ PASS
+
+## Constraints
+- Exclusive slot720p24m LIVE. ZERO Quartus started by this worker.
+- Did not edit live compile files: Plex.sv, Plex.qsf, Plex_720p24.qsf,
+  pll_0002.v, sdram_i420_store.sv, present_core.sv, Plex_clk_pix.sdc,
+  files.qip.
+- Did not add rtl/sdram_i420_ddr_issue.sv to files.qip.
+- sdram_i420_store_m2.sv exists (R-sdram-next); not rewritten.
+  md5 fe5be949acb0598ecec2f35eb6f9d37a == sdram_i420_store.sv.
+- Never PLEX_CLK_SYS_24. No PHASE_BACKLOG novels / status cards.
+
+## Evidence
+New helper:
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_ddr_issue.sv
+  md5 87472dac189459c5f81f80a6e75004f1
+  module sdram_i420_ddr_issue
+  defaults FRAME_W=1280 FRAME_H=720 FRAME_QWORDS=172800 QWORD_W=18
+  (I420 1280x720: Y=921600 C=230400 bytes=1382400 qwords=172800)
+
+Ports (match store clk_ddr issue combo):
+  in:  clk_ddr, reset, hps_base[28:0], dma_qword[QWORD_W-1:0],
+       qwords_left[QWORD_W-1:0], burst_want[7:0],
+       db_token_new, spi_edge, dma_busy
+  out reg: dma_addr_r[28:0], burst_cap_r[QWORD_W-1:0],
+           kick_now_r, qwords_left_r[QWORD_W-1:0]
+
+Registered arithmetic (posedge clk_ddr only; no combo add net):
+  dma_addr_r    <= hps_base + 29'(dma_qword);
+  burst_cap_r   <= min(qwords_left, QWORD_W'(burst_want));
+  kick_now_r    <= (db_token_new || spi_edge) && !dma_busy;
+  qwords_left_r <= qwords_left;
+  No combo add into DDRAM_ADDR in the adder cycle. Helper does not
+  drive DDRAM_* (parent wires later).
+
+Store source of the combo (untouched):
+  sdram_i420_store.sv L627-L633 / D_BURST_ISS L839
+    qwords_left = FRAME_QWORDS_CNT - dma_qword
+    burst_cap   = min(qwords_left, burst_want)
+    dma_addr    = hps_base + 29'(dma_qword)
+    kick_now    = (db_token_new || spi_edge_ddr) && !dma_busy
+
+SV syntax (not Quartus A&S, not BUILD_OK):
+  verilator --lint-only -Wall -Wno-DECLFILENAME rc=0
+  iverilog -g2012 -t null rc=0
+  check_quartus_sv_subset.check_file errors=0 (static only; no quartus_map)
+  log: /tmp/misterplex-R-ddr-next-syntax.log
+
+qip untouched:
+  files.qip md5 8c99e4f8809442e99ca10efb985f8540 (same as worker start)
+  mtime 2026-08-13 20:54 (helper 21:01)
+  grep sdram_i420_ddr_issue files.qip → NONE
+
+Not instantiated:
+  repo grep sdram_i420_ddr_issue → helper file only
+  present_core.sv / Plex.sv not edited by this worker
+
+## Verdict
+PASS. Standalone clk_ddr issue helper landed, SV-syntax clean,
+outputs registered, files.qip untouched. BUILD_OK=NO. TIMING_OK=NO.
+k4 −2.04 class is NOT closed (helper not in this fit). Soft-skip ≠ PASS.
+
+## Next
+Parent may wire helper in a post-m exclusive only:
+  add rtl/sdram_i420_ddr_issue.sv to files.qip
+  instantiate from sdram_i420_store clk_ddr (not present_core / Plex.sv)
+  replace combo dma_addr / burst_cap / kick_now with *_r
+Do not add to the LIVE slot720p24m compile. Do not start Quartus here.
+
+## Backlog suggestion
+PATH_SDRAM clk_ddr next-slot: helper READY (syntax). Not in fit.
+WIRE after m frees. 3l2 / unique-24 unchanged.
+
+## Blockers
+- Exclusive LIVE — cannot prove Quartus A&S or slack on this file.
+- Helper unused until parent wires post-m. Syntax PASS ≠ TIMING_OK.

@@ -1,0 +1,101 @@
+WORKER=D-plxf-m1-next
+UTC=2026-08-14T21:06Z
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report=/tmp/misterplex-agent-D-plxf-m1-next.txt
+Card=/home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/PLXF_M1_NEXT_PRODUCT.md
+Permanent=/home/shawn/Projects/MisterPlex/Memory/lab/status/PLXF_M1_NEXT_PRODUCT.md
+GOAL=Named next product after PRODUCT_PLXF_M1 play FAIL; only if RCA names a real design
+Quartus=NO Play=NO /bin/fpga=NO live-RTL-edit=NO n29=NO fsm-patch=NO
+
+======== VERDICT ========
+NAME=UNNAMED
+HOLD=YES
+CARD_OK=HOLD
+unique24=FAIL
+APPLY_LIVE=NO
+FIT_GO=NO
+CARD_OK ≠ unique-24 ≠ FIT_GO
+12.5 ≠ 23.9 (do not invent 23.9)
+F@118 not loosened
+
+RCA sibling R-plxf-m1-rca ABSENT after poll 20:59Z-21:06Z
+  /tmp/misterplex-agent-R-plxf-m1-rca.txt ABSENT
+  Memory/lab/status/PLXF_M1_DID_NOT_MOVE_F.md ABSENT
+Paper draft from RTL+peeks is not a named exclusive.
+No honest product name. HOLD.
+
+======== CLOSED PLAY (do not replay) ========
+PRODUCT_PLXF_M1 RBF=f02aa88b2ea658bdaddc85759bc09bc2
+store=aa3bce599616559a779e93814faf8863
+writer=16be1515ab0cb75ec952c561225f0dc0
+arbiter=50bf5754ef117ace19d38174eaf29f89
+u_plxf PRESENT 37 ALM
+pfps=12.5 FAIL
+hw_fps=NONE FAIL
+drops=0 PASS
+presented=189 PASS
+MAGIC_F@+0x118=NO  PEEK_PLXF=0000000000000000
+MAGIC_F@+0x110=YES PEEK_PLXM=46584c5002000000
+CLASS=PRODUCT_PLXF_M1_DID_NOT_MOVE_F
+vs 849bc600 12.8 -0.3 WASH
+cea3 347bb7ea 13.2 BEST stick
+j 968b828a 14.1 BEST overall
+Lab f02aa88b SKIP_RESTORE. Bak 07f54d9f KEEP.
+
+======== PAPER LEFTOVER (not a NAME) ========
+Live RTL is exclusive m1 (DDRAM_*=fsm_*; no fw_issuing; FRAME_MAILBOX_W never issued).
+Writer ADDR always PLXF_W=(DOORBELL+0x118)[31:3]. No 0x110 token.
++0x118 EMPTY = m1 WE never committed (starve), not a new ADDR map.
++0x110 is NOT proof m1 wrote PLXM:
+  wipe_l4 TARGETS=PLXK/PLXF/PLXD/PLXJ only — PLXM +0x110 NOT wiped.
+  CEA 347bb7ea registered iss_* FRAME committed F at +0x110.
+  Fingerprint 46584c5002000000 is leftover, not heartbeat (mailbox_f_din XOR).
+Review leftover #7 (registered m1_busy_r false-ack) = residual, not proven exclusive.
+
+======== FORBIDDEN ========
+PRODUCT_PLXF_FSM_ISSUE / sdram_i420_store.plxf-fsm.patch
+  iss_* FRAME = CEA 347bb7ea same peek F@+0x110. NOT applied. Do not apply.
+n29 / n17-n28 / PHYS+8 / QSF retime / loosen +0x110
+  L57. Wrong file ddr_frame_store. Host +0x118 abort is CORRECT.
+replay f02aa88b 849bc600 347bb7ea
+  each ONE play CLOSED unique24=FAIL.
+
+======== ORTHOGONAL (already named; not this NAME) ========
+P4_HDMI_24_ON_60 PHY_PASS=NO (24 Hz core on 720p60 HDMI)
+PIXELS_IN_RAM_GLASS_BLACK parent 21:05Z next=scanout/mix
+  pixels at 0x30180000; glass black. Not a mailbox exclusive.
+This worker does not name a scanout product.
+
+======== DID NOT ========
+Quartus / fit_slot / play / /bin/fpga / restore 07f54d9f
+edit store/writer/arbiter/Plex.sv / apply plxf-fsm.patch
+n29 / stamp FIT_GO / invent 23.9 / loosen F@118
+
+======== EVIDENCE ========
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/PLXF_M1_NEXT_PRODUCT.md
+/home/shawn/Projects/MisterPlex/Memory/lab/status/PLXF_M1_NEXT_PRODUCT.md
+/tmp/misterplex-agent-P-plxf-m1-play.txt
+/tmp/pfps-720p24-plxf-m1.txt
+/tmp/misterplex-agent-E-eyes-m1.txt
+/tmp/misterplex-agent-M-plxf-m1-fitmon.txt
+/tmp/misterplex-loop-status.txt (21:05Z next=scanout/mix)
+fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+fpga/Plex_MiSTer/rtl/sdram_i420_plxf_writer.sv
+fpga/Plex_MiSTer/rtl/ddr_bus_arbiter.sv
+fpga/Plex_MiSTer/Plex.sv
+scripts/wipe_l4_leftover_mbox.sh (TARGETS omit PLXM)
+
+======== BACKLOG SUGGESTION ========
+P3-720P24 IN_PROGRESS / unique24 FAIL
+PRODUCT_PLXF_M1 ONE play CLOSED f02aa88b pfps=12.5 F@118=NO
+Next product NAME=UNNAMED HOLD
+APPLY_LIVE=NO FIT_GO=NO
+Wait for R-plxf-m1-rca before naming.
+NOT n29. NOT plxf-fsm.patch. NOT replay f02aa88b/849bc600/347bb7ea.
+Scanout/mix is P4 leftover (already carded), not a new F exclusive.
+
+======== BLOCKERS ========
+RCA R-plxf-m1-rca ABSENT — cannot name a real design.
+unique24 leftover: pfps=12.5 / hw_fps=NONE / F@118 EMPTY (2/5).
+HOLD until RCA names a design. FIT_GO parked.
+)

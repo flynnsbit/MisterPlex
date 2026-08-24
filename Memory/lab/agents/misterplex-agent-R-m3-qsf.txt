@@ -1,0 +1,160 @@
+# misterplex agent R-m3-qsf
+WORKER: R-m3-qsf
+ROLE: sibling overlay QSF + dry-run wrapper for NEXT exclusive (vblank-only HPS DDR DMA / m3)
+UTC: 2026-08-14T05:02Z
+REPO_SOT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+HEAD: 0e49a68
+Report: /tmp/misterplex-agent-R-m3-qsf.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-m3-qsf.txt
+
+================================================================
+VERDICT
+================================================================
+QSF_OK
+unique24=FAIL
+FIT_GO=NO
+FIT_GO_M3=NO
+BUILD_OK=NO
+Quartus=ZERO
+DEPLOY=NO
+FARM_TOUCHED=NO
+OVERLAY=NO
+INSTANTIATE_M3=NO
+files.qip=UNCHANGED
+exclusive=FREE (not taken)
+
+QSF exists ≠ overlay ≠ farm fit ≠ BUILD_OK ≠ unique-24.
+Soft-skip ≠ PASS.
+Did not start Quartus. Did not overlay product Plex.qsf.
+Did not add m3 to files.qip / present_core / live Plex.qsf.
+Did not edit sdram_i420_store.sv (freeze still 47e8bc88).
+Never PLEX_CLK_SYS_24. No lab ssh. No cards. No PHASE_BACKLOG novels.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+- ZERO Quartus. Exclusive FREE — not taken. No docker fit. No farm fit_slot.
+- Did not edit live sdram_i420_store.sv (freeze 47e8bc88bd3e2b539f85424da30f065e).
+- Did not add m3 to files.qip / present_core.sv / live Plex.qsf.
+- Never PLEX_CLK_SYS_24. Never raised product clk_sys.
+- No lab ssh. No cards. No PHASE_BACKLOG novels.
+- unique-24 NOT claimed. BUILD_OK=NO.
+
+================================================================
+1) ISOLATION (m3 siblings exist; not live)
+================================================================
+rtl/sdram_i420_store_m3.sv         EXISTS  md5 ef79731d21d638c1f89393b80dfc285d
+rtl/sdram_i420_ddr_issue_m3.sv     EXISTS  md5 261853cd849587d609597462bf4942f7
+
+files.qip            ABSENT m3  md5 99b289f287eaabfd68e6c39b58c36633 (unchanged this tick)
+                     lines 25-27 still:
+                       rtl/sdram_i420_store.sv
+                       rtl/sdram_i420_store_m2.sv
+                       rtl/sdram_i420_ddr_issue.sv
+present_core.sv      ABSENT m3  md5 3c534e47b53273b368a6d4b07f8f0789 (unchanged this tick)
+                     L641-702: `ifdef SDRAM_I420_STORE_M2 sdram_i420_store_m2
+                               `else sdram_i420_store
+live Plex.qsf        ABSENT m3  md5 b049c94413d02a1a63dfd03b7234d7e1 (product; not overlaid)
+
+sdram_i420_store.sv  freeze 47e8bc88bd3e2b539f85424da30f065e (not edited)
+
+================================================================
+2) SIBLING OVERLAY QSF
+================================================================
+path: /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex_720p24m3.qsf
+md5:  f33b3787ace6c88b9a5d4f261fa5d039
+
+Header: DO NOT SOURCE until parent FIT_GO after L-n5-menu stay-up AND
+PATH_SDRAM unique still ~15.
+
+Live recipe (uncommented; n2/n5 overlay pattern):
+  SDRAM_I420_STORE=1
+  NO SDRAM_I420_STORE_M2
+  SDC_FILE Plex_clk_pix.sdc
+  PRESENT_CLK_PIX_24=1
+  PRODUCT_NO_STUB=1
+  PLEX_PRESENT_720P_L4=1
+  FRAME_W=1280 FRAME_H=720 FRAME_LINES_8=1
+  PLEX_STORE_YUV_PIPE=1 FABRIC_DIRECT_READER=1 PRESENT_CLK_PIX_PLL=1
+  PLEX_CLK_SYS_24 commented (not enabled)
+  SDRAM_CLK_144 commented (not enabled)
+  Legal PLL: 100 MHz SDRAM + pix 24 → pll_0002 23.684210 MHz
+  clk_sys stays 20 MHz
+
+Commented only (not live):
+  # SDRAM_I420_STORE_M3=1
+  # SYSTEMVERILOG_FILE rtl/sdram_i420_store_m3.sv
+  # SYSTEMVERILOG_FILE rtl/sdram_i420_ddr_issue_m3.sv
+
+Tonight this overlay still compiles LIVE store (present_core else).
+Parent FIT_GO later must land present_core STORE_M3 + qip-add m3
+before a real m3 exclusive. Do not source tonight.
+
+================================================================
+3) WRAPPER (dry-run / refuse)
+================================================================
+path: /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/fit_slot720p24m3.sh
+md5:  7e6887c87e0c77624ef0b5de505b1c3a
+slot: slot720p24m3
+default: refuse unless FIT_GO_M3=YES
+
+dry-run (this tick, FIT_GO_M3 unset):
+  cmd: scripts/fit_slot720p24m3.sh
+  rc:  2 (refuse)
+  log: /tmp/plex_fit_slot720p24m3_dryrun.log
+  plex_quartus_slot720p24m3.log ABSENT
+  overlay bak ABSENT
+  farm not touched (no ssh)
+
+FIT_GO path (not run): n5-style overlay+farm but still aborts unless
+present_core and files.qip already name m3 (will not waste exclusive
+on another live-store n5 clone). Parent will not set FIT_GO_M3 tonight.
+
+================================================================
+4) EXCLUSIVE / GATES
+================================================================
+local quartus/docker mplex-fit: none (FREE)
+this worker did not pgrep-kill, did not docker, did not farm ssh
+unique24=FAIL  last_honest=14.1 (j 968b828a T7b)  PATH_SDRAM pfps=NONE
+L-n5-menu stay-up: UNMEASURED (not this worker; no lab)
+n5 RBF 4554fdb3 BUILD_OK is prior; unique-24 still FAIL
+
+================================================================
+EVIDENCE
+================================================================
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex_720p24m3.qsf
+    md5 f33b3787ace6c88b9a5d4f261fa5d039
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/fit_slot720p24m3.sh
+    md5 7e6887c87e0c77624ef0b5de505b1c3a
+  /tmp/plex_fit_slot720p24m3_dryrun.log
+  /tmp/misterplex-loop-status.txt (unique24=FAIL exclusive=FREE)
+  /tmp/misterplex-agent-L-n5-menu.txt (STAY_UP=UNMEASURED this harvest)
+
+UNCHANGED this tick:
+  files.qip                         99b289f287eaabfd68e6c39b58c36633
+  rtl/present_core.sv               3c534e47b53273b368a6d4b07f8f0789
+  rtl/sdram_i420_store.sv           47e8bc88bd3e2b539f85424da30f065e
+  Plex.qsf (product)                b049c94413d02a1a63dfd03b7234d7e1
+  rtl/sdram_i420_store_m3.sv        ef79731d21d638c1f89393b80dfc285d
+  rtl/sdram_i420_ddr_issue_m3.sv    261853cd849587d609597462bf4942f7
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+P3-720P24: keep IN_PROGRESS / unique-24 FAIL. Do not mark unique-24.
+Do not start slot720p24m3 exclusive tonight.
+Next exclusive (m3 vblank HPS DDR DMA) only IF L-n5-menu STAY_UP=YES
+AND PATH_SDRAM unique still ~15 AND parent FIT_GO_M3=YES
+AND present_core+qip instantiate m3.
+QSF_OK ≠ FIT_GO ≠ BUILD_OK.
+
+================================================================
+BLOCKERS
+================================================================
+- L-n5-menu stay-up UNMEASURED (parent lab; this worker no ssh).
+- unique24=FAIL (last honest 14.1). unique still ~15 not reconfirmed here.
+- present_core / files.qip do not instantiate m3 (intentional isolation).
+- FIT_GO_M3 unset. Wrapper refuse rc=2.
+- BUILD_OK=NO. unique-24 NOT claimed.
+
+QSF_OK. Exit.

@@ -1,0 +1,349 @@
+# misterplex agent R-nofab-hv
+WORKER=R-nofab-hv
+UTC=2026-08-14T04:16Z
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-R-nofab-hv.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-nofab-hv.txt
+GOAL=harvest L-n3-nofab from loop 04:07Z: SSH timeout after /bin/fpga named d191; SoC reboot ~27s; play never started. Plex.rbf stayed 07f54d9f.
+ZERO_QUARTUS=YES
+NO_BIN_FPGA=YES
+NO_LOAD_CORE=YES
+NO_RUN_720P24=YES
+NO_PLAY=YES
+NO_MENU=YES
+NAMED_LOAD_CORE=BAN
+SECOND_N3_FPGA=BAN
+DID_NOT_INVENT_PFPS=YES
+QUOTE_ONLY_EXISTING=YES
+
+================================================================
+VERDICT
+================================================================
+GATE_DEAD
+CLASS=FPGA_NAMED_THEN_SOC_REBOOT (play never started)
+unique24=FAIL
+UNIQUE24_PASS=NO
+THIS_RUN_PFPS=NONE
+last_honest_pfps=NONE
+pfps=NONE
+PLAY_RAN=NO
+PLAY_RC=NONE
+ACK=NONE
+FRAMES=NONE
+PRESENTED=NONE
+GLASS_MAX=NONE
+PLXJ=NONE
+PLXD=NONE
+ONBOX_T7_NOFAB=ABSENT
+L_N3_NOFAB_TXT=ABSENT
+FABRIC_DIRECT_0_ISOLATE=NOT_DONE
+second_n3_fpga=BAN
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_d1910177 ≠ unique-24
+24Hz ≠ unique-24
+Chevron ≠ unique-24
+FPGA_RESTORE_TRUE480 ≠ unique-24
+
+L-n3-nofab is NOT L-n3-gate.
+  L-n3-gate: FPGA_NAMED survived (RC=0, SSH_BACK=YES) then play-start reboot ~5s.
+  L-n3-nofab: reboot AFTER named /bin/fpga BEFORE play. Isolate FABRIC_DIRECT=0 NOT completed.
+
+Did not /bin/fpga, load_core, run_720p24, or play. Did not invent pfps.
+
+================================================================
+DELIVERABLE (required tokens)
+================================================================
+unique24=FAIL
+pfps=NONE
+PLAY_RAN=NO
+second_n3_fpga=BAN
+
+================================================================
+CONSTRAINTS (this worker)
+================================================================
+- Did not start run_720p24, load_core, /bin/fpga, menu, or play.
+- Did not invent a pfps number.
+- Did not quote stale T7b 14.1 or n2 presented=0 as this-run d191 pfps.
+- Did not invent /tmp/misterplex-agent-L-n3-nofab.txt (ABSENT).
+- Did not invent FPGA_NAMED_RC / PLAY_CMD / GLASS-MAX for nofab.
+- Named load_core BAN. second_n3_fpga BAN.
+- Quote only files that exist.
+
+================================================================
+0) First-party L-n3-nofab report — ABSENT
+================================================================
+This worker probed (do not invent):
+
+  /tmp/misterplex-agent-L-n3-nofab.txt          ABSENT
+  /tmp/misterplex-agent-L-n3nofab.txt           ABSENT
+  /tmp/misterplex-agent-L-nofab.txt             ABSENT
+  /tmp/misterplex-agent-L-n3-nofab-gate.txt     ABSENT
+  /tmp/l-n3-nofab.sh                            ABSENT
+  /tmp/l-n3-nofab-run.log                       ABSENT
+  /tmp/misterplexd.t7nofab-d1910177.log         ABSENT
+  /tmp/pfps-720p24-live-gate-d1910177-nofab.txt ABSENT
+  /tmp/misterplex-loop-status-0407.txt          ABSENT (04:07Z overwritten)
+
+Harvest is parent ticks + sibling cards only.
+Missing L-n3-nofab.txt ≠ hidden unique-24. ≠ hidden C3. ≠ hidden pfps.
+
+================================================================
+1) Parent ticks this worker actually read
+================================================================
+First grep this worker of /tmp/misterplex-loop-status.txt
+(04:07Z line still present; later overwritten):
+
+  L-n3-nofab=SSH timeout after /bin/fpga named; SoC reboot uptime~27s; play never started
+
+Full read this worker (TICK=2026-08-14T04:12Z) before 04:14Z restamp:
+
+  TICK=2026-08-14T04:12Z
+  exclusive=FREE
+  FIT_GO=NO
+  X-n3=BUILD_OK d1910177 unmeasured
+  L-n3-gate=UNIQUE24_FAIL play-start SOC_REBOOT pfps=NONE
+  L-n3-nofab=UNIQUE24_FAIL /bin/fpga named then reboot ~27s PLAY_RAN=NO isolate FABRIC=0 NOT done
+  lab_glass=07f54d9f CORE=Plex RBFNAME=Plex
+  daemon=1098:3005 RESTARTED (was DOWN after nofab reboot) BIN=27418723
+  named_sidecar=d191 720p_as_Plex.rbf=NO
+  last_honest_pfps=NONE
+  unique24=FAIL
+  named_load_core=BAN
+  run_720p24=BAN
+  second_n3_fpga=BAN
+  spawned=R-nofab-hv R-glass-g R-arm-g R-fit-g R-fpga-rca R-aspect-g
+  next=do not /bin/fpga n3 again; RCA named-load hang; n4 only after isolate exists
+
+/tmp/misterplex-agent-bucket.json (TICK=2026-08-14T04:12Z when harvested):
+
+  "goal": "harvest nofab reboot; daemon back; no n3 fpga; no Quartus"
+  "l_n3_nofab": "FPGA_NAMED then SOC_REBOOT PLAY_RAN=NO"
+  "last_honest_pfps": "NONE"
+  "unique24": "FAIL"
+  "named_load_core": "BAN"
+  "second_n3_fpga": "BAN"
+  "lab_glass": "07f54d9f"
+  "daemon": "1098:3005"
+  "rbf_n3": "d1910177"
+
+Later restamp this worker re-read (TICK=2026-08-14T04:14Z) — 04:07Z
+detail dropped; do not treat as a new nofab measurement:
+
+  TICK=2026-08-14T04:14Z
+  exclusive=X-n4 wiring (farm FREE at 04:13Z)
+  lab_glass=07f54d9f CORE=Plex daemon=1098 BIN=27418723
+  unique24=FAIL pfps=NONE
+  n3=d1910177 HPS reboot — do not /bin/fpga again
+
+04:14Z exclusive=X-n4 is parent later. This worker did not start Quartus.
+
+R-aspect-g independently quotes the same 04:07Z line this worker grepped
+and adds parent claim "Plex.rbf stayed 07f54d9f; restored FPGA True480".
+R-glass-f quotes parent 04:07Z: "L-n3-nofab SoC reboot; lab_glass=07f54d9f;
+claim daemon 967" and "restored FPGA True480 RC=0 daemon 967" — 967 NOT_SEEN
+by R-glass-f.
+
+================================================================
+2) Contemporaneous box witness (R-glass-f) — 04:04Z–04:07Z
+================================================================
+/tmp/misterplex-agent-R-glass-f.txt  UTC=2026-08-14T04:07:16Z
+  This worker did not SSH. Quote only.
+
+  SOC_REBOOT_MIDTICK=YES (~04:05:06Z; second SSH flap 04:05:06–04:05:25)
+  BOX_UPTIME_S=1311 @ 04:04:52Z (pre-reboot session, daemon 931)
+  first resample SSH timeout 04:05:06Z; ping 100% loss
+  SSH 04:05:32Z uptime 25.83s
+  BOX_UPTIME_S=25.83 @ 04:05:32Z (first post-reboot)
+  BOX_UPTIME_S=36.43 @ 04:06:21Z
+  BOX_UPTIME_S=74.49 @ 04:06:59Z
+  BOX_UPTIME_S=91.39 @ 04:07:16Z
+  PLAY_RAN=NO
+  leftover_run_720p24=NONE
+  BIN_FPGA=NO (this glass worker; L-n3-nofab did named /bin/fpga)
+  PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54  (all five pins)
+  PLEX_RBF_IS_D191=NO  720P_LEFT_AS_PLEX_RBF=NO
+  mtime 04:06:21Z+  2026-08-13 23:05:40 -0500
+    (rewrite during L-n3-nofab restore window = 04:05:40 UTC;
+     bytes still 07f54d9f)
+  DAEMON_931=SUPERSEDED (SoC reboot mid-ticket; L-n3-nofab /bin/fpga named)
+  Post-reboot: DAEMON_ABSENT LISTEN_3005=NO
+  PARENT_CLAIM_DAEMON=967 (loop 04:07Z) NOT_SEEN
+  unique24=FAIL last_honest_pfps=NONE
+  CORENAME=Plex  RBFNAME=Plex (post-reboot; not Plex.720p24.d1910177)
+
+25.83s first post-reboot uptime is the first-party number behind
+parent "SoC reboot uptime~27s". Boot ≈ 04:05:06Z (04:05:32 − 25.83s).
+That matches the SSH timeout instant. Do not invent a 27.000 pfps-like
+precision. Do not invent FPGA_NAMED_RC (nofab report ABSENT).
+
+================================================================
+3) Post-reboot glass (R-glass-g) — same boot, 04:13Z
+================================================================
+/tmp/misterplex-agent-R-glass-g.txt  UTC=2026-08-14T04:13:37Z
+
+  SOC_REBOOT_MIDTICK=NO (same boot as R-glass-f post L-n3-nofab)
+  BOX_UPTIME_S=449.91 @ 04:13:14Z  /  472.85 @ 04:13:37Z
+    (same post-nofab boot as R-glass-f 91s @ 04:07:16Z)
+  PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+  mtime 23:05:40 -0500 = L-n3-nofab restore window (04:05:40 UTC)
+  720P_LEFT_AS_PLEX_RBF=NO
+  named d191 sidecar ON BOX (not product) md5 d19101778905687efb869fbf3ac8628b
+  PLAY_RAN=NO leftover_run_720p24=NONE SECOND_N3_FPGA=NO
+  DAEMON_PID=1098 --id misterplex :3005 BIN+exe 27418723
+  ENV_MPX=NONE (no MPX_FABRIC_DIRECT on product daemon)
+  parent-claim 967 never seen; 931 superseded
+  unique24=FAIL last_honest_pfps=NONE
+
+Product slot stayed true480. Isolate play was not this daemon.
+
+================================================================
+4) Discrimination vs L-n3-gate (play-start reboot, FPGA_NAMED survived)
+================================================================
+L-n3-gate first-party EXISTS:
+  /tmp/misterplex-agent-L-n3-gate.txt          UTC=2026-08-14T03:45Z
+  /tmp/misterplexd.t7gate-d1910177.log         SUMMARY not capture
+  /tmp/pfps-720p24-live-gate-d1910177.txt      pfps=NONE GATE=FAIL
+
+Do not collapse the two events.
+
+                       L-n3-gate (03:35–03:45Z)          L-n3-nofab (04:05–04:07Z)
+RBF named              d1910177                          d1910177 (same sidecar)
+ARM                    27418723                          27418723 (disk; 931 died)
+Plex.rbf               stayed 07f54d9f                   stayed 07f54d9f
+named /bin/fpga        YES RC=0 bytes=2844720            YES (parent + R-glass-f)
+SSH after named        SSH_BACK_AFTER_FPGA=YES           SSH timeout after named
+                       utc=03:38:44Z                     04:05:06Z; ping 100% loss
+stamp RBFNAME          Plex.720p24.d1910177 YES          NO harvest (died on named)
+clip tmpfs             copied then wiped                 play never started
+PLAY_CMD               MPX_FABRIC_DIRECT=1               NONE harvested
+                       misterplexd --play-file 15s
+PLAY_SSH               Connection reset / Broken pipe    died BEFORE play
+play start             YES (then died)                   NO
+SYSLOGD / uptime       ~5s after play; 0:02 @ 03:41:24Z  first SSH uptime 25.83s
+ONBOX t7 log           ABSENT (tmpfs wipe)               never created (no play)
+PLAY_RAN               NO (died at play start)           NO (never started)
+PLAY_FAIL_CLASS        SOC_REBOOT / PLAY_START_          FPGA_NAMED_THEN_SOC_REBOOT
+                       F2SDRAM_HANG (R-reboot-rca)
+FPGA_NAMED survived    YES                               NO
+FABRIC_DIRECT=0 isol.  not this event (=1 play)          NOT completed
+pfps / unique24        NONE / FAIL                       NONE / FAIL
+
+L-n3-gate PLAY_FAIL_DETAIL (quote):
+  "named /bin/fpga RC=0 then play SSH died; SoC reboot wiped /tmp;
+   no GLASS-MAX/PLXJ/PLXD/pfps harvest"
+
+L-n3-nofab has no such PLAY_CMD line in any first-party file.
+R-aspect-g: "nofab: no play → sendSourceAspect never ran."
+R-fpga-rca: "L-n3-nofab: /bin/fpga named then SSH died; play never started; reboot ~27s."
+
+Third class (do not collapse either):
+  L-n2-gate OFFICIAL_FAIL_CLASS=LOAD_CORE_REBOOT
+  L-n3-gate and L-n3-nofab both used /bin/fpga named, not load_core.
+
+================================================================
+5) What R-reboot-rca covered — and what nofab supersedes
+================================================================
+/tmp/misterplex-agent-R-reboot-rca.txt  UTC=2026-08-14T04:05Z
+  Class PLAY_START_F2SDRAM_HANG for L-n3-gate only.
+  "/bin/fpga named d1910177 FPGA_NAMED_RC=0 SSH_BACK_AFTER_FPGA=YES"
+  "Not /bin/fpga-alone."
+  Next = host-first isolate MPX_FABRIC_DIRECT=0 (parent later).
+
+That "not /bin/fpga-alone" is SUPERSEDED for the SECOND named d191 load.
+/tmp/misterplex-agent-R-fpga-rca.txt:
+  "R-reboot-rca “not /bin/fpga-alone” SUPERSEDED for a SECOND named d191 load."
+  "m0 idle PLXD publish after /bin/fpga (bank_mbox_req=1) is a live
+   suspect without host play."
+
+This harvest does not promote that suspect to a 10-line dest bug.
+It records: isolate FABRIC_DIRECT=0 was the planned split and it
+did NOT run (reboot after named, before play).
+
+/tmp/misterplex-agent-R-fab-hold.txt / R-rdact-note.txt (04:08–04:10Z)
+  FIT_GO=NO until ONE named + play MPX_FABRIC_DIRECT=0 exists.
+  That play is still NOT_DONE after nofab.
+
+/tmp/misterplex-agent-R-fit-g.txt:
+  "Second named fpga rebooted before play. n4 rd_act blocked until
+   isolate exists. No Quartus."
+
+================================================================
+6) Score files that exist — none are a nofab unique-24
+================================================================
+/tmp/pfps-720p24-live-gate-d1910177.txt  WORKER=L-n3-gate  pfps=NONE
+  PLAY_FAIL_CLASS=SOC_REBOOT (play-start). NOT nofab.
+
+/tmp/misterplexd.t7gate-d1910177.log  WORKER=L-n3-gate SUMMARY
+  PLAY_RAN=NO ONBOX_T7 ABSENT. NOT a nofab capture.
+
+/tmp/misterplexd.t7gate.log  STILL the 03:15Z n2 0fc play. Not d191. Not nofab.
+
+/tmp/pfps-720p24-live-gate.txt  L-n2-gate pfps=NONE (0fc, not d191).
+
+/tmp/pfps-slot720p24j-t7b.txt  j 968b828a pfps_last=14.1. STALE other-RBF.
+  NOT last_honest_pfps for d191 / nofab.
+
+X-n3 / R-n3-verify: BUILD_OK d1910177 only. unique24=FAIL pfps=NONE.
+BUILD_OK ≠ unique-24.
+
+================================================================
+7) What this worker did not do
+================================================================
+- Did not /bin/fpga, load_core, menu, run_720p24, or play.
+- Did not second n3 named load (BAN).
+- Did not start Quartus / exclusive (04:14Z X-n4 is parent, not this).
+- Did not invent pfps / UNIQUE24 / FPGA_NAMED_RC / PLAY_CMD for nofab.
+- Did not invent L-n3-nofab.txt.
+- Did not leave d191 as Plex.rbf (siblings pin 07f54d9f).
+- Did not write PHASE_BACKLOG / protocol cards.
+
+================================================================
+BACKLOG_STATUS_SUGGESTION (not written to PHASE_BACKLOG)
+================================================================
+R-nofab-hv DONE. GATE_DEAD. unique24=FAIL pfps=NONE PLAY_RAN=NO.
+second_n3_fpga=BAN.
+
+P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+n3 d1910177 BUILD_OK TIMING_OK ≠ unique-24.
+
+Two n3 HPS-reboot events, keep split:
+  L-n3-gate  = FPGA_NAMED survived; play-start SOC_REBOOT ~5s;
+               FABRIC_DIRECT=1; PLAY_RAN=NO; pfps=NONE.
+  L-n3-nofab = reboot AFTER named /bin/fpga BEFORE play;
+               first SSH uptime 25.83s (~27s); PLAY_RAN=NO;
+               FABRIC_DIRECT=0 isolate NOT completed; pfps=NONE.
+               First-party L-n3-nofab.txt ABSENT.
+
+Lab glass 07f54d9f (R-glass-f/g). Named d191 sidecar only.
+Do not /bin/fpga n3 again. Do not load_core named.
+Do not invent pfps>=23.9. Do not leave d191 as Plex.rbf.
+
+================================================================
+BLOCKERS
+================================================================
+unique-24 FAIL: no measured pfps (NONE). PLAY_RAN=NO.
+FABRIC_DIRECT=0 isolate NOT completed — reboot after named fpga.
+L-n3-nofab.txt ABSENT — harvest is parent + siblings only.
+Not a Quartus blocker. Not an invented ≥23.9.
+second_n3_fpga=BAN (this worker and this wave).
+
+================================================================
+EVIDENCE (exist; quoted)
+================================================================
+  this report: /tmp/misterplex-agent-R-nofab-hv.txt
+  /tmp/misterplex-loop-status.txt                 (04:07Z grep; 04:12Z read; 04:14Z restamp)
+  /tmp/misterplex-agent-bucket.json               l_n3_nofab=FPGA_NAMED then SOC_REBOOT PLAY_RAN=NO
+  /tmp/misterplex-agent-L-n3-gate.txt             CONTRAST play-start; FPGA_NAMED survived
+  /tmp/pfps-720p24-live-gate-d1910177.txt         L-n3-gate pfps=NONE (not nofab)
+  /tmp/misterplexd.t7gate-d1910177.log            L-n3-gate SUMMARY (not nofab)
+  /tmp/misterplex-agent-R-glass-f.txt             SSH timeout 04:05:06Z; uptime 25.83s; 07f54d9f
+  /tmp/misterplex-agent-R-glass-g.txt             same boot; 07f54d9f; daemon 1098; PLAY_RAN=NO
+  /tmp/misterplex-agent-R-fpga-rca.txt            named then SSH died; play never; ~27s
+  /tmp/misterplex-agent-R-reboot-rca.txt          L-n3-gate class; “not fpga-alone” pre-nofab
+  /tmp/misterplex-agent-R-fab-hold.txt            isolate FABRIC=0 planned, not this tick
+  /tmp/misterplex-agent-R-rdact-note.txt          FIT_GO=NO until isolate play exists
+  /tmp/misterplex-agent-R-fit-g.txt               second named rebooted before play
+  /tmp/misterplex-agent-R-aspect-g.txt            nofab: sendSourceAspect never ran
+  /tmp/misterplex-agent-X-n3.txt                  BUILD_OK d1910177 only
+  /tmp/misterplex-agent-R-n3-verify.txt           unique24=FAIL pfps=NONE
+  ABSENT: /tmp/misterplex-agent-L-n3-nofab.txt

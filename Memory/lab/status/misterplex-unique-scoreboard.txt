@@ -1,0 +1,28 @@
+GATE unique24 FAIL (need pfps AND hw_fps ≥23.9 AND drops=0 AND presented>0 AND MAGIC_F@+0x118)
+TICK=2026-08-15T05:12Z WORKER=C-score-0512 SCORE_OK=YES SCORE_OK≠unique-24
+INVENT_23.9=NO  Soft-skip≠PASS  Do not loosen F@118
+PLAY=NO Quartus=LIVE_doorbell FIT_GO=consumed
+unique24=FAIL 2/5 living (P3 31b6d70f pfps=12.5 F@118=NO)
+
+======== LIVING ========
+P3 WASH 31b6d70f 05:09Z pfps=12.5 hw_fps=NONE presented=92 drops=0 F@118=NO
+  frames=94. 05:07Z pfps=16.7 SAME frames=94 is MIDPLAY SUPERSEDED.
+  GREEN_SNOW. OSD 960x540 16.92k/24 over PHY 1280x720 74.25/60
+  MAP 0x30000000/0x300FF000 vs host L4 0x30180000/0x3047F000.
+  scale skipped local_identity_file. Do not replay 31b6d70f.
+  cite=/tmp/pfps-720p24-budget.txt + /tmp/pfps-720p24-plxf-after-build.txt
+P3b LIVE P3_960_L4_DOORBELL wrap 1023378 BUILD_OK=NO PLAY=NO (NOT a score)
+P2 leftover 3da3aac4 13.9/12.39 F@118=YES (HISTORY vs living 12.5)
+P1 PHY_PASS leftover 74.25/60 HDMI_24_ON_60 (not a unique24 row)
+P0 3da3aac4 F@118=YES 12.2 HISTORY
+
+gate          need           P3 31b6d70f      hit
+pfps          ≥23.9          12.5             FAIL
+hw_fps        ≥23.9          NONE             FAIL
+drops         0              0                PASS
+presented     >0             92               PASS
+MAGIC_F@118   0x504C5846     NO               FAIL
+→ unique24=FAIL (2/5). 12.5 ≠ 23.9. Do not invent 23.9.
+BEST leftover overall still j 14.1. BEST leftover stick cea3 13.2.
+P2 13.9 is leftover not living play.
+BUILD_OK+PLAY ≠ unique-24. SCORE_OK ≠ unique-24.

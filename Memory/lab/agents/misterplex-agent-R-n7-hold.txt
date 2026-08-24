@@ -1,0 +1,160 @@
+# misterplex agent R-n7-hold
+Date: 2026-08-14T05:49:20Z
+Worker: R-n7-hold
+Slot: slot720p24n7
+Mode: READ_ONLY HOLD
+EDITED: NO
+QUARTUS: ZERO
+LAB_SSH: NEVER
+CARDS: none
+PHASE_BACKLOG: not written
+Memory/lab/status/*.md: not written
+
+EXCLUSIVE=FREE
+n6=TERMINAL BUILD_OK a0ae0b45 unique24=FAIL pfps=0.75
+n7=NOT_STARTED
+FIT_GO=NO
+PARENT_NAMED_STICK_FILL_RTL=NO
+SECOND_QUARTUS=NO
+unique24=FAIL
+
+## Verdict
+HOLD_OK. Exclusive Quartus slot is FREE and stayed FREE. n6 is terminal
+(FIT_WRAPPER_DONE RC=0 RBF a0ae0b45). n7 was not started. No
+fit_slot720p24n7.sh created or executed (ABSENT both worktrees). No docker
+mplex-fit. Live store frozen 7f3d52c0745cdc2a7c503372befdabd2 (local+farm).
+Product Plex.qsf b049c94413d02a1a63dfd03b7234d7e1. unique24=FAIL (n6 play
+pfps=0.75 hw_fps=0.749 presented=12 drops=12). FIT_GO=NO until parent names
+stick-fill RTL. No BUILD_OK invented for n7. No pfps invented.
+
+## Why FIT_GO=NO (parent, this tick)
+- Parent loop TICK=2026-08-14T05:46Z: exclusive=FREE; next="stick fill during
+  DE (1.05s/frame model matches 0.75Hz). NOT m3 DDR burst. NOT another wait."
+- Parent do_not includes "n7 handshake". Direction is not a named RTL file.
+- PARENT_NAMED_STICK_FILL_RTL=NO: no new store/stick-fill .sv, no FIT_GO_N7
+  flag, no /tmp stick-fill authorize. Live store stays n6 freeze 7f3d52c0
+  (DDR_BURST_VBLANK=8'd8). Do not fit that again.
+- unique24=FAIL on n6 a0ae0b45 (L-n6-play). BUILD_OK+play ≠ unique-24 PASS.
+- FIT_GO=NO until parent names stick-fill RTL. This worker does not name it.
+
+## 1) Local exclusive (studio)
+when=2026-08-14T05:48:09Z and reconfirm 05:49:07Z
+LOCAL_EXCL=FREE
+  pgrep quartus: rc=1  NO_QUARTUS_PROC
+  pgrep -x quartus_map|quartus_fit|quartus_sta|quartus_asm|quartus_sh: all rc=1
+  pgrep fit_slot720p: rc=1
+  pgrep mplex-fit: rc=1
+  pgrep -af fit_slot720p24n7|slot720p24n7: this-hold shell only (self-match)
+  docker ps live: matter-server, plex only (NO local mplex-fit / quartus)
+  docker ps -a leftover (not running, 2 weeks): plex_quartus_osd,
+    plex_rbf_statusv2 (ghcr.io/raetro/quartus:mister Exited (0) — not live)
+  scripts/fit_slot720p24n7.sh: ABSENT
+    /home/shawn/Projects/MisterPlex/scripts/fit_slot720p24n7.sh
+    /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/fit_slot720p24n7.sh
+  /tmp/plex_quartus_slot720p24n7.log: ABSENT
+  /tmp/slot720p24n7*: ABSENT
+  /tmp/misterplex-agent-X-n7.txt: ABSENT
+  Existing wrappers only (not executed by this worker):
+    scripts/fit_slot720p24n2.sh .. n6.sh + m2.sh + m3.sh (lessons worktree)
+  n6 log terminal:
+    /tmp/plex_quartus_slot720p24n6.log
+    mtime=2026-08-14 00:38:33.114800095 -0500 size=28169
+    STORE_MD5=7f3d52c0745cdc2a7c503372befdabd2
+    Restored product Plex.qsf b049c94413d02a1a63dfd03b7234d7e1
+    FIT_WRAPPER_RC=0
+    FIT_WRAPPER_DONE
+    DEPLOY=NO LAB_PLEX_RBF_TOUCHED=NO
+
+## 2) Farm exclusive (node-worker1, BatchMode)
+host=node-worker1 (192.168.1.24 flynnsbit) when=2026-08-14T05:48:46Z
+FARM_REACHABLE=YES
+FARM_EXCL=FREE
+  pgrep quartus_*: NO_QUARTUS_PROC (map/fit/sta/asm/sh all rc=1)
+  pgrep fit_slot720p / mplex-fit: rc=1
+  docker ps live: plex-cors-proxy, plex, discord-bbs-games (no mplex-fit)
+  docker leftover (not running): 68aa6df5f61d mplex-seed2-sta Exited (0) 5d
+  /home/flynnsbit/mplex-builds/slot720p24n7: ABSENT
+  /home/flynnsbit/mplex-builds/slot720p24n7*: NO_N7_GLOB
+  slot720p24n6 exists (n6 terminal leftover) .build-lock: ABSENT
+  Highest existing farm slot: slot720p24n6 (mtime Aug 14 00:38)
+  This worker did not mkdir n7.
+
+## 3) Live store (frozen — NOT edited)
+EXPECT=7f3d52c0745cdc2a7c503372befdabd2
+LOCAL=7f3d52c0745cdc2a7c503372befdabd2  MATCH=YES
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime=2026-08-14 00:31:02.323200676 -0500  size=44199
+  (mtime before X-n6 START 2026-08-14T05:31:56Z; not touched post-n6)
+FARM=7f3d52c0745cdc2a7c503372befdabd2  MATCH=YES
+  /home/flynnsbit/mplex-builds/slot720p24n6/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime=2026-08-14 00:31:02.323200676 -0500  size=44199
+DRIFT=NO  EDITED=NO
+DDR_BURST_VBLANK=8'd8  (L119; NOT 8'd16)
+Dirty decode main has no sdram_i420_store.sv (product SoT is lessons worktree).
+
+## 4) Product Plex.qsf (restored after n6; 480p)
+LIVE=b049c94413d02a1a63dfd03b7234d7e1
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+  mtime=2026-08-13 22:32:51.710124510 -0500 size=6343
+BAK=b049c94413d02a1a63dfd03b7234d7e1
+  /tmp/Plex.qsf.product-480p.slot720p24n6.bak
+  (same md5 on n/n2/n3/n4/n5/n6 baks)
+cmp LIVE vs n6 bak: QSF_IDENTICAL_TO_N6_BAK
+Still 480p product:
+  FRAME_W=640 FRAME_H=480 PLEX_PRESENT_TRUE_480P=1 (active)
+  PLEX_PRESENT_720P_L4 / FRAME_W=1280 / FRAME_H=720: commented
+FARM leftover overlay (n6 slot copy, not product SoT):
+  84c2f4b2e85f150e073578e7e4406b69
+  /home/flynnsbit/mplex-builds/slot720p24n6/Plex_MiSTer/Plex.qsf
+Dirty main Plex.qsf is b3de6740 (decode tree; not 720p product SoT).
+This worker did NOT edit QSF, restore, overlay, or write sibling.
+
+## 5) unique24=FAIL (n6 play — not invented)
+L-n6-play /tmp/misterplex-agent-L-n6-play.txt
+  VERDICT=UNIQUE24_FAIL  PLAY_RAN=YES  PLAY_RC=0
+  pfps=0.75  hw_fps=0.749  presented=12  drops=12
+  RBF_N6=a0ae0b45ff23ca240096889b8cc48c27
+  PATH_SDRAM_FIRST=YES  glass=L4  RESTORE_OK  lab=07f54d9f
+  last_honest_sameDDR=14.1
+Parent loop + bucket: unique24=FAIL measured_pfps=0.75
+Did not invent pfps>=23.9. Soft-skip ≠ PASS. BUILD_OK ≠ unique-24.
+
+## 6) Not done (by design)
+- did not create or start scripts/fit_slot720p24n7.sh
+- did not docker mplex-fit
+- did not edit store / QSF
+- did not ssh lab FPGA (192.168.1.183)
+- did not /bin/fpga, load_core, or play
+- did not enable PLEX_CLK_SYS_24
+- did not write cards / PHASE_BACKLOG / Memory/lab/status/*.md
+- did not name stick-fill RTL
+- did not start n7
+- did not invent BUILD_OK or unique-24 PASS
+- unique24 remains FAIL (n6 0.75)
+
+## Actions
+READ_ONLY confirm only. Zero Quartus. Exclusive held FREE.
+
+## Backlog status suggestion
+(not written) n7 NOT_STARTED; EXCLUSIVE=FREE; FIT_GO=NO;
+PARENT_NAMED_STICK_FILL_RTL=NO; store stay 7f3d52c0; QSF stay b049c944;
+unique24=FAIL pfps=0.75; do not start slot720p24n7 until parent names
+stick-fill RTL AND grants FIT_GO. NOT m3 DDR burst. NOT another wait.
+NOT n7 handshake.
+
+## Blockers
+FIT_GO=NO (parent). Stick-fill RTL not named. unique24 FAIL on n6 a0ae0b45
+at 0.75 Hz (1.05s/frame model). Not a hold-worker defect.
+
+## Evidence
+  /tmp/misterplex-agent-R-n7-hold.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-n7-hold.txt
+  /tmp/misterplex-loop-status.txt (TICK=2026-08-14T05:46Z exclusive=FREE)
+  /tmp/misterplex-agent-bucket.json (store 7f3d52c0 unique24 FAIL pfps 0.75)
+  /tmp/misterplex-agent-L-n6-play.txt (UNIQUE24_FAIL pfps=0.75)
+  /tmp/misterplex-agent-X-n6.txt (n6 BUILD_OK a0ae0b45 QSF restored)
+  /tmp/plex_quartus_slot720p24n6.log (FIT_WRAPPER_DONE; n7 log ABSENT)
+  product store md5 7f3d52c0745cdc2a7c503372befdabd2
+  product Plex.qsf md5 b049c94413d02a1a63dfd03b7234d7e1
+  farm: ABSENT /home/flynnsbit/mplex-builds/slot720p24n7
+  farm store MATCH 7f3d52c0; n6 .build-lock ABSENT

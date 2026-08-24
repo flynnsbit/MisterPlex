@@ -1,0 +1,138 @@
+W-decode-wins | CLI_DECODE_WINS host-only — HOST_OK
+UTC: 2026-08-13T21:48:40Z
+Worker: W-decode-wins
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-W-decode-wins.txt
+Card: /home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/CLI_DECODE_WINS.md
+
+ZERO Quartus / menu / play / deploy / kill 24016.
+Did not load 968b828a. Disk Plex.rbf left 07f54d9f.
+Soft-skip ≠ PASS. This patch ≠ T7 PASS. pfps=NONE.
+FIT_GO=NO. Next T7 play is PARENT-owned only.
+
+================================================================
+STATUS: HOST_OK
+================================================================
+
+T7 unique pfps: not this ticket (still FAIL / 0 frames from W-t7-j)
+P3-720P24: stays IN_PROGRESS / pfps FAIL
+P4-DISPLAY / P4-720P-MIX: unchanged TODO
+play started: NO
+daemon 24016: not touched
+companion deployed: NO
+
+================================================================
+VERDICT
+================================================================
+
+HOST_OK. `--decode` now survives loadConf(DECODE). Play-file restores
+that canvas before setSourceAspect. ACK is not skipped.
+
+A future parent T7 play-file with --decode 1280x720 will poll PLXJ at
+0x3047F130 (logged doorbell=0x3047F000 PLXJ=0x3047F130 L4).
+
+HOST_OK ≠ T7 PASS. ACK ≠ ≥23.9. UNIT_OK ≠ unique-24. Not deployed.
+
+Backlog suggestion: T7 still FAIL / pfps=NONE. P3-720P24 IN_PROGRESS.
+CLI_DECODE_WINS HOST_OK (lessons, not on-box). Next T7 PARENT-only.
+FIT_GO=NO. No Quartus. No second menu. Do not kill 24016.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+
+- ZERO Quartus / docker / FIT_GO / RBF overwrite
+- ZERO menu bounce / load_core / deploy_plex_core
+- ZERO play-file / ffmpeg on the lab box
+- Did not kill / TERM 24016 or supervise
+- Did not edit media_player.cpp applyOsd (W-raster-cmd)
+- Did not load 968b828a
+- Soft-skip ≠ PASS. No invented pfps
+- PHASE_BACKLOG.md not rewritten
+
+================================================================
+WHAT CHANGED
+================================================================
+
+arm/misterplexd/main.cpp md5=ccfc26f0bb0502eecbc9536eb771ad0e
+
+1. CLI --decode sets cliDecodeExplicit + cliDecodeW/H.
+2. After the conf block (same slot as --transcode-profile):
+   if CLI set → restore CLI size; log CLI_DECODE_WINS
+   (conf DECODE=… ignored when they differ).
+3. Play-file: setDecodeSize(decodeW,decodeH) AFTER startOsdPoll seed
+   and BEFORE probe/setSourceAspect. Log doorbell + PLXJ (+ " L4").
+   Fail-closed "source display aspect unavailable" unchanged.
+
+tests:
+  tests/unit/test_osd_menu.cpp          md5=dfcc68c014cfb45cb7cd4c87d9114322
+  tests/unit/test_rtl_invariants.py     md5=85d51195347086f42cc2934f76ced123
+  tests/unit/test_play_file_delivery.sh md5=1a8e79e6af4690355d5a5e6aa17fd0d5
+
+================================================================
+UNITS (targeted; not full make unit)
+================================================================
+
+RED (unfixed main.cpp, L8):
+  python3 check_cli_decode_wins → RC=1
+  FAIL: CLI --decode must be retained across loadConf DECODE=
+
+GREEN (patched):
+  check_cli_decode_wins          RC=0
+  check_source_aspect_contract   RC=0
+  build/test_osd_menu            RC=0
+  test_play_file_delivery.sh     RC=0
+
+PRESENT=none host play-file (not lab T7):
+
+  CLI --decode 160x120 + DECODE=320x240:
+    CLI_DECODE_WINS --decode 160x120 (conf DECODE=320x240 ignored)
+    decode=160x120 doorbell=0x3007F000 PLXJ=0x3007F130
+
+  CLI --decode 1280x720 + DECODE=320x240:
+    CLI_DECODE_WINS --decode 1280x720 (conf DECODE=320x240 ignored)
+    decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+
+  no --decode + DECODE=320x240:
+    no CLI_DECODE_WINS
+    decode=320x240 doorbell=0x3007F000 PLXJ=0x3007F130
+
+Logs:
+  build/unit_play_file_delivery/cli_decode_wins.log
+  build/unit_play_file_delivery/cli_decode_l4.log
+  build/unit_play_file_delivery/cli_decode_conf_only.log
+
+================================================================
+WHAT THIS IS NOT
+================================================================
+
+- Not pfps ≥23.9 / not any invented pfps
+- Not T7 PASS / not a lab play / not a companion deploy
+- Not P4-DISPLAY / raster PASS
+- Not applyOsd / OSD 720p bits
+- Not permission for Quartus or a second menu
+
+================================================================
+RESIDUAL
+================================================================
+
+applyOsd (W-raster-cmd) still grow-only. After CLI 1280x720, OSD 0x6000
+240p will not shrink L4 — play-file restore is the belt. Companion
+binary on the box is still the pre-patch daemon. Parent T7 must deploy
+this host (or use T7_SIDECAR_L4_CONF) before a 15s unique-pfps score.
+
+Disk Plex.rbf = 07f54d9f (user restore). Do not reload 968b828a here.
+
+================================================================
+BACKLOG STATUS SUGGESTION
+================================================================
+
+T7 FAIL / pfps=NONE (unchanged). P3-720P24 IN_PROGRESS / pfps FAIL.
+CLI_DECODE_WINS HOST_OK on lessons; NOT deployed. Next T7 = PARENT-owned
+play-file --decode 1280x720 (sidecar optional). FIT_GO=NO. No Quartus.
+No second menu. Do not kill 24016. P4-DISPLAY / P4-720P-MIX stay TODO.
+Cite /tmp/misterplex-agent-W-decode-wins.txt + Memory/lab/status/CLI_DECODE_WINS.md
+
+================================================================
+END
+================================================================

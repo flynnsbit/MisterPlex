@@ -1,0 +1,69 @@
+WORKER=R-play-oneshot
+UTC=2026-08-14T05:01:31Z
+STATUS=DONE
+VERDICT=SCRIPT_OK
+GOAL=host script measures unique-24 AFTER 720p already loaded as product Plex.rbf; NEVER /bin/fpga or load_core
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+ZERO_QUARTUS=YES
+NO_LAB_SSH=YES
+NO_LAB_PLAY=YES
+PLAY_RAN=NO
+unique24=FAIL
+UNIQUE24=FAIL
+SOFT_SKIP_NE_PASS=YES
+DID_NOT_INVENT_PFPS=YES
+NO_FPGA=YES
+NO_LOAD_CORE=YES
+NO_OVERWRITE_PLEX_RBF=YES
+NO_GLASS_RESTORE=YES
+NO_CARDS=YES
+NO_PHASE_BACKLOG=YES
+
+# --- deliverable ---
+SCRIPT_OK=YES
+SCRIPT=/home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/play_720p24_already_loaded.sh
+SCRIPT_MD5=52fd8d320f77aec8f45d461c699ec42d
+SCRIPT_BYTES=10241
+SCRIPT_LINES=372
+BASH_N_RC=0
+BAN_COMMENT=BAN /bin/fpga of named Plex.720p24.*
+INVOKE=MISTER_HOST=192.168.1.183 MISTER_PASS=1 /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/play_720p24_already_loaded.sh
+INVOKE_SECS=optional first arg, default 15
+
+# --- contract in script (not executed this ticket) ---
+IDENTITY=--name MiSTerPlex --id misterplex --port 3005
+FABRIC_DIRECT=0
+CLIP=/media/fat/misterplex/clips/real720p_1500k_av.mp4
+PLAY_SECONDS=15
+PLAY_TIMEOUT=45
+L4_PREFIX8=4554fdb3 0fc77c10 d1910177 e8960391 cc9dbd74 968b828a
+RBFNAME_PLEX_OK_IF_KNOWN_L4=YES
+REFUSE_TRUE480=07f54d9f
+PRINT_PLEX_MD5_BEFORE_PLAY=YES
+UNIQUE24_PASS_IFF=pfps>=23.9 AND hw_fps>=23.9 AND drops=0
+ELSE=FAIL with honest numbers or NONE
+RESTORE_GLASS=NO (parent restores)
+KILL9=NO
+set_euo_pipefail=YES
+
+# --- this worker did not run ---
+LAB_PLAY=NO
+LAB_SSH=NO
+QUARTUS=NO
+PLEX_RBF_TOUCHED=NO
+pfps=NONE
+hw_fps=NONE
+drops=NONE
+audio=NONE
+unique24=FAIL (not run)
+SCRIPT_EXISTS_NE_UNIQUE24=YES
+
+BACKLOG_SUGGEST=P3-720P24 stays IN_PROGRESS / unique-24 FAIL (not claimed).
+  SCRIPT_OK play_720p24_already_loaded.sh md5 52fd8d320f77aec8f45d461c699ec42d.
+  Parent may invoke after L-n5-menu stay-up with 720p already loaded as Plex.rbf.
+  Do not /bin/fpga named n2–n5. Do not invent pfps>=23.9. SCRIPT_OK ≠ unique-24 PASS.
+
+BLOCKERS=none for the script ticket. unique-24 still FAIL (not run).
+EVIDENCE:
+  /tmp/misterplex-agent-R-play-oneshot.txt
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/play_720p24_already_loaded.sh

@@ -1,0 +1,306 @@
+WORKER=R-fpga-rca
+UTC=2026-08-14T04:16Z
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+GOAL=code-only. L-n3-gate: /bin/fpga survived, play start rebooted (~5s). L-n3-nofab (04:07Z): /bin/fpga named then SSH died, play never started, reboot ~27s. Named d191 /bin/fpga-alone is NOT proven safe on a second load. R-reboot-rca “not /bin/fpga-alone” SUPERSEDED for second load. Cite bitstream load vs m0 idle PLXD publish (reset bank_mbox_req=1) without host play.
+ZERO_QUARTUS=YES
+NO_SECOND_EXCLUSIVE=YES
+NO_BIN_FPGA=YES
+NO_LOAD_CORE=YES
+NO_PLAY=YES
+NO_POKE=YES
+NO_CARDS=YES
+NO_PHASE_BACKLOG_WRITE=YES
+EXCLUSIVE=not taken
+FIT_GO=NO
+unique24=FAIL
+last_honest_pfps=NONE
+PLAY_RAN=NO
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_NE_UNIQUE24=YES
+
+================================================================
+VERDICT
+================================================================
+RCA_OK. unique24=FAIL. FIT_GO=NO. last_honest_pfps=NONE. PLAY_RAN=NO.
+
+R-reboot-rca “Not /bin/fpga-alone” is SUPERSEDED for a SECOND named d191 load.
+
+  First load (L-n3-gate 03:38Z): FPGA_NAMED_RC=0, SSH_BACK_AFTER_FPGA=YES,
+    stamp+clip lived, THEN play MPX_FABRIC_DIRECT=1 started, SoC reboot ~5s
+    after play start (SYSLOGD 22:38:49 local). That is still PLAY_START.
+  Second load (L-n3-nofab ~04:05Z): /bin/fpga named d191 then SSH died.
+    Play NEVER started. FPGA_NAMED_RC UNHARVESTED (no L-n3-nofab.txt).
+    Reboot ~04:05:06Z. First post-reboot uptime 25.83s @ 04:05:32Z
+    (parent “uptime~27s”). FABRIC_DIRECT=0 isolate NOT done.
+
+Named d191 /bin/fpga-alone is NOT proven safe on a second load.
+Do not treat first-load SSH_BACK as a standing property of d1910177.
+
+ILLEGAL_ADDR=NO still (R-plxd-addr). Not unique-24. Not a Quartus blocker.
+FIT_GO=NO. Do not start exclusive. Do not /bin/fpga n3. Do not invent pfps.
+
+================================================================
+FACTS (L20: log vs inference)
+================================================================
+HAVE (first party / parent / sibling harvest):
+
+  L-n3-gate /tmp/misterplex-agent-L-n3-gate.txt + t7gate-d1910177.log:
+    PRE_PLAY_DAEMON_PID=3096 STOPPED before /bin/fpga
+    CMD=/bin/fpga /media/fat/_Utility/Plex.720p24.d1910177.rbf
+    FPGA_NAMED_RC=0  BYTES=2844720  SSH_BACK_AFTER_FPGA=YES 03:38:44Z
+    STAMPED_RBFNAME=Plex.720p24.d1910177
+    Plex.rbf stayed 07f54d9f
+    THEN PLAY_CMD=MPX_FABRIC_DIRECT=1 … --play-file … 15s
+    PLAY_SSH=Connection reset / Broken pipe
+    SYSLOGD_START ~5s after play start
+    PLAY_RAN=NO  pfps=NONE  ONBOX_T7_LOG=ABSENT
+    RESTORE /bin/fpga Plex.rbf RC=0  daemon 931 started
+
+  L-n3-nofab: /tmp/misterplex-agent-L-n3-nofab.txt ABSENT.
+    Parent TICK=04:07Z: SSH timeout after /bin/fpga named; SoC reboot
+      uptime~27s; play never started; Plex.rbf stayed 07f54d9f;
+      isolate FABRIC_DIRECT=0 not completed (reboot before play).
+    Parent TICK=04:12Z + bucket: FPGA_NAMED then SOC_REBOOT PLAY_RAN=NO.
+    R-glass-f (SSH 04:04:52Z / 04:05:32Z):
+      04:04:52Z daemon 931 LIVE  uptime 1311s  glass 07f54d9f
+      04:05:06Z SSH timeout / ping loss
+      04:05:32Z SSH back  uptime 25.83s  931 gone  PLAY_RAN=NO
+      This worker did not /bin/fpga (L-n3-nofab did).
+    R-nofab-hv: no first-party nofab report; FABRIC=0 isolate NOT done.
+
+DO NOT HAVE:
+  FPGA_NAMED_RC for the second load (never harvested).
+  Proof L-n3-nofab stopped 931 before /bin/fpga (931 was live 14s prior).
+  On-box t7 / nofab log (tmpfs wipe).
+  DRAM contents at 0x3047F138 / 0x3047F000 at second-load config.
+  “~27s” as time-from-/bin/fpga-to-reboot. Harvested number is
+    post-reboot uptime (~26s). Hang window is 04:04:52–04:05:06 (~14s max).
+
+INFER (labeled): second-load death is during/just after named /bin/fpga,
+  before any host play. Mechanism is one of the two post-config paths
+  below (or both). Not proven which. Soft-skip ≠ PASS.
+
+================================================================
+1) Two things that run with NO host play
+================================================================
+After /bin/fpga of n3 (d1910177 = store freeze 4a4fa085,
+Plex_720p24n2.qsf: SDRAM_I420_STORE=1 FABRIC_DIRECT_READER=1
+PLEX_PRESENT_720P_L4=1 PRODUCT_NO_STUB=1):
+
+A) BITSTREAM LOAD (FPGA manager / bridges) — inside /bin/fpga
+   Disable fpga2sdram + hps2fpga + lwhps2fpga
+   Program RBF
+   Re-enable bridges
+   FPGA reset released
+   /bin/fpga returns RC=0 only if that sequence finishes.
+
+   First load: sequence finished (RC=0 harvested).
+   Second load: RC never harvested. FPGA manager / bridge re-enable
+   is NOT exonerated.
+
+   Environmental split (HAVE, not invented):
+     L-n3-gate stopped 3096 BEFORE /bin/fpga.
+     L-n3-nofab: 931 was LIVE at 04:04:52Z (product --id misterplex,
+       FLAG_OFF, mmap true480 0x30000000 / doorbell 0x3007F000 / SPI
+       0xFF000000). L15: reload under a live daemon invalidates handles.
+       Bridge-disable under in-flight f2sdram from true480 m0 + 931
+       is a bitstream-load hang class. First load did not have that.
+
+B) m0 IDLE PLXD PUBLISH — starts when reset_ddr releases
+   (same window as bridge enable; may fire BEFORE /bin/fpga returns)
+
+   sdram_i420_store.sv  (silicon = freeze 4a4fa085, R-plxd-store):
+     reset_ddr: bank_mbox_req <= 1   (L718)
+                bank_mbox_valid <= 0
+                source_aspect_mbox_req <= 0
+                frame_mbox_req <= 0
+                dma_busy <= 0
+     D_IDLE priority (n3 silicon, NO !rd_act_d2 on PLXJ/PLXD):
+       PLXJ (req=0 at reset) → skip
+       else bank_mbox_req && (!valid || poll_div[7:0]==160)
+         → 1-beat WE BANK_MAILBOX_W = 0x3047F128  MAGIC_D
+     First clk_ddr cycles after reset: first DDRAM txn is that PLXD WE.
+     Heartbeat: !bank_mbox_valid || bank_mbox_hb wrap (18-bit)
+       @ clk_ddr 90 MHz → ~2.91 ms re-req forever.
+     Then doorbell 1-beat RD when poll_div[7:0]==0.
+
+   Address (R-plxd-addr ILLEGAL_ADDR=NO):
+     PHYS_BASE=0x30180000 stride=0x180000
+     DOORBELL=0x3047F000  PLXD=+0x128  PLXJ=+0x130
+     reserved [0x1FF00000,0x40000000). Not Linux RAM.
+
+   m1 fabric_ddr_reader (Plex.sv u_fdirect .enable(1'b1) ALWAYS):
+     rst → S_IDLE  poll_div=0
+     first S_IDLE: poll_div[7:0]==0 → S_PLXP_ISS
+       1-beat RD 0x3047F138
+     MAGIC_P (0x504C5850) → read doorbell 0x3047F000
+     MAGIC_K + src_ok + new token → 1.38 MB copy BURST_MAX=128
+     else stay 1-beat poll.
+
+   No host play ⇒ m1 copy ONLY if leftover MAGIC_P+K already in DRAM.
+   That leftover is UNMEASURED on the second load (L20).
+
+First-load idle (RC=0 + stamp + clip, daemon stopped) lasted seconds
+with (B) running. So (B) 1-beat PLXD + 1-beat PLXP-poll is NOT
+sufficient to reboot on a CLEAN first load.
+
+R-reboot-rca used that to say “1-beat mailbox traffic is not the reboot.”
+True for that first load. NOT a proof that (B) is inert on a second
+load (leftover DRAM, live 931, f2sdram just rebound, RC unharvested).
+
+================================================================
+2) Why second load is a different experiment
+================================================================
+Same bits (d1910177). Different HPS context.
+
+  L-n3-gate first /bin/fpga:
+    coming from true480 07f54d9f
+    daemon STOPPED
+    no in-flight t7 poke
+    (B) ran, SSH lived, RC=0
+    THEN play pokePlxp+kick → class PLAY_START_F2SDRAM_HANG ~5s
+
+  After that reboot:
+    restore /bin/fpga true480 RC=0 (different bitstream; daemon was dead)
+    931 FLAG_OFF on true480 ~22 min (uptime 1311s @ 04:04:52Z)
+    true480 ddr_frame_store also reset bank_mbox_req=1 but at
+      product doorbell 0x3007F128 — NOT 0x3047F128
+    931 paintIdle 320x240 writes ~115200 B @ 0x30000000 — does not
+      touch 0x3047F138 (unless map is 16 MB and some other walker does)
+
+  L-n3-nofab second /bin/fpga:
+    coming from same true480
+    931 likely STILL LIVE (not proven stopped)
+    leftover 0x3047F000/138 from L-n3-gate paintIdle MAY still be
+      MAGIC_P+K if DDR survived the warm watchdog (UNMEASURED)
+    play never started (so this is not PLAY_START)
+
+If leftover MAGIC_P+K survived:
+  second config → m1 1.38 MB copy + m0 reset PLXD WE
+  = dual-master smash WITHOUT host play
+  looks like “died during /bin/fpga”
+
+If leftover was clean:
+  (B) 1-beat only — first load survived that
+  leftover explanation fails
+  (A) live-931 + bridge toggle is the remaining second-load-specific fact
+
+n2 play (FABRIC=1, lived, ACK fail) may also have left MAGIC_P+K
+before the FIRST n3 /bin/fpga. If that poke was REAL, first n3 load
+is a counterexample to “leftover + idle PLXD is sufficient.”
+n2 REAL vs STUB: NOT harvested as a poke dump. Do not collapse.
+
+So: leftover-m1-copy is PLAUSIBLE for second load, NOT proven, and
+has a possible counterexample. Live-daemon bitstream load is the
+strongest HAVE delta. Idle PLXD always runs; first load shows it
+is not enough alone.
+
+================================================================
+3) Silicon vs live SRC (do not confuse)
+================================================================
+d1910177 fitted store md5 4a4fa085 (X-n3 / R-store-hold):
+  D_IDLE PLXJ/PLXD WITHOUT !rd_act_d2
+  D_BURST_ISS drives those WEs during rd_act
+  reset bank_mbox_req=1  (this ticket’s idle publish)
+
+Live worktree sdram_i420_store.sv NOW has !rd_act_d2 restored on
+D_IDLE L857/L864 and D_BURST_ISS L913, with comment “n3 … hung HPS.”
+That is post-n3 SOURCE DRIFT vs freeze 4a4fa085. It is NOT in the
+RBF that rebooted. Cite-only. Do not fit it this tick.
+DRIFT ≠ BUILD_OK ≠ second-load fix. FIT_GO=NO.
+
+================================================================
+4) TRACE answers
+================================================================
+1. Is /bin/fpga-alone safe on d191?
+   First load: programming survived (RC=0). Idle (B) survived seconds.
+   Second load: NOT proven. SSH died; RC unharvested; play never started.
+   SUPERSEDE R-reboot-rca / R-rdact-note / R-fab-hold “not /bin/fpga-alone”
+   for second load only. First-load PLAY_START ~5s fact stays.
+
+2. Bitstream load vs m0 idle PLXD (reset bank_mbox_req=1)?
+   Both run with no host play. (B) starts at reset_ddr, inside /bin/fpga’s
+   bridge-enable. Cannot split them on the second load without a harvested
+   FPGA_NAMED_RC=0 followed by a quiet wait.
+   First load split them: RC=0 then idle lived then PLAY died.
+   Second load did not produce that split.
+
+3. Does idle PLXD target an illegal address?
+   NO. 0x3047F128 reserved. ILLEGAL_ADDR=NO (R-plxd-addr).
+
+4. Does m1 copy without play?
+   Only if leftover MAGIC_P at 0x3047F138 AND MAGIC_K + new token at
+   0x3047F000. Unmeasured on nofab. enable=1 always.
+
+5. FABRIC_DIRECT=0 isolate?
+   NOT done. Cannot start it until a named load is proven to return.
+   FLAG_OFF would only change play-side pokePlxp. It does not stop
+   (A) or reset bank_mbox_req=1.
+
+6. ~5s vs ~27s?
+   ~5s = L-n3-gate SYSLOGD after PLAY start (watchdog class).
+   ~27s = post-nofab uptime at harvest (~25.83s @ 04:05:32Z).
+   Do not treat 27s as a different hang timer unless a first-party
+   nofab log appears.
+
+================================================================
+CONSTRAINTS
+================================================================
+- Code-only. No Quartus. No exclusive. FIT_GO=NO.
+- Did not /bin/fpga. Did not load_core. Did not play. Did not poke.
+- Did not invent FPGA_NAMED_RC for nofab. Did not invent pfps.
+- Soft-skip ≠ PASS. ABSENT nofab report ≠ “needles were X” (L20).
+- Did not write PHASE_BACKLOG. Did not edit RTL.
+
+================================================================
+BACKLOG SUGGESTION (do not write PHASE_BACKLOG)
+================================================================
+P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+n3 d1910177 BUILD_OK TIMING_OK ≠ unique-24.
+L-n3-gate UNIQUE24_FAIL class PLAY_START_F2SDRAM_HANG (first load).
+L-n3-nofab UNIQUE24_FAIL class FPGA_NAMED_SECOND_UNPROVEN
+  (play never started; /bin/fpga-alone NOT safe-proven).
+R-reboot-rca “not /bin/fpga-alone” SUPERSEDED for second load.
+last_honest_pfps=NONE (do not carry T7b 14.1 onto d191).
+Lab glass 07f54d9f. Named d191 sidecar only. ZERO Quartus.
+FIT_GO=NO. Next sole UNNAMED.
+Do not /bin/fpga n3 again until parent recipe:
+  stop ALL misterplexd (not only t7)
+  harvest FPGA_NAMED_RC + quiet wait (proves (A) vs (B))
+  only then consider MPX_FABRIC_DIRECT=0 play isolate
+Do not n4-fit the live !rd_act drift to “fix” second load.
+Do not load_core named (separate LOAD_CORE_REBOOT).
+Do not leave d191 as Plex.rbf (it is not).
+Do not treat as 23.9.
+
+================================================================
+BLOCKERS
+================================================================
+Second named d191 /bin/fpga rebooted HPS before play. No unique-fps.
+Not a Quartus blocker. Not illegal PLXD phys.
+FABRIC=0 play isolate BLOCKED until named load returns RC=0 again.
+Do not invent pfps>=23.9. Do not second n3 /bin/fpga this worker.
+Do not start exclusive.
+
+================================================================
+EVIDENCE
+================================================================
+  /tmp/misterplex-agent-R-fpga-rca.txt            (this)
+  /tmp/misterplex-agent-L-n3-gate.txt             first load RC=0 then PLAY ~5s
+  /tmp/misterplexd.t7gate-d1910177.log            SUMMARY; on-box t7 ABSENT
+  /tmp/pfps-720p24-live-gate-d1910177.txt         pfps=NONE
+  /tmp/misterplex-agent-L-n3-nofab.txt            ABSENT
+  /tmp/misterplex-loop-status.txt                 04:07Z / 04:12Z nofab
+  /tmp/misterplex-agent-bucket.json               FPGA_NAMED then SOC_REBOOT
+  /tmp/misterplex-agent-R-glass-f.txt             931 live; reboot ~04:05:06Z
+  /tmp/misterplex-agent-R-nofab-hv.txt            no first-party nofab
+  /tmp/misterplex-agent-R-reboot-rca.txt          SUPERSEDED for 2nd load
+  /tmp/misterplex-agent-R-rdact-note.txt          n3 !rd_act delta (silicon)
+  /tmp/misterplex-agent-R-plxd-store.txt          reset bank_mbox_req=1
+  /tmp/misterplex-agent-R-plxd-addr.txt           ILLEGAL_ADDR=NO
+  /tmp/misterplex-agent-X-n3.txt                  BUILD_OK d1910177 only
+  fpga/Plex_MiSTer/rtl/sdram_i420_store.sv        L718 reset req=1; silicon 4a4fa085
+  fpga/Plex_MiSTer/rtl/fabric_ddr_reader.sv       enable=1; leftover MAGIC_P copy
+  fpga/Plex_MiSTer/Plex.sv                        u_fdirect .enable(1'b1)
+  fpga/Plex_MiSTer/rtl/ddr_bus_arbiter.sv         m0 WE untracked
+  fpga/Plex_MiSTer/Plex_720p24n2.qsf              FABRIC_DIRECT_READER=1

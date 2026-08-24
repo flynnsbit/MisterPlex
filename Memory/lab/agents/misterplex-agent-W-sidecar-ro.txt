@@ -1,0 +1,101 @@
+W-sidecar-ro  RO RECONFIRM t7-l4.conf 95bff255  2026-08-13T23:44:57Z
+Repo SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Cite-only dirty: /home/shawn/Projects/MisterPlex
+Report: /tmp/misterplex-agent-W-sidecar-ro.txt
+Card: /home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/T7_SIDECAR_95bff255_RECONFIRM.md
+
+ZERO write conf / play / deploy / Quartus / HDMI / kill 2397 / overwrite Plex.rbf.
+Did NOT edit PHASE_BACKLOG.
+Did NOT invent T7 PASS / mix PASS / HDMI PASS.
+
+================================================================
+VERDICT: PIN_OK
+PIN_OK: YES (local 23:44:42Z + lab SSH 23:44:57Z)
+DRIFT: NO
+T7: FAIL (pfps=14.1) unchanged — this worker did not play
+Sidecar ≠ mix matrix
+FIT_GO: NO
+================================================================
+
+PIN_OK ≠ T7 PASS. Sidecar pin ≠ mix PASS ≠ HDMI PASS.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+
+- ZERO write /tmp/t7-l4.conf or /media/fat/misterplex/misterplex.conf
+- ZERO play / play-file / menu / load_core / deploy_plex_core
+- ZERO Quartus / docker / overwrite Plex.rbf
+- ZERO HDMI grab / kill / TERM 2397 / 2385
+- ZERO PHASE_BACKLOG edit
+- Did not invent T7 PASS / mix PASS / HDMI PASS
+
+================================================================
+LOCAL (build host 2026-08-13T23:44:42Z)
+================================================================
+
+  /tmp/t7-l4.conf
+    md5  95bff255c605f81dd543b861f9e5472c
+    size 1001  mtime 2026-08-13 16:46:11 -0500
+    DECODE=1280x720
+    OSD_CONTROL=0
+  expected md5 95bff255c605f81dd543b861f9e5472c  MATCH
+
+================================================================
+LAB RO SSH (root@192.168.1.183  2026-08-13T23:44:57Z)
+================================================================
+
+  /tmp/t7-l4.conf
+    md5  95bff255c605f81dd543b861f9e5472c
+    size 1001  mtime 2026-08-13 16:46:20.976502492 -0500  ino=211
+    DECODE=1280x720   (line 11)
+    OSD_CONTROL=0     (line 12)
+  expected md5 95bff255c605f81dd543b861f9e5472c  MATCH
+  local == lab sidecar equal-md5 : YES
+
+  product /media/fat/misterplex/misterplex.conf
+    md5  4a05032a39803428a63369ceca898c50
+    size 582  mtime 2026-08-13 18:07:52 -0500  ino=890770
+    DECODE=640x480    (line 1)
+    OSD_CONTROL=1     (line 11)
+    DECODE_ALLOW_LAB_480P=1  (line 25; product-only)
+  expected product 4a05032a DECODE=640x480 OSD_CONTROL=1  MATCH
+
+================================================================
+SIDECAR vs PRODUCT
+================================================================
+
+| key         | product 4a05032a | sidecar 95bff255 |
+| DECODE      | 640x480          | 1280x720         |
+| OSD_CONTROL | 1                | 0                |
+
+No sidecar/product write this tick (mtimes unchanged vs W-comp-pin2 23:25:55Z).
+
+================================================================
+EVIDENCE
+================================================================
+
+/tmp/t7-l4.conf  (local; not rewritten)
+lab /tmp/t7-l4.conf  (RO md5+grep only)
+lab /media/fat/misterplex/misterplex.conf  (RO contrast only)
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/T7_SIDECAR_95bff255_RECONFIRM.md
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/T7_SIDECAR_L4_CONF.md
+/tmp/misterplex-agent-W-sidecar-prep.txt
+/tmp/misterplex-agent-W-comp-pin2.txt
+
+================================================================
+BLOCKERS / BACKLOG SUGGESTION
+================================================================
+
+Do not edit PHASE_BACKLOG from this worker.
+Suggestion: sidecar still PIN_OK 95bff255 (DECODE=1280x720 OSD_CONTROL=0)
+local==lab. Product still 4a05032a (DECODE=640x480 OSD_CONTROL=1).
+T7 still FAIL pfps=14.1. PIN_OK ≠ T7 PASS. Sidecar ≠ mix matrix.
+Do not play / do not write conf / do not kill 2397.
+
+================================================================
+DID NOT
+================================================================
+
+  write conf, play, deploy, Quartus, HDMI, kill 2397, overwrite Plex.rbf,
+  edit PHASE_BACKLOG, invent T7 PASS / mix PASS.

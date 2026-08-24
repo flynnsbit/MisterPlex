@@ -1,0 +1,124 @@
+# misterplex agent D-plxf-slot
+UTC=2026-08-14T19:44:19Z
+WORKER=D-plxf-slot
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report=/tmp/misterplex-agent-D-plxf-slot.txt
+Card=Memory/lab/status/PLXF_PRODUCT_WRITER.md
+SLOT=slot720p24plxf
+DESIGN=PRODUCT_PLXF_WRITER + CEA 1650x758@30.00
+
+## VERDICT
+WRAP_OK=YES
+QSF_OK=YES
+QSF_MD5=1fe86cdd9afc3a6d12ec3e6c3a019b70
+PATCH_DRY_RC=0
+WRAP_DEFAULT_RC=2
+WRAP_NOSTAMP_RC=2
+FIT_GO=NO
+FIT_GO_PLXF=NO
+PARENT_STAMP=ABSENT (/tmp/misterplex-FIT_GO_PLXF.parent)
+Quartus=ZERO
+APPLY=NO
+PLAY=NO
+DEPLOY=NO
+LAB_SSH=NO
+N29=NO
+unique24=FAIL
+BUILD_OK=NO
+WRAP_OK≠FIT_GO≠BUILD_OK≠unique-24
+PATCH_DRY_RC=0≠applied
+
+unique24 FAIL: lab 347bb7ea play2 L4 glass presented=0 (PLXF mailbox absent; host correct). MAGIC_F still +0x110 on silicon. Do not invent 23.9.
+
+## What landed (this tick)
+fpga/Plex_MiSTer/Plex_720p24plxf.qsf
+  md5=1fe86cdd9afc3a6d12ec3e6c3a019b70
+  = CEA QSF assignments + overlay SYSTEMVERILOG_FILE rtl/sdram_i420_plxf_writer.sv
+  macros KEEP: PLEX_PRESENT_720P_CEA=1 PRESENT_CLK_PIX_30=1 PRODUCT_NO_STUB=1 SDRAM_I420_STORE=1
+  macros FORBID: PRESENT_CLK_PIX_24 PLEX_CLK_SYS_24 SDRAM_CLK_144 FABRIC_NO_MOVER N14/N7/N8/N29
+  clk_sys=20 SDC=Plex_clk_pix.sdc pix=30.00 legal (29.70 illegal on pll_0002)
+  live files.qip NOT edited (CEA freeze mid-docs)
+
+scripts/fit_slot720p24plxf.sh
+  md5=bae591a0ce597703304f36c07edf9476 mode=755
+  SLOT=slot720p24plxf
+  PARENT_STAMP=/tmp/misterplex-FIT_GO_PLXF.parent
+  LOG=/tmp/plex_quartus_slot720p24plxf.log (NOT created this tick)
+  DRY_LOG=/tmp/plex_fit_slot720p24plxf_dryrun.log
+  HOST=node-worker1 refuse lab ssh 192.168.1.183
+  trap-restore product Plex.qsf b049c94413d02a1a63dfd03b7234d7e1
+  writer expect 50012e63ec3f01419da8a5769f03d465
+  unpatched store expect 8dc97b71620833ddacd4f52f0a11b4f6 → FIT_GO path aborts APPLY_NOT_DONE
+  post-apply: live md5 must match stamp STORE_FREEZE= (or STORE=)
+  wrap does NOT apply patch
+  BAN includes 347bb7ea (CEA play) + d8d376f2 + existing bans
+
+## Dry-run evidence
+cmd=cd SoT && patch --dry-run -p1 < fpga/Plex_MiSTer/rtl/sdram_i420_store.plxf.patch
+PATCH_DRY_RC=0
+checking file fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+checking file fpga/Plex_MiSTer/files.qip
+store after still 8dc97b71620833ddacd4f52f0a11b4f6 u_plxf=0
+qip after still 3c8af790d25dfb7d90c895ecd1fb8365 plxf_writer=0
+product Plex.qsf still b049c94413d02a1a63dfd03b7234d7e1
+sdram still 10ef07ea9b28ec9ed07bb929a06204d7
+writer still 50012e63ec3f01419da8a5769f03d465
+
+cmd=scripts/fit_slot720p24plxf.sh (FIT_GO_PLXF unset)
+WRAP_DEFAULT_RC=2 DRY_RUN=YES Quartus=ZERO APPLY=NO
+QSF_MD5=1fe86cdd9afc3a6d12ec3e6c3a019b70 MATCH pin
+HOOKS=qip_writer=ABSENT qsf_writer=YES store_u_plxf=ABSENT
+dry=/tmp/plex_fit_slot720p24plxf_dryrun.log
+
+cmd=FIT_GO_PLXF=YES scripts/fit_slot720p24plxf.sh (no parent stamp)
+WRAP_NOSTAMP_RC=2
+ABORT: missing /tmp/misterplex-FIT_GO_PLXF.parent (unauthorized FIT_GO_PLXF)
+plex_quartus_slot720p24plxf.log ABSENT (did not start farm/Quartus)
+
+Exclusive this tick: no local quartus / quartus_sh / mplex-fit docker.
+
+## Frozen (UNTOUCHED)
+live store 8dc97b71620833ddacd4f52f0a11b4f6
+sdram     10ef07ea9b28ec9ed07bb929a06204d7
+writer    50012e63ec3f01419da8a5769f03d465
+patch     2a0fe386b49aee50331d106edbf2d7ef
+files.qip 3c8af790d25dfb7d90c895ecd1fb8365 (no plxf_writer)
+product Plex.qsf b049c94413d02a1a63dfd03b7234d7e1
+Plex_720p24cea.qsf 7da62945117eb275a6d3c6b46094a50c (not edited)
+
+## NOT done (correct)
+- Did not apply plxf.patch to live store / qip
+- Did not Quartus / docker / farm overlay
+- Did not create FIT_GO_PLXF.parent
+- Did not play / deploy / /bin/fpga / lab ssh
+- Did not n29
+- Did not add writer to live files.qip
+- Did not edit product Plex.qsf or Plex_720p24cea.qsf
+
+## Parent later (not this worker)
+1. Stamp /tmp/misterplex-FIT_GO_PLXF.parent with FIT_GO_PLXF=YES
+2. Apply: patch -p1 < fpga/Plex_MiSTer/rtl/sdram_i420_store.plxf.patch
+3. Pin STORE_FREEZE=<post-apply md5> on the stamp (unpatched 8dc97b71 must abort APPLY_NOT_DONE)
+4. Then FIT_GO_PLXF=YES scripts/fit_slot720p24plxf.sh (farm node-worker1 only)
+5. Ban 347bb7ea. unique24 still FAIL until play scores 23.9.
+
+## Backlog status suggestion
+P3-720P24 IN_PROGRESS / unique24 FAIL.
+PRODUCT_PLXF_WRITER wrap ready (QSF+script). FIT_GO=NO until parent stamp.
+Then apply store hunks + fit slot720p24plxf. Do not n29. Do not loosen MAGIC_F to +0x110.
+W-docs may note wrap ready; do not mark unique24 PASS.
+
+## Blockers
+FIT_GO=NO — parent has not stamped /tmp/misterplex-FIT_GO_PLXF.parent.
+APPLY_NOT_DONE by design (live store still 8dc97b71 CEA freeze).
+unique24 FAIL (already measured; presented=0 on 347bb7ea). No wrap blocker.
+
+## Evidence
+/tmp/misterplex-agent-D-plxf-slot.txt
+/tmp/plex_fit_slot720p24plxf_dryrun.log
+fpga/Plex_MiSTer/Plex_720p24plxf.qsf
+scripts/fit_slot720p24plxf.sh
+fpga/Plex_MiSTer/rtl/sdram_i420_store.plxf.patch
+fpga/Plex_MiSTer/rtl/sdram_i420_plxf_writer.sv
+Memory/lab/status/PLXF_PRODUCT_WRITER.md
+/tmp/misterplex-agent-D-plxf-product.txt

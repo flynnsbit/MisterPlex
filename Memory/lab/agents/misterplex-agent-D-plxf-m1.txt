@@ -1,0 +1,149 @@
+WORKER=D-plxf-m1-tb
+UTC=2026-08-14T20:37Z
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+GOAL=Harvest D-plxf-m1 RTL and RUN writer TB. Honest TB_OK. Do not stamp FIT_GO.
+STATUS=DONE
+
+VERDICT=TB_OK=YES ELAB_OK=YES FIT_GO=NO unique24=FAIL
+TB_OK=YES
+ELAB_OK=YES
+FIT_GO=NO
+FIT_GO_PLXFM1=NO
+UNIQUE24=FAIL
+pfps=12.8
+hw_fps=NONE
+F@118=NO
+INVENT_23.9=NO
+LOOSEN_+0x110=NO
+QUARTUS=ZERO
+PLAY=NO
+/bin/fpga=NO
+APPLY_FSM_PATCH=NO
+n29=NO
+RTL_EDIT=NO
+
+# Independent TB (this worker 20:35:33Z). Not invented. Not the 20:32Z D-plxf-m1 claim alone.
+CMD=tests/rtl/sdram_i420_plxf_writer_tb.sh
+SCRIPT_RC=0
+IVL_RC=0
+VVP_RC=0
+PASS_LINE=sdram_i420_plxf_writer_tb: PASS ADDR=doorbell+0x118 want_held WE_until_accept MAGIC_F m1
+TB_LOG=/home/shawn/Projects/MisterPlex-wt-480p-lessons/build/iverilog/sdram_i420_plxf_writer/plxf_writer_tb.log
+CLOG=/home/shawn/Projects/MisterPlex-wt-480p-lessons/build/iverilog/sdram_i420_plxf_writer/plxf_writer_tb_compile.log
+IVERILOG=/home/shawn/.local/oss-cad-suite/bin/iverilog
+VVP=/home/shawn/.local/oss-cad-suite/bin/vvp
+TB_OK_RULE=script exit 0 AND log contains "sdram_i420_plxf_writer_tb: PASS" — both true.
+
+# Optional elab (separate from TB_OK)
+ELAB_CMD=iverilog -g2012 -t null -s sdram_i420_store store.sv writer.sv line_buf_ram.sv async_fifo.sv
+ELAB_RC=0
+ELAB_LOG=/home/shawn/Projects/MisterPlex-wt-480p-lessons/build/iverilog/sdram_i420_plxf_m1_elab/elab.log
+ELAB_OK_NOTE=cheap -t null of writer+store+deps. Empty log. Does not edit live sources. ELAB_OK ≠ unique-24. ELAB_OK ≠ FIT_GO.
+
+# Hashes (md5sum this tick)
+STORE=aa3bce599616559a779e93814faf8863
+  path=fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  MATCH_PARENT_HARVEST=YES (aa3bce599616559a779e93814faf8863)
+WRITER=16be1515ab0cb75ec952c561225f0dc0
+  path=fpga/Plex_MiSTer/rtl/sdram_i420_plxf_writer.sv
+  PARENT_HARVEST_20:31Z=5fdf924ccd8dfbb801ffb4eb36503b4a
+  HASH_VS_HARVEST=DRIFT (live 16be1515; harvest 5fdf924c)
+  D_PLXF_M1_20:32Z=16be1515 MATCH live
+  NOTE=TB ran against live 16be1515, not the 20:31Z harvest hash.
+ARBITER=50bf5754ef117ace19d38174eaf29f89
+  path=fpga/Plex_MiSTer/rtl/ddr_bus_arbiter.sv
+  MATCH_PARENT_HARVEST=YES
+  NOTE=module is ddr_bus_arbiter (not sdram_ddram_arbiter)
+TB_SV=d1f400f3dede92ba6511a4cf46dac042
+  path=tests/rtl/sdram_i420_plxf_writer_tb.sv
+  PARENT_HARVEST_TB=6171b64f6ef8f84da19eee4cb3d08926 (older)
+TB_SH=0d5afadda720b90b53534907b2557e96
+  path=tests/rtl/sdram_i420_plxf_writer_tb.sh
+PRESENT=072e1db182a386016a3e4a8c1322a87a
+  path=fpga/Plex_MiSTer/rtl/present_core.sv
+  MATCH_PARENT_HARVEST=YES
+QIP=3c8af790d25dfb7d90c895ecd1fb8365
+  path=fpga/Plex_MiSTer/files.qip
+  DIRTY=YES vs git (store/n* siblings added) but NO sdram_i420_plxf_writer
+PLEX_SV=fedb5b7af1304f149477dcf78d8a0868
+  path=fpga/Plex_MiSTer/Plex.sv
+
+# Static harvest (PRODUCT_PLXF_M1)
+STORE_BANNER=PRODUCT_PLXF_M1 YES (sdram_i420_store.sv L10)
+COMBO_MUX=GONE
+  DDRAM_ADDR=fsm_addr (L692)
+  DDRAM_WE=fsm_we (L693)
+  DDRAM_DIN=fsm_din (L694)
+  DDRAM_RD=fsm_rd (L695)
+  DDRAM_BURSTCNT=fsm_bcnt (L696)
+  fw_issuing=ABSENT
+WRITER_HANDSHAKE=OK
+  fw_want=level want_r until accept
+  ADDR=PLXF_W every beat (keep/preserve; doorbell+0x118>>3)
+  fw_we=held while granted && !busy
+  fw_ack=we_r & ~busy
+  NO 1-cycle WE pulse / want drop
+  NO +0x110 in writer (grep 32'h110|0x110 empty)
+  MAGIC_F=32'h504C_5846 DIN lo forced
+  PLXF_PHYS=DOORBELL_PHYS + 32'h118
+PLEX_M1=PLEX_PLXF_M1 under PRODUCT_NO_STUB && !FABRIC_*
+  SAME_CLOCK_M1=1
+  m1_want=plxf_fw_want m1_addr=plxf_fw_addr m1_we=plxf_fw_we m1_din=plxf_fw_din
+  m1_burstcnt=1 m1_rd=0 m1_be=8'hFF
+  stream m1 off
+QIP_WRITER=NO (TB script would FAIL if present; QIP_WRITER_COUNT=0)
+QSF_OVERLAY=Plex_720p24plxf.qsf L158 SYSTEMVERILOG_FILE rtl/sdram_i420_plxf_writer.sv
+LIVE_STORE_VS_CEA=WARN only (aa3bce59 != CEA freeze 8dc97b71). Script continued. Expected: PRODUCT_PLXF_M1 already landed.
+
+# Parent harvest 20:31Z
+HARVEST=/tmp/misterplex-agent-D-plxf-m1-harvest.txt
+HARVEST_STATUS=RTL_LANDED / REPORT_ABSENT / TB_OK=NOT_RUN
+D_PLXF_M1_RTL=20:32Z CODED_TB_OK same live hashes (this worker overwrote /tmp/misterplex-agent-D-plxf-m1.txt per MUST-write-both)
+
+# Sibling stamp (NOT this worker)
+SIBLING_STAMP=/tmp/misterplex-FIT_GO_PLXFM1.parent
+SIBLING_STAMP_UTC=2026-08-14T20:35Z
+SIBLING_STAMP_BIRTH=2026-08-14 15:36:02 -0500
+SIBLING_STAMP_CLAIMS=FIT_GO_PLXFM1=YES TB_OK=YES LAUNCH=NO WRAP_STALE=YES
+THIS_WORKER_TOUCHED_STAMP=NO
+THIS_WORKER_FIT_GO=NO
+NOTE=parent harvest said parent stamps FIT_GO_PLXFM1 later ONLY if TB_OK. Sibling D-plxf-m1 wrote the stamp. This worker did not create/edit/delete it and does not launch wrap.
+
+# Lab
+LAB=849bc600 SKIP_RESTORE
+BAK=KEEP 07f54d9f
+CLASS=WE_WITHOUT_ADDR_COMMIT (1-cycle m0 overlay) — product next = exclusive m1 level-want (this RTL)
+REPLAY_849bc600=NO
+RESTORE_07f54d9f=NO
+
+# Not done / parked by this worker
+NOT_STAMPED_BY_ME=YES
+NOT_QUARTUS=YES
+NOT_PLAY=YES
+NOT_FPGA_BIN=YES
+NOT_APPLY=sdram_i420_store.plxf-fsm.patch
+NOT_n29=YES
+NOT_PHYS+8=YES
+NOT_QSF_RETIME=YES
+NOT_iss_FRAME=YES
+NOT_LOOSEN_F=YES
+
+# Backlog suggestion
+# P3-720P24 stays IN_PROGRESS / unique24 FAIL.
+# TB_OK=YES this tick. Parent MAY stamp/accept FIT_GO_PLXFM1 next tick.
+# This worker does NOT stamp FIT_GO / FIT_GO_PLXFM1 and does NOT launch exclusive.
+# Sibling stamp exists with LAUNCH=NO WRAP_STALE=YES — parent should restamp/accept, not auto-FIT old wrap.
+# unique24 remains FAIL until pfps AND hw_fps ≥23.9, drops=0, presented>0, MAGIC_F@+0x118
+# on a NEW m1 RBF. Do not invent 23.9. Do not loosen F to +0x110.
+# BUILD_OK+DEPLOY of 849bc600 overlay ≠ F@118. Soft-skip ≠ PASS.
+# files.qip must stay without sdram_i420_plxf_writer until parent apply (QSF overlay already lists it).
+# Next=parent FIT_GO_PLXFM1 then ONE exclusive of store aa3bce59 / writer 16be1515 (new wrap; old wrap stale).
+
+BLOCKERS=none for TB. FIT_GO parked for parent. unique24=FAIL (not a TB blocker). Sibling premature stamp is a parent policy item, not a TB fail.
+EVIDENCE=/tmp/misterplex-agent-D-plxf-m1-tb.txt
+EVIDENCE2=/tmp/misterplex-agent-D-plxf-m1.txt
+EVIDENCE3=/home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-D-plxf-m1-tb.txt
+TB_LOG_PATH=/home/shawn/Projects/MisterPlex-wt-480p-lessons/build/iverilog/sdram_i420_plxf_writer/plxf_writer_tb.log
+ELAB_LOG_PATH=/home/shawn/Projects/MisterPlex-wt-480p-lessons/build/iverilog/sdram_i420_plxf_m1_elab/elab.log
+HARVEST_PATH=/tmp/misterplex-agent-D-plxf-m1-harvest.txt
+SIB_STAMP_PATH=/tmp/misterplex-FIT_GO_PLXFM1.parent

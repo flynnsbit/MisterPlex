@@ -1,0 +1,79 @@
+# misterplex agent M-fitmon-n5
+Date: 2026-08-14T04:40:26Z
+Worker: M-fitmon-n5
+Slot: slot720p24n5
+Status: TERMINAL (exclusive IDLE)
+
+VERDICT: BUILD_OK YES / TIMING_OK YES / unique24=FAIL / DEPLOY=NO
+BUILD_OK: YES
+TIMING_OK: YES
+FIT_WRAPPER_RC: 0
+RBF_MD5: 4554fdb392b1030ed523dfb082e3bad8
+FARM_RBF_MD5: 4554fdb392b1030ed523dfb082e3bad8
+RBF_BYTES: 2846036
+unique24: FAIL
+pfps: NONE
+DEPLOY: NO
+LAB_PLEX_RBF_TOUCHED: NO
+STORE_MD5: 47e8bc88bd3e2b539f85424da30f065e (local+farm; unchanged)
+product_Plex.qsf: b049c94413d02a1a63dfd03b7234d7e1 RESTORED
+
+## Goal
+Harvest exclusive slot720p24n5. Confirm or deny BUILD_OK with evidence. Never invent success. Do not deploy.
+
+## Exclusive snapshot (this tick)
+Harvest 1 @ 04:38:00Z LIVE: local wrapper pids 356143/356199/356213; docker mplex-fit-flynnsbit-slot720p24n5-20260813233303 Up ~5 min; quartus_fit pid 1307744; lock present; map-only (no fit.rpt/RBF).
+Harvest 2 @ 04:39:18Z LIVE advancing: quartus_asm pid 1311562; Plex.fit.rpt+Plex.sof present; no STA/RBF yet.
+Harvest 3 @ 04:39:45Z–04:40:18Z TERMINAL IDLE:
+- local wrapper: NONE (fit_slot720p24n5.sh / build_rbf_remote.sh gone; X-n5 launcher gone)
+- farm docker mplex-fit-*slot720p24n5*: ABSENT
+- farm quartus_*: NONE
+- farm lock /home/flynnsbit/mplex-builds/slot720p24n5/.build-lock: ABSENT
+- docker/quartus pids: none
+
+## BUILD_OK gates (ALL required; ALL met)
+- [x] FIT_WRAPPER_RC=0 and FIT_WRAPPER_DONE — /tmp/plex_quartus_slot720p24n5.log L174–L175
+- [x] Quartus Prime Full Compilation was successful. 0 errors, 56 warnings — farm+local compile.log Info (293000)
+- [x] new RBF md5 NOT banned — 4554fdb3 ∉ {a69a62f9,752fc1e2,cc9dbd74,0fc77c10,d1910177,e8960391,8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0}
+- [x] hier sdram_i420_store:fstore present (NOT only STORE_M2)
+    - wrapper hier: `|sys_top|emu:emu|present_core:present|sdram_i420_store:fstore` 6948 ALUTs / 4837 regs / 48 M10K / 4 DSP = present
+    - sdram_i420_store_m2: skipped (need SDRAM_I420_STORE_M2)
+    - farm fit.rpt: fstore=509 hits; STORE_M2=0
+- [x] asked slacks >= 0 (independent parse of Plex.sta.rpt; 0 negative-slack rows)
+    - Worst setup 0.587 / hold 0.189 / recovery 4.271 / removal 1.178 / min-pulse 0.555 (all ns)
+    - TNS all 0.000
+- [x] exclusive idle after wrapper done — see snapshot
+- [x] product Plex.qsf restored b049c94413d02a1a63dfd03b7234d7e1 (local tree; bak matches)
+
+## RBF (copied by wrapper; NOT deployed)
+- farm: /home/flynnsbit/mplex-builds/slot720p24n5/Plex_MiSTer/output_files/Plex.rbf  2846036  4554fdb392b1030ed523dfb082e3bad8
+- local: /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n5/Plex.rbf  same md5/bytes
+- named copy (wrapper only; NEVER load_core named Plex.720p24.*): remote_out/slot720p24n5/Plex.720p24.4554fdb3.rbf  same md5
+- n4 leftover e8960391 in remote_out/slot720p24n4/ is BANNED and is NOT this fit
+
+## Timing (TIMING_OK=YES; not unique-24)
+Fitter Successful Fri Aug 14 04:39:06 2026; Assembler+TimeQuest successful; wall_seconds=384; ALMs 13235/41910 (32%).
+Tightest: setup 0.587 (pll_hdmi), hold 0.189 (pll_hdmi).
+Bit-identity: UNVERIFIED (MISTER_REMOTE_ALLOW_UNVERIFIED=1) — does not block BUILD_OK.
+unique-24 FAIL. pfps=NONE. Soft-skip ≠ PASS. BUILD_OK ≠ unique-24. Do not invent pfps>=23.9.
+
+## Constraints obeyed
+- ZERO Quartus from this worker. Did not start a second fit. Did not take exclusive.
+- Did not edit sdram_i420_store.sv / RTL / QSF.
+- No deploy. No ssh 192.168.1.183. No load_core. No /bin/fpga. No play.
+- Never loaded Plex.720p24.*. Never PLEX_CLK_SYS_24.
+- Did not /bin/fpga n3 d1910177 or n4 e8960391.
+- No cards. No PHASE_BACKLOG essays. No H-proto.
+
+## Evidence paths
+- /tmp/plex_quartus_slot720p24n5.log
+- /tmp/misterplex-agent-X-n5.txt (launch PENDING; this harvest is SoT for BUILD_OK)
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n5/{Plex.rbf,Plex.720p24.4554fdb3.rbf,Plex.sta.rpt,Plex.fit.rpt,compile.log,summary.txt}
+- farm compile.log /home/flynnsbit/mplex-builds/slot720p24n5/build_remote/compile.log
+- farm output_files Plex.{rbf,fit.rpt,sta.rpt,asm.rpt,map.rpt}
+
+## Backlog status suggestion
+Do not write PHASE_BACKLOG. Parent: exclusive FREE. BUILD_OK of 4554fdb3 recorded. DEPLOY=NO this worker. unique-24 still FAIL. FIT_GO next exclusive is parent call (do not start).
+
+## Blockers
+None for harvest. unique-24 / glass / pfps not in scope. Parent must not deploy named Plex.720p24.* and must not /bin/fpga this RBF without a later authorized deploy worker.

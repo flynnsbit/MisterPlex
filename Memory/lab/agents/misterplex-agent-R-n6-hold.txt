@@ -1,0 +1,114 @@
+# misterplex agent R-n6-hold
+Date: 2026-08-14T04:59:45Z
+Worker: R-n6-hold
+Slot: slot720p24n6
+Mode: READ_ONLY HOLD
+EDITED: NO
+QUARTUS: ZERO
+LAB_SSH: NEVER
+CARDS: none
+PHASE_BACKLOG: not written
+Memory/lab/status/*.md: not written
+
+EXCLUSIVE=FREE
+n6=NOT_STARTED
+FIT_GO=NO
+SECOND_QUARTUS=NO
+unique24=FAIL
+
+## Verdict
+HOLD_OK. Exclusive Quartus slot is FREE and stayed FREE. n6 was not started.
+No fit_slot720p24n6.sh created. No docker mplex-fit. No store/QSF edit.
+No lab FPGA load. FIT_GO=NO (parent: n5 4554fdb3 UNMEASURED for unique-24;
+named /bin/fpga n2–n5 idle HPS reboot; no stay-up load path; no new RTL reason).
+unique24=FAIL not claimed. No BUILD_OK invented. No pfps.
+
+## Why FIT_GO=NO (parent, this tick)
+- n5 4554fdb3 BUILD_OK TIMING_OK store 47e8bc88 doorbell_ok — UNMEASURED for unique-24
+- Named /bin/fpga of n2/n3/n4/n5 ALL reboot HPS at idle. No stay-up load path proven.
+- FIT_GO=NO unless a new RTL reason exists AND we have a stay-up load path.
+  Neither is true this tick.
+
+## 1) Local exclusive (studio)
+when=2026-08-14T04:58:20Z..04:59:31Z
+LOCAL_EXCL=FREE
+  pgrep quartus_*: NO_QUARTUS_PROC
+  pgrep -x quartus_map|quartus_fit|quartus_sta|quartus_asm|quartus_sh|quartus_cdb|quartus_syn: NO_QUARTUS_X
+  docker ps live matching quartus|mplex-fit: NO_DOCKER_QUARTUS_MPLEXFIT
+  docker ps live (all): matter-server, plex only
+  docker ps -a leftover (not running, 2 weeks): plex_quartus_osd, plex_rbf_statusv2
+    (ghcr.io/raetro/quartus:mister Exited (0) — not a live exclusive)
+  /tmp/slot720p24n6*: ABSENT
+  /tmp/plex_quartus_slot720p24n6*: ABSENT
+  scripts/fit_slot720p24n6.sh: ABSENT
+  find worktree *slot720p24n6*: empty
+  Existing n2–n5 wrappers only (not executed by this worker):
+    scripts/fit_slot720p24n2.sh
+    scripts/fit_slot720p24n3.sh
+    scripts/fit_slot720p24n4.sh
+    scripts/fit_slot720p24n5.sh
+  pgrep -f quartus|mplex-fit|fit_slot720p24: only this hold shell (self-match)
+
+## 2) Farm exclusive (node-worker1, BatchMode)
+host=node-worker1 (192.168.1.24 flynnsbit) when=2026-08-14T04:59:31Z
+FARM_REACHABLE=YES
+FARM_EXCL=FREE
+  pgrep quartus_*: NO_QUARTUS_PROC
+  docker ps live quartus|mplex-fit: NO_DOCKER_QUARTUS_MPLEXFIT
+  docker ps -a leftover (not running): 68aa6df5f61d mplex-seed2-sta Exited (0) 5 days ago
+  /home/flynnsbit/mplex-builds/slot720p24n6: ABSENT (required)
+  /home/flynnsbit/mplex-builds/slot720p24n6*: NO_N6_GLOB
+  slot720p24n5 .build-lock: NO_N5_LOCK
+  Highest existing farm slot: slot720p24n5 (mtime Aug 13 23:39)
+  pgrep -f mplex-fit|fit_slot720p24|quartus_: only this BatchMode probe shell
+
+n6 store must stay ABSENT — confirmed ABSENT. This worker did not mkdir.
+
+## 3) Product Plex.qsf (read-only)
+LIVE=b049c94413d02a1a63dfd03b7234d7e1
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+  mtime=2026-08-13 22:32:51.710124510 -0500 size=6343
+PRIOR_BAK=b049c94413d02a1a63dfd03b7234d7e1
+  /tmp/Plex.qsf.product-480p.slot720p24n5.bak
+  (same md5 on n/n2/n3/n4/n5/m/m2/k/j/i/h/f baks)
+cmp LIVE vs n5 bak: QSF_IDENTICAL_TO_N5_BAK
+Still 480p product:
+  FRAME_W=640 FRAME_H=480 PLEX_PRESENT_TRUE_480P=1 (active)
+  PLEX_PRESENT_720P_L4 / FABRIC_NATIVE_720P_GEOM / FRAME_H=720: commented
+  comment L94–95: sibling recipe Plex_720p24.qsf (clk_sys 24 MHz); do not raise here
+PLEX_CLK_SYS_24 in product Plex.qsf: ZERO_PLEX_CLK_SYS_24_IN_PRODUCT_QSF
+PLEX_CLK_SYS_24 elsewhere: only commented in sibling
+  Plex_720p24.qsf / Plex_720p24n2.qsf / Plex_720p24m2.qsf
+  (#set_global_assignment ... PLEX_CLK_SYS_24=1 — NOT enabled)
+This worker did NOT edit QSF, restore, or write sibling overlays.
+
+## 4) Not done (by design)
+- did not create scripts/fit_slot720p24n6.sh
+- did not docker mplex-fit
+- did not edit store / QSF
+- did not ssh lab FPGA (192.168.1.183)
+- did not /bin/fpga, load_core, or play
+- did not enable PLEX_CLK_SYS_24
+- did not write cards / PHASE_BACKLOG / Memory/lab/status/*.md
+- did not start n6
+- did not invent BUILD_OK or pfps
+- unique24 remains FAIL (unmeasured)
+
+## Actions
+READ_ONLY confirm only. Zero Quartus. Exclusive held FREE.
+
+## Backlog status suggestion
+(not written) n6 NOT_STARTED; EXCLUSIVE=FREE; FIT_GO=NO; SECOND_QUARTUS=NO;
+unique24=FAIL; do not start slot720p24n6 until parent grants FIT_GO after a
+stay-up load path AND a new RTL reason.
+
+## Blockers
+FIT_GO=NO (parent). No stay-up load path. unique-24 unmeasured on n5 4554fdb3.
+No new RTL reason this tick. Not a hold-worker defect.
+
+## Evidence
+  /tmp/misterplex-agent-R-n6-hold.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-n6-hold.txt
+  product Plex.qsf md5 b049c94413d02a1a63dfd03b7234d7e1
+  farm ls: ABSENT /home/flynnsbit/mplex-builds/slot720p24n6
+  /tmp/misterplex-loop-status.txt (parent TICK=2026-08-14T04:56Z exclusive=FREE unique24=FAIL)

@@ -1,0 +1,116 @@
+# misterplex agent R-store-hold-n6
+Date: 2026-08-14T05:34:40Z
+Worker: R-store-hold-n6
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-R-store-hold-n6.txt
+Status: HOLD_OK
+EDITED: NO
+Quartus: ZERO (this worker)
+DEPLOY: NO
+LAB_SSH: NEVER
+SECOND_QUARTUS: NO
+FIT_GO: consumed-by-X-n6 (LIVE; this worker did not take it)
+unique24: FAIL
+BUILD_OK: NOT invented (n6 still compiling; FIT_WRAPPER_DONE absent)
+
+## Goal
+Prove live sdram_i420_store.sv stays frozen at 7f3d52c0745cdc2a7c503372befdabd2
+while slot720p24n6 compiles. Do NOT edit. ZERO Quartus from this worker.
+
+## Constraints honored
+- ZERO Quartus / docker / fit_slot / build_rbf from this worker
+- Did not edit sdram_i420_store.sv or Plex.qsf
+- Did not restore QSF (n6 LIVE overlay is expected)
+- NEVER /bin/fpga NEVER load_core NEVER play NEVER lab deploy
+- unique24=FAIL not claimed
+- Did not invent BUILD_OK / TIMING / RBF md5
+
+## 1. STORE_MD5 (freeze)
+
+EXPECT=7f3d52c0745cdc2a7c503372befdabd2
+LOCAL=7f3d52c0745cdc2a7c503372befdabd2  MATCH=YES
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime=2026-08-14 00:31:02.323200676 -0500  size=44199  lines=1440
+FARM=7f3d52c0745cdc2a7c503372befdabd2  MATCH=YES
+  /home/flynnsbit/mplex-builds/slot720p24n6/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime=2026-08-14 00:31:02.323200676 -0500  size=44199
+DRIFT=NO  EDITED=NO
+mtime is before X-n6 START 2026-08-14T05:31:56Z (store not touched mid-fit).
+
+Dirty decode main has no sdram_i420_store.sv (product SoT is lessons worktree).
+
+## 2. DDR_BURST_VBLANK is 8'd8 not 16
+
+  L115  localparam [7:0] DDR_BURST_HBLANK = 8'd4;
+  L116-118  comment: Must be <= dma_fifo AF_HEADROOM (8). Burst 16 + AF at occ>=23
+            dropped Avalon beats (L-n5-play2 3s frames_done=0).
+  L119  localparam [7:0] DDR_BURST_VBLANK = 8'd8;
+  L120  localparam [15:0] VBLANK_RUN_MIN = 16'd200;
+  L580  async_fifo #(.WIDTH(64), .AW(5), .AF_HEADROOM(8)) dma_fifo
+  L650  wire [7:0] burst_want = in_vblank ? DDR_BURST_VBLANK : DDR_BURST_HBLANK;
+
+DDR_BURST_VBLANK=8'd8  NOT 8'd16
+8'd16 assignment on VBLANK: ABSENT
+Only other 8'd16* hit: L869 poll_div[7:0] == 8'd160 (mailbox poll; not burst).
+burst 8 <= AF_HEADROOM 8.
+
+## 3. Product Plex.qsf (n6 LIVE overlay — not changed)
+
+LIVE=84c2f4b2e85f150e073578e7e4406b69  OVERLAY_n6_LIVE
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+  mtime=2026-08-13 21:31:30.269412703 -0500  size=7331
+OVERLAY=84c2f4b2e85f150e073578e7e4406b69  MATCH LIVE (cmp equal)
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex_720p24n2.qsf
+FARM_QSF=84c2f4b2e85f150e073578e7e4406b69  MATCH overlay
+  /home/flynnsbit/mplex-builds/slot720p24n6/Plex_MiSTer/Plex.qsf
+BAK=b049c94413d02a1a63dfd03b7234d7e1  product 480p (not restored while n6 LIVE)
+  /tmp/Plex.qsf.product-480p.slot720p24n6.bak
+QSF_STATE=overlay 84c2f4b2 (n6 LIVE)  ALLOWED
+Did not restore. Did not edit. FRAME_W=1280 FRAME_H=720 PLEX_PRESENT_720P_L4=1
+SDRAM_I420_STORE=1. PLEX_CLK_SYS_24 commented only (L123).
+
+## 4. unique24=FAIL; FIT_GO consumed by X-n6
+
+unique24=FAIL  (not claimed; last honest loop 14.1; no play this worker)
+FIT_GO=consumed-by-X-n6
+EXCLUSIVE=LIVE slot720p24n6
+  farm docker: mplex-fit-flynnsbit-slot720p24n6-20260814003158
+  farm: quartus_sh --flow compile Plex.qpf
+  farm: quartus_fit --ipc_flow=15 Plex -c Plex  (pid 1330460)
+  farm .build-lock: PRESENT (dir 2026-08-14 00:31)
+  local quartus_*: NONE (this worker launched none)
+  local docker: matter-server, plex only (NO local mplex-fit)
+LOG=/tmp/plex_quartus_slot720p24n6.log  size=848  lines=13
+  L1 X-n6 START 2026-08-14T05:31:56Z store=7f3d52c0745cdc2a7c503372befdabd2 DDR_BURST_VBLANK=8
+  STORE_MD5=7f3d52c0745cdc2a7c503372befdabd2
+  Overlay 84c2f4b2 BAK b049c944
+  FIT_WRAPPER_DONE: ABSENT  (still compiling; do not invent BUILD_OK)
+X-n6 report LIVE: /tmp/misterplex-agent-X-n6.txt
+loop 05:34Z: exclusive=LIVE store_freeze=7f3d52c0 DDR_BURST_VBLANK=8 MATCH farm+local
+
+## Verdict
+HOLD_OK. Live store frozen 7f3d52c0745cdc2a7c503372befdabd2 (local+farm).
+DDR_BURST_VBLANK=8'd8 not 16. Product Plex.qsf is overlay 84c2f4b2 (n6 LIVE);
+bak still b049c944. unique24=FAIL. FIT_GO consumed by X-n6. SECOND_QUARTUS=NO.
+EDITED=NO. BUILD_OK not invented.
+
+## Backlog status suggestion (not written)
+Keep store 7f3d52c0 LOCK_OK while n6 LIVE. Do not mid-fit edit. Do not revert
+47e8bc88. Do not restore QSF until wrapper EXIT restore. unique24=FAIL.
+Do not start a second exclusive.
+
+## Blockers
+none for this hold. n6 still compiling (FIT_WRAPPER_DONE absent) — harvest is
+X-n6 / M-fitmon-n6, not this worker.
+
+## Evidence
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex_720p24n2.qsf
+/tmp/Plex.qsf.product-480p.slot720p24n6.bak
+/tmp/plex_quartus_slot720p24n6.log
+/tmp/misterplex-agent-X-n6.txt
+/tmp/misterplex-loop-status.txt
+/tmp/misterplex-agent-R-store-hold-n6.txt
+farm: /home/flynnsbit/mplex-builds/slot720p24n6/Plex_MiSTer/rtl/sdram_i420_store.sv
+farm: docker mplex-fit-flynnsbit-slot720p24n6-20260814003158 + quartus_fit

@@ -1,0 +1,93 @@
+# misterplex agent R-sdram-m2b
+Worker: R-sdram-m2b
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+UTC: 2026-08-14T02:16Z
+Quartus: ZERO
+
+## Verdict
+PASS — kick no longer launches from combo stick_base(). DMA kick
+loads wr_stick_addr from registered base_kick_r (one extra beat via
+kick_load_r). files.qip untouched. Live sdram_i420_store.sv untouched.
+BUILD_OK: NO. TIMING_OK: NO. unique-24: NOT claimed.
+Soft-skip ≠ PASS. 752fc1e2 not deployed.
+
+## Status
+KICK_PIPE: registered (base_kick_r <= stick_base(dest_kick_s2))
+KICK_LAUNCH: wr_stick_addr <= base_kick_r (not combo)
+S_WR_ISSUE: sdram_addr <= wr_stick_addr (flop)
+QIP: untouched (m2 still absent)
+LIVE_STORE: untouched (still combo stick_base on kick L1142)
+QUARTUS: ZERO
+WIRED: NO (m2 not in files.qip; not instantiated from present_core)
+
+## Constraints
+- Exclusive slot720p24n treated LIVE. ZERO Quartus by this worker.
+- Did not edit: Plex.sv, Plex.qsf, Plex_720p24.qsf, pll_0002.v,
+  sdram_i420_store.sv, present_core.sv, Plex_clk_pix.sdc, files.qip.
+- Edited only: rtl/sdram_i420_store_m2.sv (not in live qip).
+- Never PLEX_CLK_SYS_24. No present_content_window / lpm_divide.
+  I420 stays in the stick. y_line_off / c_line_off still shift-add.
+  Module name remains sdram_i420_store_m2. YUV pipe unchanged.
+- No PHASE_BACKLOG / cards.
+
+## Evidence
+File:
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store_m2.sv
+  module sdram_i420_store_m2  (name unchanged)
+  lines 1424
+  md5 BEFORE  0f9629e54cabe3e419b20f2ee29d745c  prefix8 0f9629e5
+  md5 AFTER   7d50bf3a614551e5a89bc9f18a33ce70  prefix8 7d50bf3a
+  AFTER hash is the on-disk file (includes concurrent R-ddr-m2-wire
+  clk_ddr helper instance; that peer did not revert this kick pipe).
+
+Live (not edited here):
+  rtl/sdram_i420_store.sv  md5 fe5be949acb0598ecec2f35eb6f9d37a
+    still: wr_stick_addr <= stick_base(dest_kick_s2);  (L1142)
+  files.qip                md5 8c99e4f8809442e99ca10efb985f8540
+    same as worker start / R-sdram-next
+    L25: SYSTEMVERILOG_FILE rtl/sdram_i420_store.sv
+    grep sdram_i420_store_m2 → NONE
+    grep sdram_i420_ddr_issue → NONE
+  Plex.sv                  md5 9fd8fd3b12bae7846da99ca346453ebe
+  present_core.sv          md5 eaa7b16862345e80ea9f9aa2507e3b7a
+
+How the kick cone is cut:
+  dest_kick / kick_pix_t change together on clk_pix. dest_kick_s2 and
+  kick_s2 are the same 2-flop CDC depth, so dest_kick_s2 is already
+  new on kick detect (one beat after dest_kick_s2 NBA).
+  Combo stick_base() is a 3:1 mux + FRAME_WORDS add
+    (STICK_BASE / +FRAME_WORDS_W / +{FRAME_WORDS_W,1'b0}).
+  m2b:
+    addr pipe (clk_sdram): base_kick_r <= stick_base(dest_kick_s2)
+    kick detect: fill_expect + kick_load_r (does NOT combo-assign addr)
+    next beat:   wr_stick_addr <= base_kick_r; kick_load_r <= 0
+    S_WR_ISSUE:  sdram_addr <= wr_stick_addr
+  kick_load_r is required: at detect, dest_kick_s2 is new but
+  base_kick_r NBA of that value is the same edge; load one beat later
+  so wr_stick_addr sees the new bank, not the previous frame.
+  y_line_off / c_line_off stay shift-add (640: <<9+<<7; 320: <<8+<<6;
+  160: <<7+<<5). addr_*_r pipe unchanged. PLEX_STORE_YUV_PIPE unchanged.
+
+Grep leftover combo kick: wr_stick_addr <= stick_base  in m2 → NONE
+
+SV syntax (not Quartus A&S, not BUILD_OK):
+  verilator --lint-only -Wall -Wno-fatal (inherited
+    MULTIDRIVENPROC/UNUSEDSIGNAL from orig vi/si / YUV) rc=0
+  iverilog -g2012 -t null (+ line_buf_ram, async_fifo,
+    sdram_i420_ddr_issue) rc=0
+  check_quartus_sv_subset.check_file errors=0 (static only; no quartus_map)
+  log: /tmp/misterplex-R-sdram-m2b-syntax.log
+
+## Next
+After slot720p24n exclusive FREES: parent may consider ONE qip swap
+  rtl/sdram_i420_store.sv → rtl/sdram_i420_store_m2.sv
+  (+ sdram_i420_ddr_issue.sv if keeping the peer clk_ddr wire)
+Do not start Quartus from this ticket. Do not add m2 to the LIVE
+compile. Do not deploy 752fc1e2 (m TIMING_FAIL).
+
+## Blockers
+- Exclusive / next-slot only — cannot prove Quartus A&S or slack
+  on this file. Syntax PASS ≠ TIMING_OK ≠ BUILD_OK.
+- m2 unused until parent swaps qip post-n. Soft-skip ≠ PASS.
+- clk_sdram asked-100 Fmax 112.15 / slack -3.191 is related-clock /
+  CDC class on m; this pipe is a same-clock stick_base mux cut only.

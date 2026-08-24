@@ -1,0 +1,350 @@
+WORKER=R-aspect-f
+UTC=2026-08-14T04:08Z
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+REPORT=/tmp/misterplex-agent-R-aspect-f.txt
+GOAL=sendSourceAspect L4: first play REAL probe-class; later ACK 16:9 matched; n3 reboot is idle-paint/f2sdram BEFORE aspect. Do not implement 250ms retry.
+
+IMPLEMENT=NO
+DEPLOY=NO
+PLAY=NO
+ZERO_QUARTUS=YES
+NO_NAMED_LOAD=YES
+NO_LOAD_CORE=YES
+NO_RUN_720P24=YES
+NO_SECOND_N3_FPGA=YES
+NO_PHASE_BACKLOG_WRITE=YES
+NO_PROTOCOL_CARDS=YES
+NO_HOST_EDIT=YES
+NO_RTL_EDIT=YES
+DID_NOT_OVERWRITE=/tmp/misterplex-evidence-n2-l4-play.txt
+UNIQUE24=FAIL
+PFPS=NONE
+PLAY_RAN=NO
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_NE_UNIQUE24=YES
+ACK_MATCHED_NE_UNIQUE24=YES
+SOC_REBOOT_NE_UNIQUE24=YES
+IDLE_PAINT_NE_UNIQUE24=YES
+WIDEN_250MS=NO
+RETRY_IMPLEMENTED=NO
+
+================================================================
+VERDICT
+================================================================
+RCA_OK. unique24=FAIL. IMPLEMENT=NO.
+
+sendSourceAspect is NOT the remaining L4 blocker.
+
+  1) First L4 play is REAL and probe-class.
+     sendSourceAspect / ioctl-4 / 250 ms poll NEVER RAN.
+     Did not overwrite /tmp/misterplex-evidence-n2-l4-play.txt
+     (still the 9-line 02:57Z note; body == snap-0313).
+
+  2) Later same L4 page (03:15Z) ACK 16:9 MATCHED inside the
+     existing 250 ms. Then PLXD abort presented=0.
+
+  3) n3 d191 reboot is idle-paint / f2sdram BEFORE aspect.
+     Host order is startIdle() → paintIdle/sendDdrFrame (PLXP poke)
+     → probe → setSourceAspect. 0315 surviving log prints
+     "idle screen painted" THEN "ack=matched". n3 died ~5 s after
+     play start with ONBOX_T7 ABSENT. That is PLAY_START_F2SDRAM_HANG
+     (R-reboot-rca), not C3. C3 is 250 ms and always leaves
+     ERROR media + "PLXJ ACK timeout" on a surviving log.
+
+Do not implement / widen a 250 ms retry. Tree already re-pulses
+ioctl-4 every 16 ms × 8 inside 250 ms. First L4 never entered that
+loop. 0315 already matched. n3 never reached it if idle hung.
+
+ACK retry is NOT the leftover. unique24 stays FAIL.
+
+================================================================
+1) First L4 is REAL — probe-class — NOT overwritten
+================================================================
+READ-ONLY. Left untouched. 9-line body matches snap-0313:
+
+  /tmp/misterplex-evidence-n2-l4-play.txt
+  UTC=2026-08-14T02:57Z first copy-path play n2 0fc77c10 ARM 6214f775
+  SOURCE=session terminal call-842f91fa and call-02748b00
+        (NOT the overwritten /tmp/misterplexd.t7gate.log)
+  GLASS-MAX glass=L4 bank=1280x720 doorbell=0x3047F000
+  LAB play-file decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+  PLAY_RC=1
+  FAIL=source display aspect unavailable
+  SPI=no kick/frame frame_debug=0xa0 frame_seq=23
+  UNIQUE24=FAIL pfps=NONE
+
+Primary session (host captured stdout; process exited; SSH lived):
+
+  /home/shawn/.grok/sessions/%2Fhome%2Fshawn%2FProjects%2FMisterPlex/019ff8d2-6489-7480-b352-8afc9bc91e32/terminal/call-842f91fa-eb61-48ca-9720-7171426702b2-196.log
+
+  GLASS-MAX glass=L4 bank=1280x720 doorbell=0x3047F000
+  play-file failed: source display aspect unavailable
+  idle paint DDR failed … frame_debug=0xa0 frame_seq=23
+
+rg on that file: ERROR media=0, PLXJ ACK timeout=0, ack=matched=0
+(only the three lines above).
+
+Same-class frozen body (later same-shape wrapper, still no ERROR media):
+
+  /tmp/misterplex-snap-0313/t7gate-0fc77c10-copy.log
+  LAB … doorbell=0x3047F000 PLXJ=0x3047F130 L4
+  fabric_direct idle src_phys=REAL
+  play-file failed: source display aspect unavailable
+  media: idle screen painted (mode=0)
+
+setSourceAspect ALWAYS logs ERROR media before false
+(media_player.cpp:1110-1133). Missing ERROR media ⇒ probe invalid
+⇒ C-|| short-circuit (main.cpp:664-675) ⇒ sendSourceAspect / ioctl-4 /
+250 ms poll NEVER RAN.
+
+LAB PLXJ=0x3047F130 is host address math printed BEFORE probe
+(main.cpp:652-662), not readSourceAspectAck.
+
+0xa0 / seq=23 is idle-paint sendDdrFrame AFTER the wrapper (session)
+or the idle thread completing after the wrapper (snap-0313). Not an
+ACK-wait sample. SPI no-kick ≠ PLXJ timeout.
+
+unique24=FAIL. 0 frames. Do not use later t7gate overwrite (true480
+0x300FF000) to deny this L4.
+
+================================================================
+2) Later ACK 16:9 MATCHED — same L4 page — not first L4
+================================================================
+  /tmp/misterplex-evidence-n2-l4-ack-matched-0315.log
+  /tmp/pfps-720p24-live-gate-0fc77c10-copy.txt
+
+  UTC=2026-08-14T03:15Z L-n2-copy 0fc77c10 ARM 6214f775
+  GLASS-MAX glass=L4 bank=1280x720 doorbell=0x3047F000
+  LAB … PLXJ=0x3047F130 L4
+  media: fabric_direct idle src_phys=REAL slot=0x0c620000 how=arena
+  media: idle screen painted (mode=0)
+  media: source aspect=16:9 owner=MiSTer_native_scaler ack=matched
+  DDR_PIPE present fail frame=2: sendDdrFrame: PLXD acknowledgement
+           required but unavailable
+  PLAY_RC=0 ACK=YES frames=3 presented=0 pfps=NONE UNIQUE24=FAIL
+
+Same clip /tmp/real720p_1500k_av.mp4. Same doorbell page. Probe.valid.
+ioctl-4 sent. Host saw token+16:9 at 0x3047F130 inside the existing
+250 ms (+ tree 16 ms × 8 re-pulse). Then PLXD @ +0x128 aborted.
+
+Order on the surviving 0315 log is the host contract:
+  idle src_phys REAL → idle painted → ack=matched → play frames → PLXD.
+
+Deterministic "mp4 has no DAR" is ruled out.
+Address/packing MATCH (doorbell+0x130 == RTL ASPECT_MAILBOX_PHYS).
+ACK=YES ≠ unique-24. presented=0. n2 leftover after ACK = PLXD, not C3.
+
+T7-j MIX HOST (want=16:9 last=4:3 token=0 @ 0x3007F130) is a different
+class. Do not cite it as first L4 or as n3.
+
+================================================================
+3) Host order: idle-paint / f2sdram BEFORE sendSourceAspect
+================================================================
+arm/misterplexd/main.cpp --play-file after initPresent:
+
+  642  player.startIdle();          // idle thread → paintIdle()
+  643  player.startOsdPoll();
+  651  player.setDecodeSize(...)
+  657  LAB line (doorbell / PLXJ math; not an ACK)
+  665  probeSourceAspect(playFile)  // ffmpeg, up to 5 s
+  666  setSourceAspect(...)         // only if probe.valid
+  676  play(...)                    // frames
+
+paintIdle (media_player.cpp:953-1043) is the FIRST play-side DDRAM use.
+On 720p + MPX_FABRIC_DIRECT=1:
+
+  985-987  fabricDirectWanted && 720p → setFabricDirectPresent
+  993-1016 allocate idleFabric_ / memcpy / refreshFabricSlotPhys
+           log "fabric_direct idle src_phys=REAL|STUB"
+  1017-1019 sendYuv420pFrameDdr BestEffort + idleSrcPhys  (bank 0 only
+            when presented_height>=720)
+
+sendDdrFrame fabric branch (fpga_spi.cpp:1648-1673):
+  resolveCachedSrcPhys → cleanDcacheRange → pokePlxp(srcPhys)
+  poke writes MAGIC_P at doorbell+0x138 and +0x200
+  L4 doorbell 0x3047F000 → PLXP 0x3047F138
+  then kickDdrDoorbell(0x3047F000)
+  FPGA m1 fabric_ddr_reader treats magic+src as a 1.38 MB f2sdram
+  cached-src READ + bank WRITE. n3 m0 stick DMA can start on the
+  same dest. That is the PLAY_START_F2SDRAM_HANG class
+  (R-reboot-rca; not re-derived here).
+
+setSourceAspect (media_player.cpp:1110-1133) is AFTER that:
+  PRESENT=fpga → setDdrFrameLayout → sendSourceAspect
+  success line: "source aspect=X:Y owner=MiSTer_native_scaler ack=matched"
+
+sendSourceAspect (fpga_spi.cpp:2201-2245):
+  sendFileTx ioctl-4 (NO mmap write to +0x130)
+  250 ms poll readSourceAspectAck at doorbell+0x130
+  re-pulse ioctl-4 every 16 ms, max 8
+  else C3: "sendSourceAspect: PLXJ ACK timeout want= last="
+
+Host +0x130 is RO poll. FPGA writes PLXJ via DDRAM_WE.
+Aspect cannot run until probe.valid AND idle thread has already
+been started. If idle sendDdrFrame hangs f2sdram, aspect never
+executes.
+
+0315 is the living proof of this order on the same play-file path
+(idle painted, then ack=matched). First L4 is the living proof that
+probe can fail after idle has already started (wrapper, no ERROR
+media, then 0xa0 / idle painted).
+
+================================================================
+4) n3 reboot is that first step — not C3, not first-L4 probe-class
+================================================================
+First-party n3 harvest (do not invent needles from wiped t7):
+
+  /tmp/misterplex-agent-L-n3-gate.txt
+  /tmp/misterplexd.t7gate-d1910177.log     WORKER SUMMARY, not capture
+  /tmp/pfps-720p24-live-gate-d1910177.txt
+
+  FPGA_NAMED=/bin/fpga …Plex.720p24.d1910177.rbf RC=0
+  SSH_BACK_AFTER_FPGA=YES
+  PLAY_CMD=MPX_FABRIC_DIRECT=1 misterplexd … --decode 1280x720
+           --play-file /tmp/real720p_1500k_av.mp4 --play-seconds 15
+  PLAY_SSH=Connection reset / Broken pipe
+  SOC_REBOOT=YES
+  SYSLOGD_START ~5 s after named FPGA + play start
+  ONBOX_T7_LOG=ABSENT (tmpfs wiped)
+  PLAY_RAN=NO PLAY_RC=NONE ACK=NO
+  GLASS-MAX=NONE PLXJ=NONE PLXD=NONE pfps=NONE
+  PLAY_FAIL_CLASS=SOC_REBOOT
+
+Bitstream load alone did not reboot (FPGA RC=0, SSH returned).
+Play start window did. Same startIdle-first path as 0315, same
+FABRIC_DIRECT=1, n3 store 4a4fa085 adds PLXD WE without rd_act.
+
+Discriminator (closed):
+
+  path                    ERROR media  ACK-timeout  ack=  SSH    log
+  first L4 probe-class    NO           NO           NO    lives  survives
+  C3 250 ms (cc9)         YES publish  YES          NO    lives  survives
+  0315 L4 success         no publish   no           YES   lives  survives
+                          (idle painted BEFORE ack=matched)
+  L-n3 harvest            NONE         NONE         NONE  RESET  WIPED
+
+C3 contrast (survived; true480 leftover page, not n3):
+  /tmp/misterplexd.t7gate-cc9dbd74.log
+  idle screen painted
+  ERROR media: … PLXJ ACK timeout want=16:9 token=18 last=16:9 token=17
+  play-file failed: source display aspect unavailable
+
+C3 cannot reset HPS, cannot wipe tmpfs, cannot restart syslogd, and
+always leaves ERROR media + wrapper. n3 left none of those.
+
+Timing: sendSourceAspect deadline = 250 ms after ioctl-4.
+n3 syslogd is ~5 s after named FPGA return and includes clip copy +
+daemon exec. A completed C3 would have exited 1 long before a 5 s
+HPS reset and left a log. Watchdog ~5 s matches hang on first idle
+sendDdrFrame (f2sdram), then HPS reset.
+
+L20 — log absence vs event:
+  We have: on-box t7gate ABSENT after reboot.
+  We do not have: a harvested "idle painted" / ERROR media /
+                  ACK-timeout / ack=matched line from d191 play.
+  Therefore we cannot quote n3 needles.
+  We CAN name the class from host order + 0315 order + 5 s vs 250 ms
+  + C3 always-survives: idle-paint/f2sdram BEFORE aspect.
+  Not sendSourceAspect L4 fail (C3). Not first-L4 probe-class
+  (that play survived and printed the wrapper).
+
+R-reboot-rca class PLAY_START_F2SDRAM_HANG is the same leftover.
+This ticket only pins it BEFORE aspect so ACK retry stays dead.
+
+================================================================
+5) IMPLEMENT=NO — do not add / widen 250 ms retry
+================================================================
+Did not edit fpga_spi.cpp / media_player.cpp / main.cpp.
+Did not widen 250 ms. Did not add another sendSourceAspect retry.
+Tree already re-pulses ioctl-4 every 16 ms × 8 inside 250 ms
+(fpga_spi.cpp:2228-2234).
+
+Why retry is dead as this leftover:
+
+  A) First L4 never entered the 250 ms loop. Lengthening a wait
+     that did not start cannot change PLAY_RC=1.
+  B) 03:15Z already ACK-matched 16:9 inside the existing window
+     on the same L4 page (0x3047F130).
+  C) n3 harvest is idle-paint/f2sdram BEFORE aspect. A longer
+     userspace poll cannot prevent HPS reset or recover a wiped
+     log, and it never ran if idle hung.
+  D) n2 leftover after ACK is PLXD @ +0x128 (presented=0), not C3.
+  E) unique24 stays FAIL regardless.
+
+ACK retry is NOT the remaining blocker (parent 04:04Z L4_vs_aspect
+agrees). Next isolate is host-first MPX_FABRIC_DIRECT=0 (parent;
+not this worker).
+
+================================================================
+6) unique24
+================================================================
+unique24=FAIL
+last_honest_pfps=NONE
+this-run d191 pfps=NONE PLAY_RAN=NO
+Do not invent ≥23.9. Do not quote T7b 14.1 or n2 presented=0 as
+d191 unique-24. BUILD_OK d1910177 ≠ unique-24. ACK=matched ≠ unique-24.
+SOC_REBOOT ≠ unique-24. probe-class wrapper ≠ unique-24.
+idle-paint ≠ unique-24. Chevron ≠ unique-24. 24 Hz ≠ unique-24.
+Soft-skip ≠ PASS.
+
+================================================================
+CONSTRAINTS HONORED
+================================================================
+ZERO Quartus. No fit. No RBF. No deploy. No play. No menu.
+No load_core. No /bin/fpga. No run_720p24. No second n3 named load.
+No RTL / host edit. No PHASE_BACKLOG write. No cards.
+Did not overwrite /tmp/misterplex-evidence-n2-l4-play.txt
+  (re-read; 9-line body == /tmp/misterplex-snap-0313/evidence-n2-l4-play.txt).
+Did not implement 250 ms retry.
+Did not invent pfps / ACK PASS / n3 GLASS-MAX / n3 idle-painted lines.
+
+================================================================
+BACKLOG_STATUS_SUGGESTION (not written to PHASE_BACKLOG)
+================================================================
+R-aspect-f DONE (RCA_OK). IMPLEMENT=NO.
+P3-720P24 stays IN_PROGRESS / unique-24 FAIL / pfps=NONE.
+
+L4_vs_aspect:
+  first L4 REAL @ 0x3047F000/+0x130 = probe-class (sendSourceAspect never ran).
+  later 03:15Z = ACK 16:9 MATCHED then PLXD presented=0.
+  n3 d191 play = idle-paint/f2sdram BEFORE aspect (SOC_REBOOT harvest;
+    PLAY_START_F2SDRAM_HANG). NOT sendSourceAspect L4 fail (C3).
+  ACK retry / 250 ms widen is NOT the leftover.
+
+Next = host-first isolate MPX_FABRIC_DIRECT=0 (PARENT later).
+Do not second n3 /bin/fpga / load_core this wave.
+Do not leave d191 as Plex.rbf (already restored 07f54d9f).
+Do not treat RCA_OK as T7 / unique-24 / product PASS.
+
+================================================================
+BLOCKERS
+================================================================
+unique-24 FAIL: no measured pfps ≥23.9 (NONE this run).
+n3 play log never survived — cannot quote idle/ACK needles (L20).
+n3 crash instruction (mmap vs pokePlxp vs m1 copy vs m0 DMA) UNMEASURED.
+n2 leftover after ACK remains PLXD absent @ +0x128 (historical).
+First-L4 exact ffmpeg why UNLOGGED on 6214f775 (timeout vs empty_dar).
+None of those are a sendSourceAspect 250 ms patch.
+
+================================================================
+EVIDENCE
+================================================================
+this report: /tmp/misterplex-agent-R-aspect-f.txt
+/tmp/misterplex-evidence-n2-l4-play.txt              FIRST L4; NOT overwritten
+/tmp/misterplex-snap-0313/evidence-n2-l4-play.txt    same 9-line body
+session call-842f91fa-…-196.log                      first L4 stdout
+/tmp/misterplex-snap-0313/t7gate-0fc77c10-copy.log   same-class wrapper
+/tmp/misterplex-evidence-n2-l4-ack-matched-0315.log  ACK 16:9; idle BEFORE aspect
+/tmp/pfps-720p24-live-gate-0fc77c10-copy.txt         ACK=YES presented=0
+/tmp/misterplexd.t7gate-cc9dbd74.log                 C3 contrast (survived)
+/tmp/misterplex-agent-L-n3-gate.txt                  SOC_REBOOT first-party
+/tmp/misterplexd.t7gate-d1910177.log                 SUMMARY not capture
+/tmp/pfps-720p24-live-gate-d1910177.txt              pfps=NONE
+/tmp/misterplex-agent-R-reboot-rca.txt               PLAY_START_F2SDRAM_HANG
+/tmp/misterplex-agent-R-aspect-e.txt                 n3 ≠ C3
+/tmp/misterplex-agent-R-aspect-d.txt                 first L4 vs 0315 ACK
+/tmp/misterplex-agent-R-aspect-retry.txt             IMPLEMENT=NO 250 ms
+/tmp/misterplex-loop-status.txt                      04:04Z L4_vs_aspect
+arm/misterplexd/main.cpp:642-675
+arm/misterplexd/media_player.cpp:953-1043, 1048-1078, 1104-1133
+arm/misterplexd/fpga_spi.cpp:1648-1673, 2201-2245

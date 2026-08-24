@@ -1,0 +1,164 @@
+# misterplex agent R-n7-hold2
+EXCLUSIVE=FREE FIT_GO=NO n7=NOT_STARTED unique24=FAIL
+Date: 2026-08-14T06:00:40Z
+Worker: R-n7-hold2
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Slot: slot720p24n7
+Mode: READ_ONLY HOLD
+EDITED: NO
+QUARTUS: ZERO
+DOCKER_MPLEX_FIT: ZERO
+LAB_SSH_183: NEVER
+FARM_SSH_24: RO pgrep/docker/ls/md5 only
+CARDS: none
+PHASE_BACKLOG: not written
+Memory/lab/status/*.md: not written
+PLEX_CLK_SYS_24: never
+SECOND_QUARTUS: NO
+n7_SCRIPT_CREATED: NO
+n7_DIR_CREATED: NO
+
+## Verdict HOLD_OK
+Exclusive Quartus slot is FREE and stayed FREE. n7 was not started.
+Parent has NOT named n7 FIT_GO (loop TICK=2026-08-14T05:57Z
+"next=R-n7-burst sibling only; FIT_GO=NO"; bucket fit_go=NO).
+unique24=FAIL (cite L-n6-play pfps=0.75 != 23.9). No BUILD_OK invented
+for n7. No pfps invented. n6 log is terminal FIT_WRAPPER_DONE — not relaunched.
+
+## Evidence
+
+### 1) Local exclusive (studio) when=2026-08-14T05:58:40Z / reconfirm 05:59:53Z
+LOCAL_EXCL=FREE
+  pgrep -x quartus_map|quartus_fit|quartus_sta|quartus_asm|quartus_sh: all empty
+  pgrep fit_slot720p: no real wrapper. Transient pid 401978 GONE; pgrep -af
+    matches only this hold shell (self-match on the search string).
+  docker ps live: matter-server, plex only. NO mplex-fit / raetro / quartus.
+  docker ps --filter name=mplex: empty running.
+  /tmp/plex_quartus_slot720p24n7.log: ABSENT
+  /tmp/plex_quartus_slot720p24n7*: ABSENT
+  /tmp/slot720p24n7*: ABSENT
+  /tmp/misterplex-agent-X-n7.txt: ABSENT
+  scripts/fit_slot720p24n7.sh ABSENT both trees:
+    /home/shawn/Projects/MisterPlex/scripts/fit_slot720p24n7.sh
+    /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/fit_slot720p24n7.sh
+  find both trees -name fit_slot720p24n7.sh: empty
+  Existing wrappers (not executed by this worker):
+    SoT scripts/fit_slot720p24n2.sh .. n6.sh only (no n7)
+    primary /home/shawn/Projects/MisterPlex/scripts/: no fit_slot720p24n*.sh
+  /tmp plex_quartus logs newest = n6 (00:38) then n5/n4/n3/n2 — no n7
+
+### 2) Farm exclusive (node-worker1 192.168.1.24 BatchMode) when=2026-08-14T05:59:43Z / 06:00:07Z
+FARM_REACHABLE=YES
+FARM_EXCL=FREE
+  host=node-worker1
+  pgrep -x quartus_map|fit|sta|asm|sh: all empty
+  pgrep -af fit_slot720p: self-match ssh bash only
+  docker ps live: plex-cors-proxy, plex, discord-bbs-games
+  docker RUNNING mplex/quartus/raetro: NONE
+  docker leftover (not live): mplex-seed2-sta ghcr.io/raetro/quartus:mister
+    Exited (0) 5 days ago — not exclusive
+  /home/flynnsbit/mplex-builds/slot720p24n7: ABSENT
+  /home/flynnsbit/mplex-builds/*n7*: ABSENT
+  n7 .build-lock: ABSENT
+  slot720p24n6 leftover only (mtime Aug 14 00:38); .build-lock ABSENT
+  /tmp/plex_quartus_slot720p24n7.log on farm: ABSENT
+  This worker did not mkdir n7 and did not create fit_slot720p24n7.sh.
+
+### 3) Live store still 7f3d52c0745cdc2a7c503372befdabd2
+EXPECT=7f3d52c0745cdc2a7c503372befdabd2
+SoT MATCH=YES
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  md5=7f3d52c0745cdc2a7c503372befdabd2
+  mtime=2026-08-14 00:31:02.323200676 -0500 size=44199
+  (mtime before X-n6 START 2026-08-14T05:31:56Z; not touched this hold)
+FARM n6 leftover MATCH=YES
+  /home/flynnsbit/mplex-builds/slot720p24n6/Plex_MiSTer/rtl/sdram_i420_store.sv
+  md5=7f3d52c0745cdc2a7c503372befdabd2
+Parent loop store_live=7f3d52c0; bucket store_live=7f3d52c0745cdc2a7c503372befdabd2
+DRIFT=NO  EDITED=NO  overlay/restore: NOT done (constraint)
+
+### 4) Product Plex.qsf still b049c94413d02a1a63dfd03b7234d7e1 (480p)
+SoT MATCH=YES
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+  md5=b049c94413d02a1a63dfd03b7234d7e1
+  mtime=2026-08-13 22:32:51.710124510 -0500 size=6343
+n6 bak MATCH=YES
+  /tmp/Plex.qsf.product-480p.slot720p24n6.bak
+  md5=b049c94413d02a1a63dfd03b7234d7e1
+Still 480p product (active macros):
+  FRAME_W=640 FRAME_H=480 PLEX_PRESENT_TRUE_480P=1
+  PLEX_PRESENT_720P_L4 / FRAME_W=1280 / FRAME_H=720: commented
+  PLEX_CLK_SYS_24: ABSENT from product QSF
+Dirty primary clone Plex.qsf is b3de67401bb49f8ab10ea8dadbd56ac2
+  (/home/shawn/Projects/MisterPlex/fpga/Plex_MiSTer/Plex.qsf) — decode tree,
+  not 720p product SoT. Not restored/overlaid (constraint).
+
+### 5) n6 log terminal only — not relaunched
+  /tmp/plex_quartus_slot720p24n6.log
+  mtime=2026-08-14 00:38:33.114800095 -0500 size=28169
+  FIT_WRAPPER_DONE count=1 (last line)
+  FIT_WRAPPER_RC=0
+  STORE_MD5=7f3d52c0745cdc2a7c503372befdabd2
+  Restored product Plex.qsf b049c94413d02a1a63dfd03b7234d7e1
+  FARM_RBF_MD5=a0ae0b45ff23ca240096889b8cc48c27 (slot only; DEPLOY=NO)
+  LAB_PLEX_RBF_TOUCHED=NO
+  This worker did not relaunch n6 or any fit.
+
+### 6) unique24=FAIL (cite L-n6-play 0.75 — not invented)
+  /tmp/misterplex-agent-L-n6-play.txt
+  VERDICT=UNIQUE24_FAIL  PLAY_RAN=YES  pfps=0.75  hw_fps=0.749
+  presented=12 drops=12 frames=25 RBF_N6=a0ae0b45
+  last_honest_sameDDR=14.1
+  0.75 is NOT 14.1 and is NOT unique-24. Soft-skip ≠ PASS.
+  Parent loop: unique24=FAIL last_sameDDR=14.1
+  bucket: unique24=FAIL last_honest_pfps=0.75
+  Did not invent pfps / BUILD_OK / unique-24 PASS.
+
+### 7) Parent has NOT named n7 FIT_GO
+  /tmp/misterplex-loop-status.txt TICK=2026-08-14T05:57Z
+    exclusive=FREE
+    next=R-n7-burst sibling only; FIT_GO=NO
+    do_not=Quartus; /bin/fpga; replay n6; clk_sys raise
+  /tmp/misterplex-agent-bucket.json tick=2026-08-14T05:56Z
+    exclusive=FREE
+    fit_go=NO
+    goal="n7 sibling RTL only; no Quartus; no play; no cards"
+    R-n7-hold DONE HOLD_OK; this worker R-n7-hold2 LIVE
+  FIT_GO=NO is parent policy this tick, not a hold defect.
+
+### 8) Not done (by design)
+- did not create scripts/fit_slot720p24n7.sh
+- did not mkdir farm slot720p24n7
+- did not start Quartus / docker mplex-fit
+- did not edit RTL / QSF / store
+- did not restore/overlay QSF
+- did not ssh 192.168.1.183
+- did not /bin/fpga, load_core, play, or deploy
+- did not enable PLEX_CLK_SYS_24
+- did not write PHASE_BACKLOG.md or Memory/lab/status/*.md
+- did not relaunch n6
+- did not invent BUILD_OK or unique-24 PASS
+
+## Blockers (FIT_GO=NO is parent, not a defect)
+FIT_GO=NO — parent has not granted n7 exclusive. Sibling RTL work only
+(R-n7-burst / de-fill / policy). unique24 remains FAIL on n6 a0ae0b45
+at 0.75 Hz (L-n6-play). Hold worker must keep exclusive FREE until parent
+names FIT_GO. Not a hold-worker defect.
+
+## Backlog status suggestion
+(not written) n7=NOT_STARTED; EXCLUSIVE=FREE; FIT_GO=NO;
+store stay 7f3d52c0745cdc2a7c503372befdabd2; QSF stay b049c94413d02a1a63dfd03b7234d7e1;
+unique24=FAIL pfps=0.75; do not start slot720p24n7 until parent FIT_GO.
+Do not replay n6. Do not raise clk_sys.
+
+## Evidence paths
+  /tmp/misterplex-agent-R-n7-hold2.txt
+  /tmp/misterplex-agent-R-n7-hold.txt (prior HOLD_OK 05:49Z)
+  /tmp/misterplex-loop-status.txt
+  /tmp/misterplex-agent-bucket.json
+  /tmp/misterplex-agent-L-n6-play.txt
+  /tmp/plex_quartus_slot720p24n6.log (FIT_WRAPPER_DONE; n7 log ABSENT)
+  SoT store md5 7f3d52c0745cdc2a7c503372befdabd2
+  SoT Plex.qsf md5 b049c94413d02a1a63dfd03b7234d7e1
+  farm: ABSENT /home/flynnsbit/mplex-builds/slot720p24n7
+  farm store MATCH 7f3d52c0; n6 .build-lock ABSENT

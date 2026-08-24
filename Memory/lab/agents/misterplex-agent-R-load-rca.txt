@@ -1,0 +1,381 @@
+WORKER=R-load-rca
+UTC=2026-08-14T05:03Z
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST=192.168.1.183
+GOAL=code+evidence RCA: why named /bin/fpga is the wrong load method for this 720p family vs timeout load_core menu then product-named Plex.rbf
+ZERO_QUARTUS=YES
+NO_SECOND_EXCLUSIVE=YES
+NO_BIN_FPGA=YES
+NO_LOAD_CORE=YES
+NO_MISTER_CMD_WRITE=YES
+NO_PLAY=YES
+NO_CARDS=YES
+NO_PHASE_BACKLOG_WRITE=YES
+NO_STATUS_MD=YES
+FIT_GO=NO
+unique24=FAIL
+last_honest_pfps=NONE
+PLAY_RAN=NO
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_NE_UNIQUE24=YES
+DID_NOT_INVENT_STAY_UP=YES
+DID_NOT_INVENT_PFPS=YES
+DID_NOT_INVENT_UNIQUE24=YES
+
+================================================================
+DELIVERABLE (top)
+================================================================
+RCA_OK
+unique24=FAIL
+FIT_GO=NO
+NAMED_FPGA_CLASS=BAN
+NAMED_LOAD_CORE=BAN
+MENU_PRODUCT_LOAD=STAY_UP_YES_IDLE_20S (cite L-n5-menu DONE; PLAY_RAN=NO; ≠ unique-24)
+last_honest_pfps=NONE
+n6=NO
+
+================================================================
+VERDICT
+================================================================
+RCA_OK. unique24=FAIL. FIT_GO=NO. last_honest_pfps=NONE. PLAY_RAN=NO.
+
+Named /bin/fpga of {0fc77c10, d1910177, e8960391, 4554fdb3} is the wrong
+load method for this 720p family right now. Proven class NAMED_FPGA_IDLE_HPS
+(RC=0 then HPS reboot at idle, ~0–13s, no play). BAN.
+
+Named load_core of Plex.720p24.* is separately BAN (L-n2 official
+LOAD_CORE_REBOOT + R-cmd-hang / R-menu-hold GPI31_MENU). Do not use
+run_720p24_live_gate.sh named-load path.
+
+Product-name path is no longer UNMEASURED: L-n5-menu DONE
+  cp 4554 onto Plex.rbf
+  timeout 3s load_core /media/fat/menu.rbf → CORE=MENU at T=2
+  timeout 3s load_core /media/fat/_Utility/Plex.rbf
+  watch 20s uptime 358.95→379.19 continuous
+  STAY_UP=YES SOC_REBOOT=NO PLAY_RAN=NO
+Same bits as L-n5-gate named /bin/fpga (idle reboot ~4s).
+That is a load-method contrast, not unique-24. Soft-skip ≠ PASS.
+This RCA did not play. Sibling L-n5-play was LIVE at parent TICK=05:02Z
+(unmeasured here). Do not invent pfps>=23.9.
+
+Restore /bin/fpga of True480 07f54d9f also delayed-reboots (n2-idle /
+n4 / n5). Restore should prefer cp bak + load_core menu then Plex.rbf,
+not /bin/fpga. L-n5-menu restore used that and did not reboot.
+
+FIT_GO=NO: no new RTL reason AND no proven stay-up through play.
+Do not recommend n6. Do not start exclusive.
+
+================================================================
+CONSTRAINTS HONORED
+================================================================
+- Did not run /bin/fpga. Did not write /dev/MiSTer_cmd. Did not play.
+- Read-only SSH: file/strings/od/ls/cat sysfs + scp of /bin/fpga binary
+  to workstation /tmp/r-load-rca/fpga.bin for objdump. No execute.
+- Zero Quartus. No RTL edits. No cards. No PHASE_BACKLOG. No status md.
+- Observed (did not change) that at inspect time Plex.rbf was 4554 —
+  parent TICK=05:02Z L-n5-play STEP3 owns that copy. This worker
+  did not cp, did not restore, did not load.
+
+================================================================
+1) PROVEN — named /bin/fpga idle reboot class (HAVE, cite, not re-run)
+================================================================
+Same recipe: stop daemon, ONE /bin/fpga of named sidecar, no play,
+Plex.rbf stays 07f54d9f, FPGA_NAMED_RC=0, then HPS reboot.
+
+  n2 0fc77c10  L-n2-idle
+    CMD=/bin/fpga /media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+    FPGA_NAMED_RC=0 bytes=2831748  UP_PRE=254.98 UP_POST=255.12
+    NIC dead by +10s. POST SSH up=31.75. STAY_UP=NO.
+    REBOOT1_CLASS=NAMED_FPGA_IDLE_HPS
+    PLAY_RAN=NO  unique24 not claimed
+    REBOOT2: restore /bin/fpga Plex.rbf RC=0 then delayed-reboot
+      UP_POST_RESTORE=54.43 → later up=23.31
+    Class note: earlier L-n2-gate /bin/fpga+PLAY SSH survived that
+    window (ACK fail). Idle isolate 04:49Z killed the stay-up exception.
+
+  n3 d1910177  L-n3-gate + L-n3-nofab (R-fpga-rca harvest)
+    First /bin/fpga RC=0 SSH_BACK=YES then PLAY_START reboot ~5s
+    Second /bin/fpga: SSH died, play never started (RC unharvested).
+    Same NAMED_FPGA_IDLE_HPS family on second load.
+    R-reboot-rca “not /bin/fpga-alone” SUPERSEDED for 2nd load.
+
+  n4 e8960391  L-n4-gate
+    FPGA_NAMED_RC=0 UP=1226.43. ~13s later stamp SSH up=22.66.
+    REBOOT1_CLASS=NAMED_FPGA_IDLE_HPS. PLAY_RAN=NO.
+    FABRIC never enabled (intended FABRIC=0 isolate never started).
+    REBOOT2: restore /bin/fpga True480 delayed-reboot.
+
+  n5 4554fdb3  L-n5-gate
+    FPGA_NAMED_RC=0 bytes=2846036 UP_PRE=758.63 UP_POST=758.76
+    ~4s later HPS reboot. POST SSH up=26.91.
+    PLAY_FAIL_CLASS=FPGA_NAMED_THEN_SOC_REBOOT
+    REBOOT1_CLASS=NAMED_FPGA_IDLE_HPS. PLAY_RAN=NO pfps=NONE.
+    doorbell_ok store 47e8bc88 did NOT clear idle-HPS reboot.
+    REBOOT2: restore /bin/fpga True480 delayed-reboot.
+
+NAMED_FPGA_CLASS=BAN for {0fc,d191,e896,4554}.
+BUILD_OK 4554 ≠ unique-24. Soft-skip ≠ PASS.
+
+================================================================
+2) BANNED — load_core named Plex.720p24.* (HAVE)
+================================================================
+scripts/run_720p24_live_gate.sh L240–L257:
+  load_core /media/fat/menu.rbf
+  wait CORENAME~menu
+  load_core $J_RBF          # Plex.720p24.*.rbf
+  stamp RBFNAME if needed
+Does NOT copy onto Plex.rbf.
+
+L-n2-gate official:
+  OFFICIAL_FAIL_CLASS=LOAD_CORE_REBOOT
+  load_core menu worked once; load_core named 0fc hung SSH / rebooted SoC.
+  Attempts include GPI[31]==1 on menu.rbf (Main died) and
+  CORENAME=MENU then “Timeout, server not responding”.
+  GATE_SCRIPT_RC=255. Play never ran.
+
+R-cmd-hang (on-box /tmp/mister-main.n2gate.log 02:50:55Z):
+  Core path: /media/fat/menu.rbf
+  GPI[31]==1. FPGA is uninitialized or incompatible core loaded.
+  Quitting. Bye bye...
+  HANG_CLASS=GPI31_MENU → Main quits → /dev/MiSTer_cmd has no reader
+  → HUNG_MISTER_CMD.
+
+R-menu-hold: CORE=MENU at 03:03Z WAS the live 310569 named-load window.
+  Parent 03:06Z named_load=BAN. Do not second named load_core.
+
+NAMED_LOAD_CORE=BAN. Do not run that script path for unique-24.
+
+================================================================
+3) MENU + product Plex.rbf — L-n5-menu DONE (cite; this RCA did not run it)
+================================================================
+L-n5-menu /tmp/misterplex-agent-L-n5-menu.txt STATUS=DONE
+  LOAD_METHOD=load_core_menu_then_plex
+  STAY_UP=YES  SOC_REBOOT=NO  PLAY_RAN=NO  unique24 not claimed
+  UPTIME 350.24 → watch 358.95→379.19 → reconfirm 411.65 (one series)
+  MENU_REACHED=YES CORE=MENU at T=2
+  LOAD_CORE_MENU_RC=0  LOAD_CORE_PLEX_RC=0  (timeout 3s each write)
+  Plex.rbf after cp = 4554fdb392b1030ed523dfb082e3bad8
+  Restore: CP_BAK_TO_PLEX + load_core Plex.rbf (NOT /bin/fpga)
+  RESTORE_MD5=07f54d9f8f0eda2fe75d9cc314f6de54  FPGA_RESTORE_COUNT=0
+  Contrast they wrote: L-n5-gate named /bin/fpga 4554 reboot ~4s;
+    this product-name path stayed up 20s.
+
+This is the deploy_plex_core.sh DEPLOY_LOAD=menu recipe
+(menu.rbf wait CORE=menu, then load_core /media/fat/_Utility/Plex.rbf)
+with the 720p bits copied onto the product name first.
+
+HOST pin: rbfPrefix8IsKnownL4 includes 4554fdb3
+(present_bank.hpp; R-host-4554 HOST_OK). Copy-onto-Plex.rbf
+(RBFNAME=Plex) is L4 when play happens later. This RCA did not play.
+
+CAVEATS (do not collapse):
+  - 20s idle ≠ unique-24. last_honest_pfps=NONE.
+  - PLAY_RAN=NO. FABRIC never exercised here.
+  - FB stayed 640,480 after 4554-as-Plex (same as after named /bin/fpga;
+    not a disproof of programming; Main CORE=Plex after MENU switch
+    proves Main was live and accepted the second load_core).
+  - If silicon idle DDR were sufficient to reboot, 20s > L-n5-gate’s
+    ~4s /bin/fpga death window. That supports load-method, not a
+    proof that idle DDR can never reboot later. Soft-skip ≠ PASS.
+  - L-n5-play (parent 05:02Z) is a different worker. Do not quote
+    their pfps. Unmeasured here.
+
+MENU_PRODUCT_LOAD=STAY_UP_YES_IDLE_20S (L-n5-menu). Not UNMEASURED.
+Not unique-24.
+
+================================================================
+4) WHAT /bin/fpga ACTUALLY IS (read-only; this worker did not execute)
+================================================================
+On-box 2026-08-14 ~05:02Z (file/strings/od + local objdump of scp’d ELF):
+
+  /bin/fpga = /usr/bin/fpga
+  ELF 32-bit LSB ARM EABI5, stripped, 6568 bytes, dated Apr 5 2017
+  md5 965f8974f7e07631b1ff0dd1beefd02f
+  GCC: Linaro 5.4.1 20161213
+  NOT a shell script. NOT busybox. NOT /sys/class/fpga_manager.
+
+  strings (HAVE):
+    /dev/mem
+    Unable to mmap(/dev/mem)
+    Usage(1): %s { address } [ data ]
+    Usage(2): %s { rbf_file }
+    Bitstream size: %d bytes
+    FPGA: Could not reset
+    FPGA: Could not configure
+    FPGA: Configuration error.
+    FPGA: Unaligned data, realign to 32bit boundary.
+    ERROR: Trying to write/read undefined address
+  NO strings for /sys/class/fpga*, firmware, fpga2sdram, load_core,
+  MiSTer_cmd, CORENAME, GPI.
+
+Disassembly (HAVE, /tmp/r-load-rca/fpga.bin):
+
+  mmap /dev/mem length=0x01000000 (16 MB) offset=0xFF000000
+  (entire HPS peripheral window). O_RDWR|O_SYNC.
+
+  PRE-CONFIG isolate (0x10ab8), raw MMIO, not kernel FPGA-bridge class:
+    *(0xFFD08028) = 0          System Manager FPGA-intf
+    *(0xFFC25080) = 0          SDR fpgaportrst — ALL FPGA-to-SDRAM ports OFF
+    *(0xFFD0501C) = 7          RSTMGR per2modrst
+    *(0xFF800000) = 1          L3 REMAP
+
+  PROGRAM (0x10bec): Cyclone V FPGA Manager via same map
+    STAT/CTRL  0xFF706000 / 0xFF706004
+    DCLK       0xFF706008 / 0xFF70600C
+    GPIO       0xFF70684C / 0xFF706850
+    DATA port  0xFFB90000   (burst-write RBF)
+    nconfig pull, wait reset, dump bitstream, wait USER mode.
+
+  POST-CONFIG re-enable (0x10ecc, r0!=0 success path):
+    *(0xFFC25080) = 0x3FFF     fpgaportrst — ALL f2sdram ports ON
+    *(0xFFD0501C) = 0          release per2modrst
+    *(0xFF800000) = 25 (0x19)  L3 REMAP
+  Then print "Bitstream size: %d bytes" and return RC=0.
+
+Kernel FPGA framework is NOT this path (HAVE, sysfs read-only):
+  /sys/class/fpga_bridge: br0=lwhps2fpga enabled, br1=hps2fpga enabled,
+    br2=fpga2hps enabled  — /bin/fpga never writes these.
+  altera_fpga2sdram_bridge driver exists but is NOT bound
+    (only bind/unbind/uevent; no device).
+  DT has fpga-bridge@ffc25080 (altr,socfpga-fpga2sdram-bridge)
+    — same 0xFFC25080 /bin/fpga pokes under the kernel’s feet.
+  soc:base_fpga_region = waiting_for_supplier.
+  fpga_manager fpga0 state=operating (read-only observe).
+
+So /bin/fpga is a 2017 /dev/mem FPGA-manager poker that:
+  - slams fpgaportrst 0 → program → fpgaportrst 0x3FFF
+  - does not talk to Main
+  - does not update /tmp/CORENAME or /tmp/RBFNAME
+    (L-n2-idle / L-n5-gate: CORE=Plex RBFNAME=Plex STAMPED=NOT after named)
+  - does not check GPI[31]
+  - does not stop Main user_io / scaler / SPI
+  - races the kernel’s still-“enabled” HPS-FPGA bridges
+
+R-fpga-rca’s “FPGA-manager bridge disable/program/enable” sketch is
+the right *shape* but the implementation is this raw /dev/mem tool,
+not Linux FPGA-manager sysfs. Cite corrected.
+
+================================================================
+5) WHAT Main load_core DOES (contrast)
+================================================================
+HAVE (strings /media/fat/MiSTer Version 260707 + deploy script):
+
+  Main also mmaps /dev/mem and uses the SAME FPGA error lexicon:
+    "Bitstream size: %lld bytes"
+    "FPGA: Could not reset / configure / Configuration error."
+    "GPI[31]==1. FPGA is uninitialized or incompatible core loaded."
+    "/tmp/CORENAME" "/tmp/RBFNAME"
+    "load_core "
+  So Main’s programmer is the same family of FPGAMGR /dev/mem poke
+  (not sysfs firmware). The difference is the *session around* it.
+
+  load_core path (deploy_plex_core.sh DEPLOY_LOAD=menu L213–L247):
+    1. Soft-stop misterplexd (SPI not mid-flight).
+    2. printf 'load_core /media/fat/menu.rbf' > /dev/MiSTer_cmd
+       Main is the reader. Wait CORENAME~menu (liveness test).
+       Wedged Main (accepts FIFO, drops cmds) → DEPLOY_FAIL / recover.
+    3. printf 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd
+       Wait CORENAME~plex.
+    4. Main writes CORENAME/RBFNAME, checks GPI[31], inits user_io/video.
+    5. Then start companion.
+
+  Menu first is the quiet bitstream: Menu has no 720p DDR masters.
+  fpgaportrst re-enable lands on a DDR-quiet core. Second load
+  (product Plex.rbf) is then done *by Main*, which already owns
+  user_io and will re-init after config.
+
+  Named load_core of Plex.720p24.* skips the product-name contract:
+    Main still programs, but after 720p bits GPI[31] historically
+    stays 1 (incompatible / uninit) → Main Quits → FIFO hang
+    (R-cmd-hang). Or HPS reboots (L-n2-gate LOAD_CORE_REBOOT).
+    RBFNAME would be the named basename only if Main survives;
+    run_720p24_live_gate.sh also stamps /tmp/RBFNAME by hand.
+
+INFER (labeled): same FPGAMGR poke, different owner + prelude.
+  /bin/fpga reconfigures under a live Main and instantly opens
+  ALL f2sdram ports onto a 720p bitstream whose reset path
+  publishes idle PLXD (R-fpga-rca path B, bank_mbox_req=1) and
+  whose m1 fabric reader is enable=1. That is the idle-HPS class.
+  Main+menu then Plex.rbf sequences a quiet core first and keeps
+  GPI31/user_io inside one process. L-n5-menu 20s stay-up is the
+  HAVE that this difference is not just theory for 4554.
+
+  Residual risk (do not exonerate silicon): if idle 720p DDR were
+  enough, menu+Plex would also die. It did not in 20s. That does
+  not prove play-safe, leftover-MAGIC_P-safe, or >20s-safe.
+  L-n5-play is the play measurement (not this worker).
+
+================================================================
+6) RESTORE RECIPE
+================================================================
+HAVE: restore /bin/fpga /media/fat/_Utility/Plex.rbf (True480 07f54d9f)
+after a named-720p /bin/fpga episode delayed-reboots (n2-idle, n4, n5).
+Even when boot already reloaded 07f54d9f (L-n2-idle
+PLEX_RBF_NEVER_BECAME_N2; POST_REBOOT_CORE=Plex), a second /bin/fpga
+of the same True480 bits still delayed-rebooted.
+
+HAVE: L-n5-menu restore = cp bak → Plex.rbf + timeout load_core Plex.rbf
+(Main proven live by the MENU switch). No reboot. FPGA_RESTORE_COUNT=0.
+
+Therefore restore should prefer:
+  cp /media/fat/_Utility/Plex.true480.07f54d9f.rbf \
+     /media/fat/_Utility/Plex.rbf
+  timeout … load_core /media/fat/menu.rbf   (wait CORE=menu)
+  timeout … load_core /media/fat/_Utility/Plex.rbf
+NOT /bin/fpga. Matches deploy_plex_core.sh DEPLOY_LOAD=menu.
+
+================================================================
+7) FIT_GO=NO — why this is not an n6 reason
+================================================================
+- No new RTL bug named that a fit would fix.
+- doorbell_ok / PLXD-after-ok (store 47e8bc88) already in 4554 and
+  did not clear NAMED_FPGA_IDLE_HPS under /bin/fpga.
+- Live-tree !rd_act drift vs n3 freeze is cite-only (R-fpga-rca);
+  n4 e896 had !rd_act and still idle-rebooted under /bin/fpga.
+- Menu+product stay-up is idle 20s only. Play unmeasured by this RCA.
+- unique24=FAIL. last_honest_pfps=NONE.
+Do not start exclusive. n6=NO.
+
+================================================================
+BACKLOG SUGGESTION (do not write PHASE_BACKLOG)
+================================================================
+P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+NAMED_FPGA_CLASS=BAN  {0fc,d191,e896,4554}
+NAMED_LOAD_CORE=BAN   Plex.720p24.* (GPI31 + LOAD_CORE_REBOOT)
+MENU_PRODUCT_LOAD     L-n5-menu STAY_UP=YES idle 20s; PLAY_RAN=NO
+Restore: cp bak + load_core menu then Plex.rbf; never /bin/fpga.
+FIT_GO=NO. n6=NO. Do not invent pfps>=23.9.
+Play (if any) is L-n5-play’s job; this worker did not play.
+
+================================================================
+BLOCKERS
+================================================================
+Named /bin/fpga is the wrong method (proven idle HPS reboot).
+Named load_core is banned (GPI31 / reboot).
+unique-24 still FAIL (no play / no pfps this RCA).
+Not a Quartus blocker. Do not n6.
+
+================================================================
+EVIDENCE
+================================================================
+  /tmp/misterplex-agent-R-load-rca.txt              (this)
+  /tmp/misterplex-agent-L-n2-idle.txt               STAY_UP=NO /bin/fpga 0fc
+  /tmp/misterplex-agent-L-n5-gate.txt               FPGA_NAMED_THEN_SOC_REBOOT 4554
+  /tmp/misterplex-agent-L-n5-menu.txt               STAY_UP=YES menu+Plex 20s
+  /tmp/l-n5-menu-run.log  /tmp/l-n5-menu-run.sh
+  /tmp/misterplex-agent-L-n3-gate.txt               d191 first load + PLAY
+  /tmp/misterplex-agent-L-n4-gate.txt               e896 NAMED_FPGA_IDLE_HPS
+  /tmp/misterplex-agent-L-n2-gate.txt               named load_core REBOOT
+  /tmp/l-n2-gate-run.log                            CORENAME=MENU then Timeout
+  /tmp/misterplex-agent-R-menu-hold.txt             named_load=BAN GPI31 window
+  /tmp/misterplex-agent-R-cmd-hang.txt              GPI31_MENU Main quit
+  /tmp/misterplex-agent-R-fpga-rca.txt              bitstream vs idle PLXD
+  /tmp/misterplex-agent-R-reboot-rca.txt            SUPERSEDED 2nd /bin/fpga
+  /tmp/misterplex-agent-R-host-4554.txt             prefix8 4554 is L4
+  /tmp/misterplex-loop-status.txt                   TICK=05:02Z L-n5-menu cite
+  /home/shawn/Projects/MisterPlex/scripts/deploy_plex_core.sh
+                                                    DEPLOY_LOAD=menu L213-247
+  scripts/run_720p24_live_gate.sh                   L240-257 named load_core
+  host/libmisterplex/present_bank.hpp               rbfPrefix8IsKnownL4 4554
+  /tmp/r-load-rca/fpga.bin                          scp of on-box /bin/fpga
+                                                    md5 965f8974f7e07631b1ff0dd1beefd02f

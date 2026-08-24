@@ -1,0 +1,94 @@
+# misterplex agent U24-pin
+Status: PASS
+READY_FOR_GATE: NO
+FIT_GO: NO
+Worker: U24-pin
+Tree: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Edit: fpga/Plex_MiSTer/Plex.sv ONLY
+UTC: 2026-08-13
+
+PASS = pin-mux source landed. PASS ≠ unique-24 ≠ BUILD_OK ≠ gate ≥23.9.
+Live 00:14Z FAIL pfps=11.9 audio=on is unchanged. Soft-skip ≠ PASS.
+
+## Constraints obeyed
+- ZERO Quartus / FIT_GO / docker / deploy / play / menu / load_core / overwrite Plex.rbf
+- Edited ONLY fpga/Plex_MiSTer/Plex.sv
+- Did NOT edit present_core.sv, QSF, SDC, host, docs, PHASE_BACKLOG, LESSONS, files.qip
+- Did NOT undef DDR_FRAME_STORE (would revive B2 RGB565)
+- Did NOT instantiate sdram_i420_store (present_core owns it)
+- Did NOT change `ifdef DDR_FRAME_STORE around ddram_frame_rd / stream_path / present_core DDRAM ports
+- Product Plex.qsf still DDR_FRAME_STORE=1, no SDRAM_I420_STORE, clk_sys 20, no PLEX_CLK_SYS_24
+- 17dd3b56 thrash FORBIDDEN; no 29.7 PLL change
+- Did not invent ≥23.9 / BUILD_OK / unique-24
+
+## Evidence
+- Plex.sv md5 prefix8 AFTER edit: UNVERIFIED (this worker has no exec; parent: `md5sum fpga/Plex_MiSTer/Plex.sv`)
+- confirm: SDRAM_I420_STORE owns pins; DDR_FRAME_STORE alone still tri-states; neither = B2
+- present_core still wires .sdram_dout(sdram_dout) … .sdram_refresh(frame_sdram_refresh) (Plex.sv L1151-1159)
+- sdram_i420_store: comment only; no instance in Plex.sv
+- stream_ddr_enable / ddram_frame_rd / present DDRAM ports still `ifdef DDR_FRAME_STORE` only (L746, L845, L851, L1064, L1160, L1218)
+
+### Macro matrix (compile-time, not fitted)
+| SDRAM_I420_STORE | DDR_FRAME_STORE | SDRAM_* pins | FRAME_BYTES | present_reset |
+|---|---|---|---|---|
+| 1 (first) | 0 or 1 | sdram_memtest + mux frame_sdram_* + sdram SDRAM_EN=1 | W*H*3/2 | reset \| sdram_startup_busy |
+| 0 | 1 | tri-state nCS=1 CKE=0 CLK=0 (verbatim e/h/j) | W*H*3/2 | reset |
+| 0 | 0 | same live controller (B2 true480) | stride*H*2 RGB565 | reset \| sdram_startup_busy |
+
+Product QSF today = column 2 (tri-state). New branch is inert until someone else adds SDRAM_I420_STORE=1 (not this ticket).
+
+### Unified-diff summary (Plex.sv)
+
+1) FRAME_BYTES L439-445 — I420 size if either macro:
+```
+-`ifdef DDR_FRAME_STORE
++// I420 mailbox size when DDRAM holds the plane (product) or when the
++// stick is the I420 store. Neither macro → B2 RGB565 stride*H*2.
++`if (`ifdef DDR_FRAME_STORE 1 `else 0 `endif) || (`ifdef SDRAM_I420_STORE 1 `else 0 `endif)
+ localparam int FRAME_BYTES = FRAME_W * FRAME_H * 3 / 2;
+ `else
+ localparam int FRAME_BYTES = FRAME_STRIDE * FRAME_H * 2;
+ `endif
+```
+
+2) Pin mux L489-676 — check SDRAM_I420_STORE FIRST; copy of former `else` owns stick; `elsif DDR_FRAME_STORE` tri-state left verbatim; `else` B2 left verbatim:
+```
+-`ifdef DDR_FRAME_STORE
+-  assign SDRAM_nCS=1; SDRAM_CKE=0; SDRAM_CLK=0; … sdram_startup_busy=0;
++`ifdef SDRAM_I420_STORE
++  sdram_memtest sdram_test (…);
++  assign sdram_ctl_* = sdram_test_active ? sdram_test_* : frame_sdram_*;
++  // sdram_test_done CDC → clk_sys; sdram_startup_busy = !sdram_test_done_s2
++  sdram sdram_ctl (… SDRAM_EN(1'b1) …);
++`elsif DDR_FRAME_STORE
++  assign SDRAM_nCS=1; SDRAM_CKE=0; SDRAM_CLK=0; … sdram_startup_busy=0;
+ `else
+   sdram_memtest + mux + sdram  // unchanged B2 body
+ `endif
+```
+Exclusive `ifdef/`elsif/`else` — no duplicate sdram_test / sdram_ctl / assign names when both macros defined.
+
+3) present_reset L678-684 — I420 path waits for memtest (same as B2). DDR-only still `reset` only:
+```
+-`ifdef DDR_FRAME_STORE
++`ifdef SDRAM_I420_STORE
++wire present_reset = reset | sdram_startup_busy;
++`elsif DDR_FRAME_STORE
+ wire present_reset = reset;
+ `else
+ wire present_reset = reset | sdram_startup_busy;
+ `endif
+```
+
+Net: +~87 lines in one file. No other path touched.
+
+## Verdict
+Source pin-owning mux is in place. PATH_SDRAM can reach a live sdram controller when SDRAM_I420_STORE is defined, without undefining DDR_FRAME_STORE (mailbox / I420 FRAME_BYTES / DDRAM blanking stay). Product 07f54d9f / Plex.qsf behavior is unchanged until that macro is added elsewhere. No fit, no deploy, no gate number claimed.
+
+## Blockers
+- SDRAM_I420_STORE not in Plex.qsf (U24-present / parent; this worker must not edit QSF)
+- present_core does not yet instantiate sdram_i420_store / drive frame_sdram_* (U24-present)
+- Live gate still FAIL pfps=11.9 (00:14Z); Isolated F=32.31 is not this ticket
+- md5 prefix8 not hashed here (no exec)
+
+Backlog suggestion: U24-pin DONE (source). Do not mark unique-24 / 3l2 / residual PASS. Do not FIT_GO from this report.

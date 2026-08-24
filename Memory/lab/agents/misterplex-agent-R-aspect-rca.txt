@@ -1,0 +1,261 @@
+WORKER=R-aspect-rca
+UTC=2026-08-14T03:12Z
+ROLE=READ-ONLY RCA
+REPO_SOT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+GOAL=explain copy play FAIL "source display aspect unavailable" on 0fc BUILD_OK silicon
+ZERO_QUARTUS=YES
+NO_FPGA_EDITS=YES
+NO_SDRAM_I420_STORE_EDIT=YES
+NO_M2_EDIT=YES
+NO_CARDS=YES
+NO_GATE=YES
+UNIQUE24=NO
+UNIQUE24_PASS=NO
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_NE_UNIQUE24=YES
+
+================================================================
+VERDICT
+================================================================
+RCA_OK. unique-24=NO. ACK=NO. pfps=NONE. PLAY_RC=1.
+
+Assigned surviving log is glass=true480 doorbell=0x300FF000 PLXJ=0x300FF130.
+Fail string is the generic play-file wrapper, NOT a "PLXJ ACK timeout" line.
+This log never entered sendSourceAspect's 250 ms ACK wait (no ERROR media
+publish line). Host polled leftover true480 +0x130, not n2 L4 0x3047F130.
+
+RCA_OK ≠ unique-24 ≠ T7 PASS ≠ BUILD_OK product PASS.
+Soft-skip ≠ PASS. Did not invent pfps / L4 on the assigned file.
+
+================================================================
+1) Assigned log quotes (full file, 24 lines, 1375 B)
+================================================================
+FILE=/tmp/misterplexd.t7gate-0fc77c10-copy.log
+MD5=88fe5a23ff86d51b0f80cb2256fb3c05
+SIZE=1375
+MTIME=2026-08-14T03:04:15Z (overwrote a 1558 B file; see §5)
+
+Quoted (this file, not the 02:59 stale quote):
+
+  misterplexd: CLI_DECODE_WINS --decode 1280x720 (conf DECODE=640x480 ignored)
+  misterplexd: GLASS-MAX glass=true480 content=1280x720 → bank=640x480 doorbell=0x300FF000
+  misterplexd: LAB play-file=/tmp/real720p_1500k_av.mp4 seconds=15 decode=640x480 doorbell=0x300FF000 PLXJ=0x300FF130
+  media: display raster 480p → video_mode 5
+  media: OSD word=0xa010 av_offset_ms=0 clock_ppm=-638 resync=on content_res=480p display_res=480p decode=640x480
+  media: idle screen painted (mode=0)
+  misterplexd: play-file failed: source display aspect unavailable
+
+NO line containing "PLXJ ACK timeout".
+NO line containing "ERROR media: source aspect".
+NO suffix " L4" on the LAB line (that suffix is only printed when decode==1280x720).
+NO 0x3047F000 / 0x3047F130 / glass=L4 in this file.
+
+Score sibling /tmp/pfps-720p24-live-gate-0fc77c10-copy.txt:
+  PLAY_RC=1 ACK=NO frames=NONE pfps=NONE
+  doorbell=0x300FF000 PLXJ=0x300FF130
+  GLASS-MAX glass=true480 … bank=640x480
+  UNIQUE24=FAIL
+  ARM=6214f775 pin 0fc77c10
+
+Contrast (same clip, earlier silicon/log — ACK wait DID run):
+  /tmp/misterplexd.t7gate-cc9dbd74.log
+  LAB … decode=640x480 doorbell=0x300FF000 PLXJ=0x300FF130
+  ERROR media: source aspect publish failed: sendSourceAspect: PLXJ ACK timeout want=16:9 token=18 last=16:9 token=17
+  misterplexd: play-file failed: source display aspect unavailable
+
+Same wrapper string. Different inner cause. This 0fc copy has the wrapper
+WITHOUT the ACK-timeout inner log.
+
+================================================================
+2) host/ rg — what returns that error besides ACK timeout
+================================================================
+rg sendSourceAspect / "source display aspect" under host/ (SoT):
+
+  host/libmisterplex/source_aspect.hpp
+    - helpers only: SourceAspect, encodeSourceAspectPacket,
+      decodeSourceAspectAckWord / decodeStableSourceAspectAck,
+      sourceAspectFromText / FromMetadata / FromFfmpegProbeText
+    - kSourceAspectIoctlIndex = 4
+    - kSourceAspectPacketMagic = 0x41584C50 "PLXA"
+    - decode requires mailbox_abi::kPlxjMagic (0x504C584A)
+  NO sendSourceAspect() in host/
+  NO string "source display aspect unavailable" in host/
+
+The exact fail string is printed in ONE place:
+
+  arm/misterplexd/main.cpp:664-668  (--play-file path only)
+
+    const auto sourceAspect = player.probeSourceAspect(playFile);
+    if (!sourceAspect.valid || !player.setSourceAspect(sourceAspect)) {
+        fprintf(stderr, "misterplexd: play-file failed: source display aspect unavailable\n");
+        return 1;
+    }
+
+It is a GENERIC wrapper. ACK timeout is only one inner cause.
+Short-circuit: if probe is invalid, setSourceAspect is never called.
+
+Companion path is a DIFFERENT string (not this log):
+  main.cpp:1026 "PLAY rejected: source aspect unknown or FPGA ACK did not match"
+
+--- probeSourceAspect (media_player.cpp → ffmpegSourceAspect) ---
+Silent. Returns SourceAspect{valid=false}. NO media log.
+Fails closed when:
+  - pipe2/pipe fails
+  - fork fails
+  - ffmpeg exec fails (empty stderr)
+  - 5 s poll/wait deadline (kill SIGTERM/SIGKILL) → return {}
+  - ffmpeg stderr has no parseable "DAR " token
+    (sourceAspectFromFfmpegProbeText in host/libmisterplex/source_aspect.hpp)
+  - DAR out of [0.25, 4.0] or gcd-reduce overflow
+
+This path produces the generic wrapper with ZERO "ERROR media" lines.
+That is the shape of the assigned 0fc copy log.
+
+--- setSourceAspect (media_player.cpp:1081) — only if probe.valid ---
+Always logs before returning false:
+  A. !aspect.valid
+       "ERROR media: refusing playback with unknown source display aspect"
+  B. setDdrFrameLayout fail
+       "ERROR media: source aspect DDR layout failed: " + lastError()
+  C. sendSourceAspect fail
+       "ERROR media: source aspect publish failed: " + lastError()
+
+presentMode not fpga/both → SUCCESS (host_present, no FPGA transport).
+This run is PRESENT=fpga, so it would have taken A/B/C.
+
+--- sendSourceAspect (fpga_spi.cpp:2179) — inner of C ---
+  C1. !aspect.valid → "sendSourceAspect: invalid source aspect"
+  C2. sendFileTx(packet, kSourceAspectIoctlIndex=4) fail, no ACK wait:
+        "sendFileTx: not open or empty"
+        "Main busy on SPI — skipped"
+        "FPGA not in user mode"
+        other SPI err_
+  C3. 250 ms poll of doorbell_phys+0x130:
+        "sendSourceAspect: PLXJ ACK timeout want=%u:%u token=%u last=%u:%u token=%u"
+
+readSourceAspectAck fail (absent/unstable mailbox, map window) does NOT
+return immediately; sendSourceAspect then expires into C3.
+
+This assigned log has no A/B/C ERROR media line → C3 was not reached.
+Discriminator vs cc9dbd74 (had C3).
+
+Most probable for THIS 1375 B file: probe invalid (silent) → wrapper.
+Cannot name the ffmpeg reason (no probe stderr captured). Concurrent
+named-load / EXIT restore / second play after 07f54d9f restore is a
+plausible 5 s timeout, not proven.
+
+================================================================
+3) true480 leftover PLXJ — n2 L4 page not polled (this file)
+================================================================
+Glass pin (host/libmisterplex/present_bank.hpp):
+  corroborateLiveGlass IGNORES the 0x3047F130 magic word.
+  L4 only if disk prefix8 in {968b828a, cc9dbd74, 0fc77c10}
+             or RBFNAME is Plex.720p24* / contains 968b828a.
+  Else true480. 07f54d9f stays True480 even if leftover PLXJ magic present.
+
+This daemon start printed glass=true480 → pin was not known-L4
+(typical after EXIT restore of 07f54d9f onto Plex.rbf). ARM 6214f775
+is on box (R-daemon-0fc PIN_OK) and DOES know 0fc; glass=true480
+therefore means THIS process hashed leftover true480 Plex.rbf, not 0fc.
+
+Host address math (main.cpp LAB line + fpga_spi.cpp:2102):
+  glass-capped decode 640x480
+  doorbell = kPlex480pYuv420pDoorbellPhys = 0x300FF000
+  PLXJ     = doorbell + 0x130             = 0x300FF130
+  LAB suffix " L4" omitted (decode != 1280x720)
+
+L4 page the host would have used IF glass=L4:
+  doorbell 0x3047F000
+  PLXJ     0x3047F130   (= 720p doorbell + 0x130)
+
+RTL (read-only; not edited): sdram_i420_store.sv
+  ASPECT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h130
+  MAGIC_J = 32'h504C584A
+  n2 720p PHYS_BASE → DOORBELL 0x3047F000 → live PLXJ 0x3047F130
+
+Therefore on this assigned play:
+  - host NEVER mapped / polled 0x3047F130
+  - BUILD_OK n2 PLXJ at L4 page was not the ACK address
+  - any sendSourceAspect (if probe had succeeded) would have polled
+    leftover true480 0x300FF130 (DDR persists; HEAL lesson: leftover
+    PLXJ word can still be 0x504C584A on 07f54d9f)
+  - cc9 pattern on that leftover: last=16:9 token=17, want token=18 → C3
+
+Comment in main.cpp ("Do not skip ACK") is honored as a closed fail;
+it does not move the poll to L4 when glass is true480.
+
+================================================================
+4) unique-24
+================================================================
+UNIQUE24=NO
+pfps=NONE
+ACK=NO
+frames=NONE
+BUILD_OK 0fc77c10 ≠ unique-24
+24Hz ≠ unique-24
+ARM pin 6214f775 ≠ unique-24
+RCA_OK ≠ PASS
+Soft-skip ≠ PASS
+
+================================================================
+5) Stale 02:59 L4 quote — not this assigned file
+================================================================
+R-copy-status 02:59Z quoted a then-1558 B copy.log:
+  decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+  play-file failed: source display aspect unavailable
+  idle paint DDR failed … frame_debug=0xa0 frame_seq=23
+  (also NO "PLXJ ACK timeout" in that quote)
+
+Parent 03:04Z: do not quote 02:59 L4 as the surviving log.
+File on disk now is 1375 B true480 (this RCA's SoT).
+/tmp/misterplex-evidence-n2-l4-play.txt is a later derived note about a
+first copy play; not the assigned file. Even that note: UNIQUE24=FAIL.
+
+If that first L4 play existed, it is a different process: glass=L4 would
+have polled 0x3047F130. The assigned surviving log did not.
+Both plays share the generic wrapper and lack an ACK-timeout line.
+
+================================================================
+CONSTRAINTS HONORED
+================================================================
+ZERO Quartus. No fit. No RBF. No deploy. No ssh. No play. No menu.
+Did not edit sdram_i420_store.sv / m2 / present_bank / misterplexd.
+No cards. No PHASE_BACKLOG edit. No second gate.
+
+================================================================
+BACKLOG_STATUS_SUGGESTION
+================================================================
+R-aspect-rca DONE (RCA_OK).
+P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+Copy play on assigned 0fc log = PLAY_RC=1 ACK=NO pfps=NONE
+  reason=generic "source display aspect unavailable"
+  NOT C3 PLXJ ACK timeout (no such line; no ERROR media publish).
+  glass=true480 → poll 0x300FF130 leftover; n2 L4 0x3047F130 not polled.
+Do not mark unique-24. Do not treat RCA_OK as T7 / ACK / product PASS.
+Do not start a second exclusive / second gate from this RCA.
+
+================================================================
+BLOCKERS
+================================================================
+None for this read-only RCA.
+unique-24 remains FAIL (no frames, no ACK match, no pfps).
+Probe reason not logged (ffmpegSourceAspect is silent on {}).
+Assigned log cannot prove/deny a prior overwritten L4 play.
+
+================================================================
+EVIDENCE
+================================================================
+/tmp/misterplexd.t7gate-0fc77c10-copy.log
+/tmp/pfps-720p24-live-gate-0fc77c10-copy.txt
+/tmp/misterplexd.t7gate-cc9dbd74.log  (ACK-timeout contrast)
+arm/misterplexd/main.cpp:647-668
+arm/misterplexd/media_player.cpp:403-541, 1076-1104
+arm/misterplexd/fpga_spi.cpp:2093-2214, 1342-1392
+host/libmisterplex/source_aspect.hpp
+host/libmisterplex/present_bank.hpp (corroborateLiveGlass / probeLiveGlass)
+host/libmisterplex/ddr_frame_layout.hpp (0x300FF000 / 0x3047F000 / +0x130)
+fpga/Plex_MiSTer/rtl/sdram_i420_store.sv (MAGIC_J, ASPECT_MAILBOX_PHYS=+0x130) RO
+/tmp/misterplex-agent-R-copy-hv.txt
+/tmp/misterplex-agent-R-copy-status.txt (stale 1558 B L4 quote)
+/tmp/misterplex-agent-R-daemon-0fc.txt (on-box ARM 6214f775)
+this report: /tmp/misterplex-agent-R-aspect-rca.txt

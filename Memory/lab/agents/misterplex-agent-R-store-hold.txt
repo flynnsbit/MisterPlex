@@ -1,0 +1,146 @@
+# misterplex agent R-store-hold
+Date: 2026-08-14T05:00:15Z
+Worker: R-store-hold
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-R-store-hold.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-store-hold.txt
+Status: HOLD_OK
+EDITED: NO
+Quartus: ZERO (this worker)
+DEPLOY: NO
+FIT_GO: NO
+n6: NOT STARTED
+BUILD_OK: not invented this tick (n5 already BUILD_OK 4554fdb3 — X-n5 / M-fitmon-n5)
+unique24: FAIL
+PLEX_CLK_SYS_24: ABSENT_IN_PRODUCT
+DRIFT_VS_N5: NO
+
+## Goal
+Read-only confirm live store is still 47e8bc88 (doorbell_ok / reset bank_mbox_req<=0)
+and product QSF has no PLEX_CLK_SYS_24. No new RTL reason for n6. FIT_GO=NO.
+
+## Constraints honored
+- ZERO Quartus. Did not edit sdram_i420_store.sv or Plex.qsf.
+- NEVER /bin/fpga. NEVER load_core. NEVER play. NEVER lab deploy.
+- NEVER PLEX_CLK_SYS_24 (did not add it; did not uncomment overlay L123).
+- NO cards. Did not write PHASE_BACKLOG or Memory/lab/status/*.md
+- unique24=FAIL not claimed. Did not invent BUILD_OK.
+- Did not start n6.
+
+## 1. STORE_MD5 + needles
+
+FILE=/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+STORE_MD5=47e8bc88bd3e2b539f85424da30f065e
+EXPECT=47e8bc88bd3e2b539f85424da30f065e
+MATCH=YES
+mtime=2026-08-13 23:30:38 CDT size=44000 lines=1437 (unchanged this tick)
+PLEX_CLK_SYS_24 in store: ABSENT (0 hits)
+
+Needles (live worktree this tick; same sites as X-n5 preflight):
+  L98   BANK_MAILBOX_PHYS  = DOORBELL_PHYS + 32'h128
+  L99   ASPECT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h130
+  L111  MAGIC_D = 32'h504C_5844  // PLXD bank-release (HPS 0/1)
+  L112  MAGIC_J = 32'h504C_584A  // PLXJ source-aspect ACK
+  L668-669 mailbox_d_din = {..., MAGIC_D}
+  L710  reset: doorbell_ok <= 1'b0
+  L718-720 reset_ddr: bank_mbox_req <= 1'b0  (NOT <=1; n3/n4 idle-PLXD hammer removed)
+  L721  reset: bank_mbox_valid <= 1'b0
+  L829  kick_now: doorbell_ok <= 1'b1
+  L836-850 PLXD after host doorbell only:
+           doorbell_ok && (frames / dma_busy / swap_pend)
+           doorbell_ok && bank_mbox_valid && (bank_mbox_hb == 0)  // heartbeat L849
+  L859  !rd_act_d2 && source_aspect_mbox_req   // blanking-only PLXJ
+  L866  !rd_act_d2 && bank_mbox_req            // blanking-only PLXD
+
+bank_mbox_req assignments in file (6):
+  L720 <= 1'b0  (reset)
+  L840/843/846/850 <= 1'b1  (runtime, all gated by doorbell_ok)
+  L926 <= 1'b0  (after BANK_MAILBOX write)
+  Reset path is <=0, not <=1.
+
+## 2. Product QSF + overlay
+
+PRODUCT=/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+QSF_MD5=b049c94413d02a1a63dfd03b7234d7e1
+EXPECT=b049c94413d02a1a63dfd03b7234d7e1
+MATCH=YES
+git: tracked, clean (diff 0 bytes)
+mtime=2026-08-13 22:32:51 CDT size=6343
+480p restored: FRAME_W=640 FRAME_H=480 PLEX_PRESENT_TRUE_480P=1 (L83-89)
+PLEX_CLK_SYS_24=ABSENT_IN_PRODUCT (rg count=0; not even a comment)
+Did not add PLEX_CLK_SYS_24.
+
+OVERLAY=/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex_720p24n2.qsf
+OVERLAY_MD5=84c2f4b2e85f150e073578e7e4406b69
+EXPECT=84c2f4b2e85f150e073578e7e4406b69
+MATCH=YES
+STORE=1: VERILOG_MACRO "SDRAM_I420_STORE=1" L106 (active)
+STORE_M2: comment only (not enabled)
+PLEX_CLK_SYS_24: COMMENTED only
+  L20  # Do not enable PLEX_CLK_SYS_24, ...
+  L100 # slot720p24 (PLEX_CLK_SYS_24) TIMING_FAIL: ...
+  L123 #set_global_assignment -name VERILOG_MACRO "PLEX_CLK_SYS_24=1"
+Did not uncomment. clk_sys stays 20 MHz on this sibling.
+
+## 3. No new store/RTL drift vs n5 freeze
+
+n5 freeze (X-n5 / M-fitmon-n5):
+  store 47e8bc88bd3e2b539f85424da30f065e
+  overlay 84c2f4b2e85f150e073578e7e4406b69
+  product QSF restored b049c94413d02a1a63dfd03b7234d7e1
+  ingest ede160bf14b2500d4b6ed4591a9cb53e (COMMIT_HOLD=8)
+  RBF 4554fdb392b1030ed523dfb082e3bad8 BUILD_OK already
+
+This tick:
+  store 47e8bc88 MATCH n5 (mtime 23:30 still before n5 log 23:39)
+  overlay 84c2f4b2 MATCH n5
+  product QSF b049c944 MATCH n5
+  ingest ede160bf MATCH n5 (mtime 22:14; dirty vs git HEAD is pre-n5, not new)
+  named local RBF still 4554fdb392b1030ed523dfb082e3bad8
+    remote_out/slot720p24n5/Plex.720p24.4554fdb3.rbf
+    remote_out/slot720p24n5/Plex.rbf
+  local quartus/mplex-fit/n5/n6: NONE
+
+EDITED=NO. This worker wrote only this report. Store/QSF/overlay mtimes unchanged.
+No new RTL reason for n6.
+
+## 4. Verdict
+
+STORE_MD5=47e8bc88bd3e2b539f85424da30f065e
+QSF_MD5=b049c94413d02a1a63dfd03b7234d7e1
+PLEX_CLK_SYS_24=ABSENT_IN_PRODUCT
+FIT_GO=NO
+EDITED=NO
+unique24=FAIL
+
+FIT_GO=NO because:
+- doorbell_ok / PLXD-after-ok (store 47e8bc88) did not clear named-/bin/fpga idle HPS reboot
+  (L-n5-gate: ONE /bin/fpga named 4554fdb3 RC=0 at 04:44:53Z then SoC reboot ~4s;
+   class FPGA_NAMED_THEN_SOC_REBOOT / NAMED_FPGA_IDLE_HPS; play never started)
+- no stay-up load path yet
+- no new RTL (same freeze as n5 BUILD_OK)
+
+Do not start n6. Do not claim unique-24.
+BUILD_OK+DEPLOY of 4554fdb3 ≠ unique-24. Soft-skip ≠ PASS.
+n5 BUILD_OK 4554fdb3 is already recorded by X-n5 / M-fitmon-n5; this tick does not re-claim it.
+
+## Backlog status suggestion (not written)
+Keep store 47e8bc88 LOCK_OK / product Plex.qsf 480p b049c944 / PLEX_CLK_SYS_24 ABSENT.
+slot720p24n5 TERMINAL BUILD_OK 4554fdb3. unique24 FAIL. FIT_GO=NO. Do not start n6.
+No new exclusive until a stay-up load path exists (doorbell_ok did not clear NAMED_FPGA_IDLE_HPS).
+
+## Evidence
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex_720p24n2.qsf
+/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n5/Plex.720p24.4554fdb3.rbf
+/tmp/misterplex-agent-X-n5.txt
+/tmp/misterplex-agent-M-fitmon-n5.txt
+/tmp/misterplex-agent-L-n5-gate.txt
+/tmp/misterplex-agent-R-store-hold.txt
+/home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-store-hold.txt
+
+## Blockers
+FIT_GO=NO — no new RTL; named 4554fdb3 still FPGA_NAMED_THEN_SOC_REBOOT at idle.
+unique-24 blocked (pfps=NONE; play never ran on n5).
+Not a Quartus blocker. Do not start n6 from this worker.

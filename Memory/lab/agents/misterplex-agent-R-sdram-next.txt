@@ -1,0 +1,98 @@
+# misterplex agent R-sdram-next
+Worker: R-sdram-next
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+UTC: 2026-08-14T02:05Z
+Quartus: ZERO
+
+## Status
+PASS (m2 exists, module renamed, miss-scan staged, qip untouched)
+BUILD_OK: NO
+TIMING_OK: NO
+unique-24: NOT claimed
+WIRED: NO (not instantiated; not in files.qip)
+SOFT_SKIP ≠ PASS
+
+## Constraints
+- Exclusive slot720p24m LIVE. ZERO Quartus started by this worker.
+- Did not edit live compile files: Plex.sv, Plex.qsf, Plex_720p24.qsf,
+  pll_0002.v, sdram_i420_store.sv, present_core.sv, Plex_clk_pix.sdc,
+  files.qip.
+- Did not add rtl/sdram_i420_store_m2.sv to files.qip.
+- Never PLEX_CLK_SYS_24. No present_content_window. No lpm_divide.
+  I420 stays in the stick. RGB only at scan (PLEX_STORE_YUV_PIPE).
+- y_line_off / c_line_off remain shift-add (640/320/160).
+- No PHASE_BACKLOG / status cards.
+
+## Evidence
+New file only:
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store_m2.sv
+  1394 lines  module sdram_i420_store_m2
+  md5 0f9629e54cabe3e419b20f2ee29d745c  prefix8 0f9629e5
+
+Original (untouched; still the live-fit source):
+  rtl/sdram_i420_store.sv
+  1354 lines  module sdram_i420_store
+  md5 fe5be949acb0598ecec2f35eb6f9d37a  prefix8 fe5be949
+
+files.qip md5 8c99e4f8809442e99ca10efb985f8540  prefix8 8c99e4f8
+  same as worker start. grep sdram_i420_store_m2 files.qip → NONE
+  line 25 still: SYSTEMVERILOG_FILE rtl/sdram_i420_store.sv
+  present_core.sv / Plex.sv instantiate sdram_i420_store only.
+
+How the cone is cut:
+  Live always @* (sdram_i420_store.sv ~L951) folds LINE_COUNT=8
+  home-slot compare + first-miss priority into need_y_c / need_c_c /
+  tgt_*_c, then one flop (need_y_r). Inferred k4 clk_sdram cone
+  (lite STA, From/To absent): Fmax 127.06 / slack −5.533 @ 144 MHz.
+  m2 splits that loop:
+    Stage 0 combo: per-slot hit only (y_hit_s0_c[si] / c_hit_s0_c[si]).
+                   No first-miss carry. One home-slot lookup each.
+    Stage 0 reg:   y_miss_s0 <= ~y_hit_s0_c plus payload y_des_s0 /
+                   y_idx_s0 (same for chroma).
+    Stage 1 reg:   reverse-NBA first-miss of those flops → need_y_r /
+                   need_c_r / tgt_*_scan. Inputs are flops, not
+                   y_valid / y_line / bank.
+    S_IDLE:        scan_settle 2 extra beats (was 1; two flops after
+                   y_valid NBA), then snapshots Stage 1 into
+                   need_y_cur / tgt_y / tgt_y_idx (same for chroma).
+  FSM still decides from need_*_cur only. addr_*_r pipe
+  (stick_base + y_line_off / c_line_off) unchanged — not summed in
+  the same cycle as the miss combo. clk_pix always @* hit-mux +
+  PLEX_STORE_YUV_PIPE (64-bit mux then BT.601) unchanged.
+
+SV syntax (not Quartus A&S, not BUILD_OK):
+  verilator --lint-only -Wall (PINCONNECTEMPTY/MULTIDRIVENPROC
+    inherited from orig fifo / clk_pix vi) rc=0
+  iverilog -g2012 -t null rc=0
+  check_quartus_sv_subset.check_file errors=0 (static only; no quartus_map)
+  log: /tmp/misterplex-R-sdram-next-syntax.log
+
+Live files md5 after this worker (not edited here):
+  Plex.sv            9fd8fd3b12bae7846da99ca346453ebe
+  present_core.sv    eaa7b16862345e80ea9f9aa2507e3b7a
+  files.qip          8c99e4f8809442e99ca10efb985f8540
+  sdram_i420_store   fe5be949acb0598ecec2f35eb6f9d37a
+
+## Verdict
+PASS. Next-slot m2 landed: module renamed, clk_sdram miss-scan
+compare registered apart from first-miss, FSM samples registered
+targets, files.qip untouched. BUILD_OK=NO. TIMING_OK=NO.
+k4 −5.533 class is NOT closed (m2 not in this fit). Soft-skip ≠ PASS.
+
+## Next
+After slot720p24m TERMINAL, if that (or k4) TIMING_FAIL is still
+clk_sdram miss-scan, parent may swap files.qip
+  rtl/sdram_i420_store.sv → rtl/sdram_i420_store_m2.sv
+and rename the instance in present_core (or keep module name via
+wrapper). Do not start Quartus from this ticket. Do not add m2 to
+the LIVE slot720p24m compile.
+
+## Backlog suggestion
+PATH_SDRAM clk_sdram next-slot: m2 READY (syntax). Not in fit.
+If post-m TIMING_FAIL remains clk_sdram miss-scan, ONE exclusive
+may swap qip to m2. Do not start Quartus now. 3l2 / unique-24 unchanged.
+
+## Blockers
+- Exclusive LIVE — cannot prove Quartus A&S or slack on this file.
+- m2 unused until parent swaps qip post-m. Syntax PASS ≠ TIMING_OK.
+- k4 From/To still absent (lite STA). Cone is inferred, not named.

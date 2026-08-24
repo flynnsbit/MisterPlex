@@ -1,0 +1,6 @@
+# 720p 20fps evidence 2026-08-12
+RBF 07f54d9f. daemon down. 1280x720 CBP samples.
+decode_null 240f: 1500k 28.7fps; 2500k 27.6; 4000k 20.8
+heap+copy 200f: 1500k 20.738; 2500k 19.192
+uncached 0x30600000 200f: 1500k 18.951 (nice0); 1500k 23.540 (MiSTer nice19 restored)
+24fps: not closed. Ladder → 1500k/q70.

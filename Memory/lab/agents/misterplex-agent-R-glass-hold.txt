@@ -1,0 +1,154 @@
+# misterplex agent R-glass-hold
+WORKER: R-glass-hold
+UTC: 2026-08-14T03:29:49Z (SSH pin 03:29:41Z / 03:29:49Z)
+REPO_SOT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST: root@192.168.1.183 (sshpass -p 1)
+GOAL: confirm product glass; restore bak copy-only IFF Plex.rbf is 720p/0fc/4f16
+Report: /tmp/misterplex-agent-R-glass-hold.txt
+
+================================================================
+VERDICT
+================================================================
+RESTORE=NO
+RESTORE_NEEDED=NO
+RESTORE_RAN=NO
+PLEX_RBF_PREFIX8=07f54d9f
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PLEX_RBF_SIZE=3831312
+PLEX_RBF_IS_0FC=NO
+PLEX_RBF_IS_4F16=NO
+PLEX_RBF_IS_720P=NO
+720P_LEFT_AS_PLEX_RBF=NO
+TRUE480_BAK_INTACT=YES
+NAMED_0FC_EXISTS=YES (sidecar only)
+NAMED_4F16_EXISTS=YES (sidecar only)
+CORENAME=Plex
+RBFNAME=Plex
+DAEMON_PID=1564
+DAEMON_CMD=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+LISTEN_3005=YES 0.0.0.0:3005 pid=1564
+BIN_MD5=6214f77568fa2303405603747e5dd5e7
+MAIN_PID=1554 /media/fat/MiSTer /media/fat/_Utility/Plex.rbf
+leftover_run_720p24=NONE
+KILLED_RUN720=NO
+unique24=FAIL
+last_honest_pfps=NONE
+FPGA_FLASH=NO
+LOAD_CORE=NO
+MENU=NO
+BIN_FPGA=NO
+QUARTUS=LIVE_n3 (observe only; did not touch)
+
+Product /media/fat/_Utility/Plex.rbf already matches want
+07f54d9f8f0eda2fe75d9cc314f6de54. Did not copy bak. Did not flash.
+Did not invent pfps.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+- Exclusive n3 LIVE (fit_slot720p24n3.sh 323253; build_rbf_remote 323305;
+  ssh node-worker1 323349). ZERO FPGA flash / load_core / /bin/fpga / menu.
+- Did not start run_720p24. leftover=NONE so no PID kill (never pkill -f).
+- Restore only if product slot ≠ 07f54d9f. Slot matched → RESTORE=NO.
+- unique-24=FAIL; last honest pfps=NONE (do not quote stale T7).
+- Soft-skip ≠ PASS. BUILD_OK not invented (n3 still docker/rsync).
+
+================================================================
+1) leftover run_720p24 (local + box)
+================================================================
+UTC 03:29:29Z local:
+  ps -eo pid,cmd | run_720p24|l-n2-copy-gate|named-load|720p24_live → empty
+  pgrep run_720p24 → none (a pgrep -f hit this worker's own argv; not a gate)
+  exclusive LIVE: 323253 fit_slot720p24n3.sh; 323305 build_rbf_remote.sh
+                  slot720p24n3; 323349 ssh node-worker1
+  docker quartus: none on this host (farm n3)
+
+Box 03:29:49Z:
+  ps | run_720p24 → NONE
+  ps | fpga|load_core → NONE
+
+KILLED: none (nothing to kill by PID).
+
+================================================================
+2) PRODUCT Plex.rbf
+================================================================
+PATH: /media/fat/_Utility/Plex.rbf
+LS:   -rwxr-xr-x 1 root root 3831312 2026-08-13 22:15:32.000000000 -0500
+MD5:  07f54d9f8f0eda2fe75d9cc314f6de54
+SIZE: 3831312  (true480 class; named 0fc is 2831748; 4f16 is 2812392)
+MATCH_WANT: YES
+/media/fat/Plex.rbf        MISSING
+/media/fat/cores/Plex.rbf  MISSING
+
+================================================================
+3) BAK + named 720p sidecars (NOT product slot)
+================================================================
+BAK: /media/fat/_Utility/Plex.true480.07f54d9f.rbf
+  LS:  -rwxr-xr-x 1 root root 3831312 2026-08-13 11:54:12.000000000 -0500
+  MD5: 07f54d9f8f0eda2fe75d9cc314f6de54
+  MATCH_PRODUCT: YES
+  MATCH_WANT: YES
+
+NAMED 0fc (sidecar):
+  /media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+  MD5: 0fc77c10f47a33d5e4379fe129658e93
+  SIZE: 2831748
+  ON_PRODUCT_SLOT: NO
+
+NAMED 4f16 (sidecar; DO_NOT_DEPLOY per parent):
+  /media/fat/_Utility/Plex.720p24.4f16350e.rbf
+  MD5: 4f16350ec39d6cc9cb23230c798ce927
+  SIZE: 2812392
+  ON_PRODUCT_SLOT: NO
+
+Other named 720p24 on disk (not Plex.rbf):
+  968b828a8ec572bccf43b7bc2d31625a  Plex.720p24.968b828a.rbf
+  cc9dbd74df99858fb1a43d636b769574  Plex.720p24.cc9dbd74.rbf
+  a69a62f947a6314046c7b9932cb33aac  Plex.720p24k.a69a62f9.rbf
+
+================================================================
+4) CORENAME / RBFNAME / Main
+================================================================
+CORENAME=Plex
+RBFNAME=Plex
+/tmp/CORENAME /tmp/RBFNAME mtime 2026-08-13 22:15:35.017 -0500 size=4
+Main: pid 1554 /media/fat/MiSTer /media/fat/_Utility/Plex.rbf LIVE
+Box uptime 03:29:41Z: 0:14 (901s at 03:29:49Z). No load_core this worker.
+
+================================================================
+5) DAEMON
+================================================================
+PID=1564 CMD=... --name MiSTerPlex --id misterplex --port 3005 --conf ...
+LISTEN: tcp 0.0.0.0:3005 pid=1564/misterplexd
+BIN: /media/fat/misterplex/bin/misterplexd md5 6214f77568fa2303405603747e5dd5e7
+     size 13040548 mtime 2026-08-13 21:56:22 -0500
+exe → /media/fat/misterplex/bin/misterplexd
+No twin product daemon. Did not restart daemon (already live).
+Did not deploy ARM.
+
+================================================================
+6) WHAT WAS NOT DONE
+================================================================
+- Did not cp bak → Plex.rbf (already 07f54d9f)
+- Did not /bin/fpga, load_core, or menu bounce
+- Did not start run_720p24_live_gate / copy-gate
+- Did not Quartus / mid-fit edit
+- Did not measure unique-24 / pfps (NONE; unique24=FAIL)
+- Did not pkill -f
+
+================================================================
+EVIDENCE
+================================================================
+- this report: /tmp/misterplex-agent-R-glass-hold.txt
+- live ssh 192.168.1.183 md5sum + CORENAME + busybox ps + netstat -lntp
+- local leftover scan 03:29:29Z: no run_720p24 PID
+- exclusive n3 LIVE observed (323253/323305/323349)
+
+BACKLOG_STATUS_SUGGESTION:
+  R-glass-hold DONE. RESTORE=NO. Product Plex.rbf 07f54d9f stays.
+  720p_as_Plex.rbf=NO. unique24=FAIL last_honest_pfps=NONE.
+  leftover_run_720p24=NONE. FIT_GO=NO (n3 exclusive still LIVE).
+  Do not leave 0fc/4f16 as Plex.rbf (they are not).
+
+BLOCKERS: none for this restore-or-not decision.
+  Product glass already 07f54d9f. Exclusive n3 must not be flashed around.

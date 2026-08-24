@@ -1,0 +1,96 @@
+# D-plxf-m1-card
+UTC=2026-08-14T20:36Z
+WORKER=D-plxf-m1-card
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report=/tmp/misterplex-agent-D-plxf-m1-card.txt
+Card=/home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/PRODUCT_PLXF_M1.md
+
+VERDICT=CARD_OK
+NAME=PRODUCT_PLXF_M1
+unique24=FAIL
+FIT_GO=NO
+FIT_GO_STAMPED_BY_THIS_WORKER=NO
+Quartus=ZERO
+PLAY=NO
+/bin/fpga=NO
+n29=NO
+WRAP_LAUNCH=NO
+WRAP_STALE=YES
+23.9=NO (not invented)
+
+## What landed
+Durable product card PRODUCT_PLXF_M1.md written.
+Pointer: PRODUCT_PLXF_WRITER.md + PLXF_PRODUCT_WRITER.md now cite it.
+
+## Why
+849bc600 combo mux fw_issuing onto m0 = WE_WITHOUT_ADDR_COMMIT.
+Silicon F@+0x110. Play 12.8 presented=194 drops=0 PEEK_PLXF=0 PEEK_PLXM=46584c5002000000.
+
+## Handshake (on card)
+level-want until accept; ADDR flop PLXF_W only; hold WE until !BUSY; SAME_CLOCK_M1=1.
+
+## Files + md5 (on card)
+store    aa3bce599616559a779e93814faf8863
+writer   16be1515ab0cb75ec952c561225f0dc0  LIVE TB_OK / parent WRITER_FREEZE
+writer   5fdf924ccd8dfbb801ffb4eb36503b4a  20:31Z land (comment-only pred)
+arbiter  50bf5754ef117ace19d38174eaf29f89
+Plex.sv  PLEX_PLXF_M1 SAME_CLOCK_M1=1
+QSF      Plex_720p24plxf.qsf L158 lists writer
+files.qip does NOT list writer
+
+## FORBIDDEN (on card)
+n29, PHYS+8, QSF retime, iss_* FRAME / plxf-fsm.patch, loosen +0x110,
+replay 849bc600, /bin/fpga, run stale wrap.
+
+## TB / FIT_GO
+TB=tests/rtl/sdram_i420_plxf_writer_tb.sh
+TB_OK=YES (sibling/parent 20:35Z IVL=0 VVP=0) TB_OK≠unique-24
+FIT_GO=NO until parent /tmp/misterplex-FIT_GO_PLXFM1.parent
+Parent stamp EXISTS 20:35Z FIT_GO_PLXFM1=YES LAUNCH=NO WRAP_STALE=YES
+This worker DID NOT stamp / rewrite that file.
+Stamp ≠ BUILD_OK ≠ launch.
+
+## unique24
+FAIL until pfps AND hw_fps ≥23.9 AND drops=0 AND presented>0 AND MAGIC_F@+0x118.
+Last play 849bc600 12.8 F@118=NO (2/5).
+
+## Lab
+849bc600 SKIP_RESTORE until NEW RBF after FIT_GO+BUILD_OK+ONE play of m1.
+Bak KEEP 07f54d9f.
+
+## WRAP_STALE=YES leftover
+scripts/fit_slot720p24plxf.sh still WRITER_EXPECT=50012e63
+UNPATCHED_STORE_EXPECT=8dc97b71; FIT_GO_PLXF.parent STORE_FREEZE=547074c1.
+Did NOT launch wrap. Did NOT edit wrap (prefer card-only).
+
+## Evidence
+Memory/lab/status/PRODUCT_PLXF_M1.md
+Memory/lab/status/PLXF_WRITER_DID_NOT_MOVE_F.md
+Memory/lab/status/PLXF_FW_WE_COMBO_MUX.md
+Memory/lab/status/PLXF_PRODUCT_WRITER.md
+/tmp/misterplex-FIT_GO_PLXFM1.parent
+/tmp/misterplex-agent-D-plxf-m1.txt
+/tmp/misterplex-loop-status.txt
+/tmp/pfps-720p24-plxf-after-build.txt
+build/iverilog/sdram_i420_plxf_writer/plxf_writer_tb.log
+fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+fpga/Plex_MiSTer/rtl/sdram_i420_plxf_writer.sv
+fpga/Plex_MiSTer/Plex.sv
+fpga/Plex_MiSTer/Plex_720p24plxf.qsf
+fpga/Plex_MiSTer/files.qip
+scripts/fit_slot720p24plxf.sh
+
+## Backlog suggestion
+P3-720P24 IN_PROGRESS / unique24 FAIL.
+PRODUCT_PLXF_M1 CARD_OK. FIT_GO=NO from this card.
+Parent FIT_GO_PLXFM1=YES LAUNCH=NO WRAP_STALE=YES.
+Next=retarget wrap to aa3bce59/16be1515 + FIT_GO_PLXFM1 then ONE exclusive.
+NOT fit_slot720p24plxf.sh as it sits. NOT plxf-fsm.patch. NOT n29.
+NOT replay 849bc600. NOT loosen F@118. NOT invent 23.9.
+Lab 849bc600 SKIP_RESTORE until NEW RBF after FIT_GO+BUILD_OK+ONE play.
+
+## Blockers
+WRAP_STALE=YES blocks exclusive (wrap still 50012e63 / 8dc97b71 / 547074c1).
+unique24 FAIL (no m1 RBF; overlay 12.8 F@118=NO).
+HDMI PHY_PASS=NO is P4 leftover (not this card).
+This worker: none for the card.

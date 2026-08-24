@@ -1,0 +1,246 @@
+WORKER=R-probe-dar
+UTC=2026-08-14
+TREE=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+GOAL=why play-file prints "source display aspect unavailable" WITHOUT "ERROR media: source aspect publish failed" / WITHOUT "PLXJ ACK timeout"
+ZERO_QUARTUS=YES
+DEPLOY=NO
+PLAY=NO
+NAMED_LOAD=NO
+UNIQUE24=FAIL
+pfps=NONE (not invented)
+
+================================================================
+VERDICT
+================================================================
+RCA_OK. unique-24=FAIL. DEPLOY=NO.
+
+That log shape is the play-file wrapper short-circuit on a SILENT ffmpeg
+probe (SourceAspect.valid=false). setSourceAspect / sendSourceAspect were
+never called. It is NOT a PLXJ ACK timeout and NOT an FPGA-page miss.
+
+Same shape on:
+  (1) first L4 copy play (glass=L4, PLXJ=0x3047F130 printed, then wrapper)
+  (2) later true480 overwrite play (glass=true480, PLXJ=0x300FF130, wrapper)
+
+Contrast that DID reach sendSourceAspect:
+  /tmp/misterplexd.t7gate-cc9dbd74.log
+  ERROR media: source aspect publish failed: sendSourceAspect: PLXJ ACK timeout
+    want=16:9 token=18 last=16:9 token=17
+  then the same wrapper line.
+
+L4 FPGA page cannot make ffmpeg probe fail. Probe is host fork/exec of
+ffmpeg -i <mp4>. The binary never reached ioctl-4 unless probe.valid.
+
+Old logs cannot name timeout vs empty_dar (ffmpegSourceAspect returned {}
+with no line). Discriminator added locally; not deployed.
+
+================================================================
+1) CITE — play-file wrapper (probe.valid || setSourceAspect)
+================================================================
+arm/misterplexd/main.cpp:664-675  (--play-file only)
+
+  std::string probeFail;
+  const auto sourceAspect = player.probeSourceAspect(playFile, {}, &probeFail);
+  if (!sourceAspect.valid || !player.setSourceAspect(sourceAspect)) {
+      if (!sourceAspect.valid) {
+          fprintf(..., "misterplexd: play-file probe: source aspect invalid (%s)\n",
+                  probeFail.empty() ? "unknown" : probeFail.c_str());
+      }
+      fprintf(..., "misterplexd: play-file failed: source display aspect unavailable\n");
+      return 1;
+  }
+
+C-|| short-circuit:
+  !sourceAspect.valid  → never calls setSourceAspect
+                       → never "ERROR media: source aspect *"
+                       → never "PLXJ ACK timeout"
+                       → wrapper only  (+ new probe line after this edit)
+  valid && !setSourceAspect → setSourceAspect ALWAYS logs an ERROR media
+                       line first (log_ wired at main.cpp:623), THEN wrapper.
+
+Companion path is a different string (main.cpp ~1026):
+  "PLAY rejected: source aspect unknown or FPGA ACK did not match"
+
+================================================================
+2) CITE — setSourceAspect ERROR media lines
+================================================================
+arm/misterplexd/media_player.cpp:1110-1133
+
+  A. !aspect.valid
+       "ERROR media: refusing playback with unknown source display aspect"
+       (play-file never hits A: short-circuit on !valid)
+  B. setDdrFrameLayout fail
+       "ERROR media: source aspect DDR layout failed: " + lastError()
+  C. sendSourceAspect fail
+       "ERROR media: source aspect publish failed: " + lastError()
+  success
+       "media: source aspect=X:Y owner=MiSTer_native_scaler ack=matched"
+
+presentMode not fpga/both → SUCCESS, no FPGA. Lab plays are PRESENT=fpga.
+
+Inner of C — arm/misterplexd/fpga_spi.cpp:2179-2223
+  C1. !aspect.valid → "sendSourceAspect: invalid source aspect"
+  C2. sendFileTx(ioctl 4) fail → lastError() is SPI/open/busy; no ACK wait
+  C3. 250 ms poll doorbell_phys+0x130:
+        "sendSourceAspect: PLXJ ACK timeout want=%u:%u token=%u last=%u:%u token=%u"
+
+C3 is the ONLY source of the substring "PLXJ ACK timeout".
+C (setSourceAspect) is the ONLY source of "ERROR media: source aspect publish failed".
+Both require probe.valid so setSourceAspect is entered.
+
+================================================================
+3) CITE — ffmpegSourceAspect silent return {}
+================================================================
+arm/misterplexd/media_player.cpp:416-569
+MediaPlayer::probeSourceAspect → ffmpegSourceAspect(ffmpeg_, path, headers)
+
+Host ffmpeg only. No SPI. No ioctl 4. No PLXJ read.
+Child: ffmpeg -hide_banner -loglevel info -nostdin -i <url>
+       -map 0:v:0 -frames:v 0 -an -sn -dn -f null -
+Parent: 5 s poll on child stderr, then sourceAspectFromFfmpegProbeText
+        (host/libmisterplex/source_aspect.hpp:141-150) looks for "DAR ".
+
+Default ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg"
+main.cpp defaultFfmpegPath() prefers /media/fat/misterplex/bin/ffmpeg
+then conf FFMPEG (lab plays used /media/fat/misterplex_v2/bin/ffmpeg).
+
+Parser (source_aspect.hpp):
+  find "DAR ", take token until space/tab/CR/LF/]/,
+  sourceAspectFromText → reduce, ratio in [0.25, 4.0], x,y ≤ 4095.
+  No token / DAR N/A / DAR 0:1 / out-of-range → {}.
+
+================================================================
+4) EVERY silent-fail reason (pre-edit: all return {} with ZERO log)
+================================================================
+  pipe     pipe2/pipe fails                         → {}
+  fork     fork() < 0                               → {}
+  exec     child execv fails, _exit(127)            → {}  (stderr empty)
+  timeout  5 s deadline:
+             poll hits deadline / ready==0
+             OR waitpid not reaped before deadline
+             → SIGTERM then SIGKILL, return {} WITHOUT parsing
+             even if stderr already contained "DAR 16:9"
+  empty_dar  child finished, no parseable "DAR " token:
+             missing file, no video stream, banner without DAR,
+             DAR N/A, DAR 0:1, ratio outside [0.25,4.0],
+             reduce overflow, unreadable stderr, poll error
+             with empty/non-DAR text
+  (http only) -rw_timeout 4 s; still folded into timeout/empty_dar
+
+play-file has no PMS metadata fallback. Companion may skip probe if
+Plex XML already has aspect.
+
+================================================================
+5) Why L4 FPGA page cannot cause probe fail
+================================================================
+Probe does not map doorbell, does not read 0x3047F130 / 0x300FF130,
+does not send PLXA. LAB "PLXJ=0x3047F130 L4" is host address math
+printed BEFORE probe (main.cpp:652-662). It is not an ACK.
+
+Idle/OSD threads (started before --play-file) may poke FPGA during
+the probe window — first L4 log shows raster/OSD/idle BETWEEN the
+LAB line and the wrapper. That is async workers, not setSourceAspect.
+
+The only way L4 silicon is involved in this fail string is if
+probe.valid and setSourceAspect ran. Those plays would print
+ERROR media (publish failed or DDR layout) before the wrapper.
+
+Unless the binary never reached setSourceAspect — which is exactly
+!probe.valid.
+
+================================================================
+6) Observed plays (cite only; do not overwrite n2-l4-play)
+================================================================
+A) FIRST L4 copy play — silent probe shape
+   session call-842f91fa-eb61-48ca-9720-7171426702b2-196.log
+   /tmp/misterplex-evidence-n2-l4-play.txt  (READ only; not overwritten)
+   /tmp/misterplex-snap-0313/t7gate-0fc77c10-copy.log
+   GLASS-MAX glass=L4 bank=1280x720 doorbell=0x3047F000
+   LAB … decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+   play-file=/tmp/real720p_1500k_av.mp4
+   wrapper ONLY. NO "ERROR media: source aspect". NO "PLXJ ACK timeout".
+   PLAY_RC=1. unique-24=FAIL.
+
+B) L-n2-gate named 0fc (03:05Z) — same silent shape, still L4
+   /tmp/misterplexd.t7gate-0fc77c10.log
+   /tmp/misterplex-snap-0313/t7gate-0fc77c10.log
+   glass=L4 PLXJ=0x3047F130 L4, same wrapper, no ERROR media.
+
+C) LATER true480 overwrite — same silent shape, different glass
+   quoted in /tmp/misterplex-agent-R-aspect-rca.txt (file 1375 B @ 03:04Z;
+   live /tmp/misterplexd.t7gate-0fc77c10-copy.log was later overwritten)
+   /tmp/misterplex-agent-L-hv-310.txt §4
+   GLASS-MAX glass=true480 … bank=640x480 doorbell=0x300FF000
+   LAB … decode=640x480 PLXJ=0x300FF130   (no " L4" suffix)
+   wrapper ONLY. NO ERROR media. NO PLXJ ACK timeout.
+
+D) CONTRAST — probe OK, ACK fail (NOT this shape)
+   /tmp/misterplexd.t7gate-cc9dbd74.log
+   ERROR media: … PLXJ ACK timeout want=16:9 token=18 last=16:9 token=17
+   then wrapper.
+
+E) SAME CLIP later probed 16:9 (file HAS DAR)
+   /tmp/misterplexd.t7gate-0fc77c10-copy.log (current, post-03:15 overwrite)
+   media: source aspect=16:9 owner=MiSTer_native_scaler ack=matched
+   then play (PLXD abort; not this ticket).
+   Therefore A/B/C are not "mp4 has no DAR". Deterministic empty_dar on
+   this file is ruled out. Remaining: timeout / pipe / fork / exec
+   (or empty_dar from a transient ffmpeg spawn). Old logs cannot say
+   which — that is why the new line exists.
+
+================================================================
+7) LOCAL EDIT (not deployed, not on-box)
+================================================================
+Product behavior identical: still fail-closed return 1, same wrapper
+string, no retry-play, no glass/present_bank change.
+
+  arm/misterplexd/media_player.hpp     failDetail* on probeSourceAspect
+  arm/misterplexd/media_player.cpp     tag pipe|fork|exec|timeout|empty_dar
+                                       timeout/empty_dar include stderr_b=
+  arm/misterplexd/main.cpp             one extra line iff !sourceAspect.valid:
+    misterplexd: play-file probe: source aspect invalid (timeout stderr_b=N)
+    misterplexd: play-file probe: source aspect invalid (empty_dar stderr_b=N)
+
+On-box ARM is still 6214f775 (no this-edit). Next play will not show
+the new line until a later host rebuild+copy. This worker did not
+rebuild onto the box.
+
+================================================================
+UNIQUE24 / DEPLOY
+================================================================
+unique-24=FAIL. pfps=NONE. No frames claimed. BUILD_OK ≠ unique-24.
+DEPLOY=NO. No Quartus. No play. No named-load. No run_720p24.
+Did not overwrite /tmp/misterplex-evidence-n2-l4-play.txt.
+Did not edit present_bank / glass pin / L4 list.
+
+================================================================
+BACKLOG_STATUS_SUGGESTION
+================================================================
+R-probe-dar DONE (RCA_OK).
+Shape = silent host ffmpeg probe, not sendSourceAspect.
+3l2 / unique-24 stay FAIL. Do not treat RCA_OK as ACK or T7 PASS.
+Soft-skip ≠ PASS.
+
+================================================================
+BLOCKERS
+================================================================
+On-box daemon lacks the new probe line until a later ARM copy
+(parent decides). Cannot name timeout vs empty_dar on the already-
+captured A/B/C logs.
+
+================================================================
+EVIDENCE
+================================================================
+arm/misterplexd/main.cpp:623,647-675
+arm/misterplexd/media_player.cpp:403-569,1104-1133
+arm/misterplexd/fpga_spi.cpp:2179-2223
+host/libmisterplex/source_aspect.hpp:141-150
+/tmp/misterplex-evidence-n2-l4-play.txt  (not overwritten)
+/tmp/misterplex-snap-0313/t7gate-0fc77c10-copy.log
+/tmp/misterplex-snap-0313/t7gate-0fc77c10.log
+/tmp/misterplexd.t7gate-0fc77c10.log
+/tmp/misterplexd.t7gate-cc9dbd74.log
+/tmp/misterplex-agent-R-aspect-rca.txt
+/tmp/misterplex-agent-L-hv-310.txt
+session call-842f91fa-eb61-48ca-9720-7171426702b2-196.log
+this report: /tmp/misterplex-agent-R-probe-dar.txt

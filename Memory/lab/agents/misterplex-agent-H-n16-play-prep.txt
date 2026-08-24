@@ -1,0 +1,114 @@
+# misterplex agent H-n16-play-prep
+Date: 2026-08-14T09:47Z
+Worker: H-n16-play-prep
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Status: REFUSE_OK
+Goal: Prove play_slot720p24n16.sh refuses without PLAY_GO (rc=3) before SSH. Do not play. Confirm MPX_FABRIC_DIRECT + MPX_STICK_I420 coded for a future authorized play.
+
+REFUSE_OK BASH_N_RC=0 PLAY_RAN=NO unique24=FAIL
+
+PLAY_GO_N16=NO
+PARENT_STAMP=ABSENT
+PLAY_RAN=NO
+unique24=FAIL
+script-exists≠play-ran
+LAB_PLEX_RBF_TOUCHED=NO
+LAB_SSH=NO
+QUARTUS=NO
+/bin/fpga=NO
+load_core=NO
+BUILD_OK=NO (not claimed; exclusive LIVE; this worker did not fit)
+
+## Constraints obeyed
+- Exclusive LIVE slot720p24n16. Did not start a second Quartus. Did not deploy. Did not /bin/fpga. Did not touch lab /media/fat/Plex.rbf.
+- Did NOT write /tmp/misterplex-PLAY_GO_N16.parent (still ABSENT after both refuse runs).
+- unique24=FAIL. Script exists ≠ play.
+- Did not invent BUILD_OK / unique24 PASS / play ran.
+
+## Steps
+
+### 1. bash -n
+  bash -n /home/shawn/Projects/MisterPlex-wt-480p-lessons/scripts/play_slot720p24n16.sh
+  BASH_N_RC=0
+  SCRIPT_MD5=55f694b013f9995903f93c12c88ff658
+  SCRIPT_LINES=846
+
+### 2. Accidental refuse (unset PLAY_GO_N16)
+  UTC=2026-08-14T09:46:57Z
+  env -u PLAY_GO_N16 -u PLAY_GO PATH=<wrapbin>:$PATH
+  wrapbin traps: ssh sshpass scp fpga /bin/fpga → would write HIT + exit 99
+  strace -f -e execve,connect (3762 bytes)
+
+  REFUSE_RC=3
+  REFUSE_RC2=3 (stdout recapture)
+  WRAP_HIT=NO
+  STRACE: NO_SSH_SCP_FPGA_OR_HOST (0 hits on sshpass|/usr/bin/ssh|scp|/bin/fpga|192.168.1.183)
+  execve targets: bash, env, dirname, date, tee only (PATH lookups for bash)
+
+  stdout first lines:
+    REFUSE: PLAY_GO_N16!=YES (need PLAY_GO_N16=YES and /tmp/misterplex-PLAY_GO_N16.parent)
+    PLAY_GO_N16=
+    PARENT_STAMP=/tmp/misterplex-PLAY_GO_N16.parent
+    LAB_PLEX_RBF_TOUCHED=NO
+    PLAY_RAN=NO
+    unique24=FAIL
+    script-exists≠play-ran
+
+  Gate (L360–363) runs BEFORE any ssh_m. restore_product trap is no-op when SWAP_DONE=0.
+
+### 3. Bans include e2766fc5 00f36ca0 and restore 07f54d9f
+  BANNED_PREFIXES L123 (34 prefixes) starts e2766fc5 00f36ca0 … ends 07f54d9f
+    BAN_e2766fc5=YES idx=0  (n15 WASH pfps=7.19 stick_i420=0 fabric=memcpy)
+    BAN_00f36ca0=YES idx=1  (n14 50/50 pfps=7.23)
+    BAN_07f54d9f=YES idx=33 (true480 glass — refuse copy as n16)
+  Dedicated fail_out: N15_WASH_e2766fc5 L439–441; N14_FIFTY_FIFTY_00f36ca0 L435–437; TRUE480_07f54d9f L403–405
+  Restore coded:
+    TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+    TRUE480_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+    TRUE480_PREFIX=07f54d9f
+    restore_product: bak → /media/fat/Plex.rbf then load_core product only (after SWAP_DONE=1)
+  Restore not executed this worker (SWAP_DONE=0; no SSH).
+
+### 4. MPX_FABRIC_DIRECT + MPX_STICK_I420 (n16 needs BOTH)
+  L112–113 hardcoded: STICK_I420=1 FABRIC_DIRECT=1
+  Future play remote (L698–699, not reached):
+    export MPX_STICK_I420=1
+    export MPX_FABRIC_DIRECT=1
+  Score echoes both even on refuse (print_score):
+    MPX_STICK_I420=1
+    MPX_FABRIC_DIRECT=1
+  Why BOTH: n15 missed STICK (stick_i420=0 → fabric=memcpy 0x30180000).
+    stick-only skips memcpy but does NOT poke PLXP; silicon falls back to PHYS_BASE 0x30180000 (stale DMA src).
+    FABRIC=1 required for wantFabric poke + copy_us=0 (D-n16 PLXP @ 0x3047F138 word1=src_phys).
+  Coded for future authorized play. This worker did not play.
+
+### 5. PLAY_GO stamp absent
+  PRE=/tmp/misterplex-PLAY_GO_N16.parent ABSENT
+  POST=ABSENT
+  FINAL=ABSENT
+  This worker did not create it.
+
+## Score file honesty
+  /tmp/pfps-720p24-n16-after-build.txt rewritten by refuse print_score (09:46Z).
+  NOT a play: PLAY_RAN=NO PLAY_RC=NONE PLEX_RBF_MD5=NONE pfps=NONE unique24=FAIL
+  REASON=PLAY_GO_N16!=YES (need PLAY_GO_N16=YES and /tmp/misterplex-PLAY_GO_N16.parent)
+
+## Evidence paths
+- /tmp/misterplex-agent-H-n16-play-prep.txt (this report; store: Memory/lab/agents/)
+- /tmp/misterplex-H-n16-play-prep-refuse.out
+- /tmp/misterplex-H-n16-play-prep-strace.txt
+- /tmp/pfps-720p24-n16-after-build.txt (refuse-only)
+- scripts/play_slot720p24n16.sh
+
+## Backlog status suggestion
+  H-n16-play-prep REFUSE_OK. PLAY_RAN=NO unique24=FAIL.
+  Do not treat wrapper-exists or refuse-ok as play. Do not authorize PLAY_GO_N16 until n16 BUILD_OK + parent stamp.
+  Exclusive remains LIVE (other workers). This worker did not fit / deploy / play.
+  Soft-skip ≠ PASS.
+
+## Blockers
+  None for this ticket. Play remains blocked on parent PLAY_GO_N16=YES + stamp + n16 BUILD_OK RBF.
+  unique24 stays FAIL until an authorized play measures ≥23.9.
+
+## Verdict
+  REFUSE_OK BASH_N_RC=0 PLAY_RAN=NO unique24=FAIL

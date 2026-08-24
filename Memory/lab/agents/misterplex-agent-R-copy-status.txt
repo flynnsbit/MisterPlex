@@ -1,0 +1,179 @@
+WORKER=R-copy-status
+UTC=2026-08-14T02:59:10Z
+ROLE=harvest only
+GOAL=read L-n2-copy + ps 304633/303277; classify owner vs orphan; recommend wait|harvest|restore-only
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+ZERO_QUARTUS=YES
+NO_COPY_ONTO_PLEX_RBF=YES
+NO_GATE=YES
+NO_LOAD_CORE=YES
+NO_PLAY=YES
+NO_KILL=YES
+NO_SSH=YES
+NO_CARDS=YES
+UNIQUE24=NO
+UNIQUE24_PASS=NO
+PFPS=NONE
+UNIQUE24_CLAIMED=NO
+
+# --- 1. L-n2-copy report (unchanged stub) ---
+FILE=/tmp/misterplex-agent-L-n2-copy.txt
+MTIME=2026-08-13 21:52:31.279815465 -0500 = 2026-08-14T02:52:31Z
+SIZE=322
+STATUS=IN_PROGRESS
+UTC_FIELD=IN_PROGRESS
+VERDICT=PENDING
+UNIQUE24_PASS=NO
+PFPS=NONE
+RESTORE=pending
+GOAL_TEXT=honest unique-fps on BUILD_OK n2 0fc77c10 by COPY onto Plex.rbf after ARM pin; restore 07f54d9f
+NEVER_UPDATED_AFTER_STUB=YES
+# quoted body:
+#   WORKER=L-n2-copy
+#   UTC=IN_PROGRESS
+#   STATUS=IN_PROGRESS
+#   VERDICT=PENDING
+#   UNIQUE24_PASS=NO
+#   PFPS=NONE
+#   RESTORE=pending
+
+# --- 2. ps 304633 / 303277 ---
+# FIRST SNAP ~2026-08-14T02:54:50Z (both LIVE):
+#
+#   PID 304633  PPID=304621  SID/PGID=304621  STAT=S  ELAPSED=03:55
+#     STARTED=2026-08-13 21:50:45 CDT = 2026-08-14T02:50:45Z
+#     CMD=bash ./scripts/run_720p24_live_gate.sh 15
+#     children: sshpass 304647 -> ssh 304648
+#       J_RBF=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+#       PRODUCT_RBF=/media/fat/_Utility/Plex.rbf
+#       TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+#     parent 304621 = grok agent:
+#       PLEX_720P24_RBF=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+#       ./scripts/run_720p24_live_gate.sh 15
+#     MODE=named-load (NOT copy-onto-Plex.rbf)
+#     15s budget; elapsed ~4 min → HUNG
+#
+#   PID 303277  PPID=1750 (systemd --user)  SID/PGID=301324  STAT=S  ELAPSED=06:36
+#     STARTED=2026-08-13 21:48:04 CDT = 2026-08-14T02:48:04Z
+#     CMD=sshpass ssh root@192.168.1.183 ... bash -s
+#     env: PRODUCT_RBF=Plex.rbf TRUE480_BAK=...07f54d9f.rbf
+#          PRODUCT_MD5_PREFIX=07f54d9f SWAP_DONE=1 DAEMON_STOPPED=0
+#     child ssh 303278
+#     session 301324 DEAD at first snap (L-n2-named)
+#     PPID=1750 = reparent after 301324 died
+#
+# SECOND SNAP 2026-08-14T02:54:54Z: BOTH GONE (/proc missing).
+# FINAL SNAP 2026-08-14T02:59:03Z: 304633 303277 304621 301324 306313 306308 DEAD.
+# leftover ssh to 192.168.1.183: NONE.
+
+# --- 3. CLASSIFY ---
+PID_304633=L_N2_COPY_OWNED_THEN_DEAD
+#   L-n2-copy still owned the box at first snap via hung NAMED-LOAD
+#   (run_720p24_live_gate.sh 15, J_RBF=0fc77c10). Not orphan.
+#   Same GPI31_MENU class as L-n2-named (R-cmd-hang / L-n2-gate).
+#   SWAP_DONE=1 in that script means EXIT bounce, NOT "Plex.rbf is 0fc"
+#   (run_720p24_live_gate.sh: "Do NOT copy named bytes onto Plex.rbf").
+#
+PID_303277=ORPHAN_HUNG_NAMED_LOAD_EXIT
+#   Leftover EXIT restore ssh from L-n2-named (killed 301328 ~02:48Z).
+#   Parent session 301324 dead; reparented to systemd --user 1750.
+#   SWAP_DONE=1 DAEMON_STOPPED=0 = restore_product trap of run_720p24.
+#   NOT owned by L-n2-copy.
+
+# --- 4. successor observed (not started by this worker) ---
+# At 02:54:43Z L-n2-copy (or same worker phase-2) launched:
+#   PID 306308 grok -> 306313 bash /tmp/l-n2-copy-gate.sh
+#     sshpass 306617 -> ssh 306618  (started ~02:55:04Z)
+# /tmp/l-n2-copy-gate.sh (mtime 21:54:34) IS copy-onto-Plex.rbf + play + EXIT restore.
+# First action soft_stop_local_named_load SIGTERM run_720p24 + J_RBF/SWAP_DONE ssh
+#   → explains 304633 + 303277 dying ~02:54:50–02:54:54Z.
+# This worker did NOT start that script, did NOT copy, did NOT run a gate.
+#
+# 306313 DEAD by 02:58:26Z. No l-n2-copy-gate / run_720p24 leftover.
+#
+# THIS-RUN play log (NOT a unique-24 score):
+#   /tmp/misterplexd.t7gate-0fc77c10-copy.log
+#   mtime=2026-08-13 21:57:57.437868325 -0500 = 2026-08-14T02:57:57Z
+#   size=1558
+#   quoted:
+#     misterplexd: LAB play-file=/tmp/real720p_1500k_av.mp4 seconds=15
+#       decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+#     media: display raster 480p → video_mode 5
+#     misterplexd: play-file failed: source display aspect unavailable
+#     media: idle paint DDR failed ... frame_debug=0xa0 frame_seq=23
+#   NO pfps= line. NO presented=. PLAY failed.
+#   /tmp/pfps-720p24-live-gate-0fc77c10-copy.txt ABSENT
+#     (script python score never landed)
+#   /tmp/pfps-720p24-live-gate.txt STALE 02:22:13Z cc9dbd74 — do not quote as 0fc.
+# BUILD_OK 0fc ≠ unique-24. Soft-skip ≠ PASS. 24Hz ≠ unique-24.
+
+# --- sibling pins (not this worker; no box contact here) ---
+# R-glass-ro 02:55:54Z: Plex.rbf=07f54d9f* still; named 0fc sidecar;
+#   304633 DEAD; 306313 LIVE; RESTORE_NEEDED=NO at that instant
+#   (pre-swap or mid-ARM; copy had not yet overwritten product).
+# R-cmd-hang 02:55–02:56Z: newest /tmp/mister-main.n2gate.log 02:50:55Z
+#   Core path: /media/fat/menu.rbf ; GPI[31]==1 ; Quitting.
+#   MiSTer_cmd fifo restamped 02:55:23Z (sibling, not this worker).
+# R-daemon-ro2 02:55:56Z: daemon 15069 --id misterplex :3005;
+#   on-box ARM still 721578ec ≠ local 6214f775; DEPLOYED_0FC_ARM=NO.
+# Post-play glass md5: NOT re-pinned here. L-n2-copy RESTORE=pending.
+# Play log implies SWAP happened; EXIT trap should restore 07f54d9f
+# unless SIGKILL skipped the trap. Unknown without a new glass pin.
+
+# --- RECOMMEND PARENT ---
+RECOMMEND=harvest
+# 304633/303277 are DEAD. Nothing to wait on for those pids.
+# L-n2-copy stub still IN_PROGRESS/PENDING but owner processes gone.
+# unique-24 remains FAIL / PFPS=NONE. Do not invent ≥23.9.
+#
+NEXT=restore-only
+# After harvest: re-pin Plex.rbf. If != 07f54d9f (0fc/720p left), restore
+# true480 bak only + product daemon --id misterplex :3005.
+# If already 07f54d9f, restore-needed=NO (R-glass-ro last pin was pre-play).
+#
+DO_NOT=wait
+# Do not wait for 304633 (dead). Do not wait for 303277 (orphan, dead).
+# Do not start a second copy-onto-Plex.rbf. Do not start run_720p24.
+# Do not second live gate. Do not leave 0fc as Plex.rbf. No FIT_GO.
+# Do not treat play-file-failed / missing score as unique-24 PASS.
+
+# --- classification one-liner ---
+# 304633 = L-n2-copy hung named-load owner (DEAD).
+# 303277 = orphan hung named-load EXIT restore from L-n2-named (DEAD).
+# Box owner after that = 306313 l-n2-copy-gate.sh (DEAD after failed play).
+# Now: no live owner. Harvest. Then restore-only if glass ≠ 07f54d9f.
+
+VERDICT=HARVEST
+L_N2_COPY_STATUS=IN_PROGRESS_STUB_STALE
+L_N2_COPY_OWNS_BOX_NOW=NO
+PID_304633=DEAD_WAS_L_N2_COPY_NAMED_LOAD
+PID_303277=DEAD_ORPHAN_NAMED_LOAD_EXIT
+SUCCESSOR_306313=DEAD_COPY_PLAY_FAILED
+UNIQUE24=NO
+LAST_HONEST_PFPS=NONE
+RESTORE_L_N2_COPY=pending_unverified
+
+BACKLOG_SUGGEST=P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+  Named-load 0fc hung GPI31_MENU (304633). Orphan EXIT ssh 303277 dead.
+  Copy play ran and failed (source display aspect unavailable); no pfps.
+  Harvest 304633/303277. Restore-only if Plex.rbf not 07f54d9f.
+  Do not claim unique-24. Soft-skip ≠ PASS.
+
+BLOCKERS=L-n2-copy never closed its report (still IN_PROGRESS/RESTORE=pending).
+  Post-play Plex.rbf md5 unknown to this harvest (no ssh).
+  load_core menu.rbf while FPGA uninit → GPI[31]==1 → Main quit → FIFO hang.
+
+EVIDENCE:
+  /tmp/misterplex-agent-R-copy-status.txt
+  /tmp/misterplex-agent-L-n2-copy.txt (stub IN_PROGRESS 02:52:31Z)
+  /tmp/misterplex-loop-status.txt TICK=02:54Z
+  /tmp/misterplex-agent-bucket.json live_gate pid 304633 named-load
+  /tmp/misterplex-agent-L-n2-gate.txt
+  /tmp/misterplex-agent-R-cmd-hang.txt
+  /tmp/misterplex-agent-R-glass-ro.txt
+  /tmp/misterplex-agent-R-daemon-ro2.txt
+  /tmp/misterplexd.t7gate-0fc77c10-copy.log (this-run FAIL; no pfps)
+  /tmp/pfps-720p24-live-gate.txt (STALE 02:22Z — not this run)
+  /tmp/l-n2-copy-gate.sh
+  scripts/run_720p24_live_gate.sh (SWAP_DONE=1 = EXIT bounce, not disk swap)
+  first-live ps 304633/303277 ~02:54:50Z; both dead by 02:54:54Z

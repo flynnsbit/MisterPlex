@@ -1,0 +1,222 @@
+# misterplex agent W-crash-rca
+Date: 2026-08-16T14:32Z
+Worker: W-crash-rca
+Status: RCA_OK
+NAME=STATIC_NSS_GETADDRINFO_ABORT
+CLASS=inproc HTTP on static misterplexd is unsafe until remux-via-dynamic-ffmpeg OR no-nss resolver
+MD5=788e5ee61aa6d11a3d0190ae64d90977
+PLAY=NO
+DEPLOY=NO
+Quartus=NONE
+load_core=NONE
+deploy_plex_core.sh=NONE
+/bin/fpga=NONE
+RESTORE=NONE
+LIPSYNC=NOT_CLAIMED
+unique24=NOT_THIS_GATE
+SOFT_SKIP_NE_PASS=YES
+INVENT_PASS=NO
+REPLAY_788e=BAN
+
+## Verdict
+First play of ARMNET binary **788e5ee6** died inside static glibc NSS, not inside
+decode or lipsync. NAME=**STATIC_NSS_GETADDRINFO_ABORT**. Evidence matches.
+
+788e is fully static ARM, linked to `/tmp/ffmpeg-arm-u1-net` (`CONFIG_NETWORK=1`,
+`ff_http_protocol`, `HAVE_GETADDRINFO=1`). 788e-era av_inproc **allowed** `http://`
+(`avformat_network_init` + `avformat_open_input`). Sibling r2 rk10 requested
+`videoResolution=1280x720`, logged `content fps=24/1` and `STREAM=0`, then PMS
+timeline `http=200` via **box curl** (dynamic; NSS-safe). Next line is
+`Fatal glibc error: dl-call-libc-early-init.c:37 (_dl_call_libc_early_init):
+assertion failed: sym != NULL`. No remux log. No `inproc_decode=1 libav=`. No
+pipe fallback. No `pfps` / `hw_fps` / `frames=`. Crash ≠ content lipsync FAIL
+(we never got pfps). BAN replay of 788e5ee6.
+
+Local **5c2d730d** remux fifo (`spawnHttpRemuxMpegts` → `/tmp/mplex-inproc.*`)
+is working-tree + local binary only. **NOT on the box. Not proven.** Parent may
+authorize 5c2d remux AFTER box is up + review. Do not auto-deploy.
+
+BACKLOG_SUGGEST: **P-PMS-PLAY BLOCKED replay-788e**
+P-PMS-ARMNET stays DONE (relink/deploy happened; runtime HTTP is the new fail).
+P-PMS-FFNET stays DONE (prefix is fine; static NSS is the runtime class).
+
+## Constraints obeyed
+- review only; no source edits
+- NO Quartus / fit / RTL
+- NO deploy / scp / TERM / playMedia / play
+- NO deploy_plex_core.sh / /bin/fpga / load_core / restore 07f54d9f
+- NO replay 788e5ee6
+- NO auto-deploy 5c2d730d
+- Evidence only. Soft-skip ≠ PASS.
+
+## Why this NAME (not a near-miss)
+STATIC_NSS_GETADDRINFO_ABORT is the durable name because all four legs are
+present in evidence:
+
+1. **STATIC** — `make arm-plexd` uses `-static` (Makefile L631–681: "Fully
+   static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.").
+   W-arm-net file(1): `ELF 32-bit LSB executable, ARM, EABI5, statically
+   linked, for GNU/Linux 3.2.0` bytes=16575060.
+2. **NSS** — glibc `getaddrinfo` in a static binary `dlopen`s `libnss_*.so`.
+   Those .so are the **box** glibc 2.31 modules, not the Arm GNU 13.2 libs
+   used at link. Loader then calls `_dl_call_libc_early_init`; `sym == NULL`
+   → abort. Canonical static+NSS death, not a DNS NXDOMAIN.
+3. **GETADDRINFO** — W-arm-net ld note (required cite):
+   `libavformat.a(url.o) ff_url_join: Using 'getaddrinfo' in statically
+   linked applications requires at runtime the shared libraries from the
+   glibc version used for linking.`
+   FFmpeg net: `HAVE_GETADDRINFO 1` (`/tmp/ffmpeg-arm-u1-net/src/config.h:320`).
+   `http.c:250` `ff_url_join(...)` → `url.c:56-57` `getaddrinfo` with
+   `AI_NUMERICHOST`. Then `http.c:312-316` `ffurl_open` `tcp://host:port` →
+   `tcp.c:186` `getaddrinfo(hostname, portstr, ...)` **without** a numeric-only
+   bypass.
+4. **ABORT** — r2-bbb24.log last line is the glibc fatal assert, not an
+   avformat error string and not `network protocols disabled`.
+
+Numeric PMS URL does **not** dodge this. PLAY host is already
+`http://192.168.1.24:32400` (no DNS name). `ff_url_join` still calls
+`getaddrinfo` to test IPv6 numeric form; `tcp.c` still calls `getaddrinfo`
+to fill `addrinfo`. First `getaddrinfo` in the static image is enough to
+trip NSS dlopen.
+
+Not named otherwise:
+- Not 399 `network protocols disabled` (that was pid 447 / pipe=1 slate at
+  14:20Z; 788e has `ff_http_protocol`).
+- Not PMS-down (timeline GET via curl returned 200).
+- Not RBF/glass (RBF 03f1b95a untouched; r2 still is false-black / no present).
+- Not lipsync / unique24 / official HDMI (no frames).
+- WiFi ARP INCOMPLETE is **after** abort (same class as W-arm-net transient
+  ARP after restart). Temporal, not a separate root name.
+
+## Crash log (cite)
+File: `/tmp/misterplex-avsync/pmsloop2/r2-bbb24.log` (19 lines, ends at FATAL)
+
+```
+L4  misterplexd: pms timeline session base=http://192.168.1.24:32400 token_src=cast ratingKey=10
+L5  misterplexd: PLAY http://192.168.1.24:32400/video/:/transcode/universal/start.mp4?...
+                 videoResolution=1280x720&maxVideoBitrate=2500&... ratingKey via session
+L15 media: content fps=24/1 lead_ms=40 resync_drop_ms=0 (L4 present-every-decoded; FPGA NACK only)
+L16 media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=1280x720 coded=1280x720 display=1280x720
+L17 pms timeline: update ok http=200 state=buffering url=http://192.168.1.24:32400/:/timeline?...
+L18 Fatal glibc error: dl-call-libc-early-init.c:37 (_dl_call_libc_early_init): assertion failed: sym != NULL
+```
+
+Absent (searched): `pfps` `hw_fps` `frames=` `inproc_decode remux`
+`inproc_decode=1 libav=` `inproc_decode open failed` `pipe fallback`.
+
+Order matches 788e-era `media_player.cpp`: STREAM=0 is logged (~L2981) **before**
+`AvInprocDecoder::open`. Timeline 200 is `plexHttpGetNoBodyResult` → **curl**
+(`plex_resolve.cpp` L32–34 / L516; `pms_timeline.cpp` L22). Curl is the box
+dynamic binary → NSS-safe. Then 788e `open("http://192.168.1.24:...")` enters
+libav http/tcp `getaddrinfo` → abort. Process never returned to log an av
+error.
+
+`r2-play-bbb24.txt`: playMedia key=`/library/metadata/10` state=buffering.
+`r2-still-bbb24.jpg`: false-black (parent harvest `8aac78d3`). No picture.
+
+## 788e identity (already proven; not re-deployed)
+`/tmp/misterplex-agent-W-arm-net.txt` (PASS, PLAY=NO):
+- NEW_MD5=BOX_MD5=`788e5ee61aa6d11a3d0190ae64d90977` (≠ 399dd5bc)
+- PREFIX=`/tmp/ffmpeg-arm-u1-net/prefix` stamp FFMPEG_NET_OK
+  `/tmp/misterplex-ffmpeg-net.ok` md5 `20b6fe0f4a8aefb126f361331dab4653`
+- `config.h`: CONFIG_NETWORK 1; `--enable-protocol=http --enable-protocol=tcp
+  --extra-ldflags=-static`
+- nm libavformat.a: `R ff_http_protocol` `T avformat_network_init`
+- nm binary: `000861b4 T avformat_network_init` `0034a878 R ff_http_protocol`
+- KEEP=`build/arm/misterplexd.KEEP_788e5ee6_armnet`
+- Daemon after ONE TERM+scp: pid=1680 sup=1670 `MPX_INPROC_DECODE=1`
+- W-arm-net already flagged residual: "Static getaddrinfo nss warning is a
+  residual risk on HTTP DNS; do not invent inproc PASS." Risk landed on
+  **numeric** HTTP, not just DNS names.
+
+## 788e-era source vs living tree (review only)
+W-inproc-env 14:18Z photographed the source **788e was built from**:
+`av_inproc_decode.cpp` allowed HTTP:
+  `if (looksNetworkUrl && !looksHttpUrl) reject;`
+  `if (looksHttpUrl) avformat_network_init();`
+  then `avformat_open_input(http://...)`.
+W-unit PASS: rtmp banned / **http allowed** (host `avformat_open_input` reaches
+tcp connect-refused, not the guard).
+
+Living tree **now** (post-crash WIP, local only):
+- `av_inproc_decode.cpp` L134–138 rejects **all** `://` except file:
+  comment: "Static ARM binary cannot call getaddrinfo (glibc NSS abort)."
+- `media_player.cpp` L1753–1795 `spawnHttpRemuxMpegts` (box ffmpeg copy →
+  `/tmp/mplex-inproc.h264`)
+- L3242–3253: if `httpSrc`, remux then `inprocUrl = fifo`
+- r2 log has **none** of those remux lines → box 788e did **not** remux.
+  It opened HTTP in-process.
+
+5c2d is that remux rebuild:
+- `/tmp/misterplex-loop-status.txt` L9
+  `ARM_LOCAL=5c2d730dcefb4dcfe7e75a86d3c8324a WIP remux UNDEPLOYED`
+- Not treated as proven. CLASS says remux-via-dynamic-ffmpeg **or** a no-NSS
+  resolver (`inet_pton` / `AI_NUMERICHOST` + no `getaddrinfo`, or nss-free
+  stub). 5c2d is one candidate. Parent review first.
+
+## FFmpeg call chain (why numeric still dies)
+`avformat_open_input("http://192.168.1.24:32400/video/:/transcode/...")`
+→ `ff_http_protocol` (`http.c`)
+→ `ff_url_join(hoststr, ..., "192.168.1.24", 32400)` (`http.c:250`)
+→ `url.c:56-57` `hints.ai_flags = AI_NUMERICHOST; getaddrinfo(hostname, NULL, ...)`
+→ `ff_url_join(buf, ..., "tcp", ..., hostname, port)` (`http.c:312`)
+→ `ffurl_open_whitelist` tcp (`http.c:316`)
+→ `tcp.c:186` `getaddrinfo(hostname, portstr, &hints, &ai)`
+
+`avformat_network_init` (`utils.c:561-570`) only `ff_network_init` (no
+getaddrinfo). Daemon survived boot / `/identity` 200 / idle paint. First
+getaddrinfo is the HTTP open at PLAY. Matches log: alive until STREAM=0 +
+timeline, then FATAL.
+
+## After abort
+`/tmp/misterplex-loop-status.txt` 14:29Z:
+  BOX=DOWN ping=100%loss ARP=INCOMPLETE ssh=No route to host
+  ARM_BOX=788e5ee6 last proven THEN CRASH
+W-arm-net already saw transient ARP INCOMPLETE ~30s after the 14:22 restart
+(uptime unchanged; pids survived that one). Post-FATAL drop is worse (box
+unreachable). Do not diagnose WiFi as a second bug name. Do not thrash
+restore / load_core to "fix" it. W-box-up recovers; this worker does not
+touch the box.
+
+## What this is not
+- Not a 720p request bug (VRES=1280x720 is what L4 wanted).
+- Not a 24/1 fps-match bug (fps line printed; never reached present).
+- Not official HDMI ±42 (not run).
+- Not unique24 (not this gate).
+- Crash ≠ lipsync FAIL of BBB / Trek / any title.
+
+## Next (do not implement)
+1. Box recover (W-box-up). Report CORE/md5. No deploy.
+2. Parent review of 5c2d remux (W-remux-review). Authorize or reject.
+3. If authorized: ONE deploy of remux-or-no-nss binary. **Never 788e again.**
+4. Then one play rk10. Score pfps/audio_s/wall — not this worker.
+
+## Backlog status suggestion
+| ID | Suggest | Why |
+|----|---------|-----|
+| P-PMS-PLAY | **BLOCKED replay-788e** | first net-bin play aborted; no pfps; BAN 788e |
+| P-PMS-ARMNET | DONE (keep) | relink+deploy 788e happened; runtime HTTP is new class |
+| P-PMS-FFNET | DONE (keep) | net prefix is correct; do not rebuild ffmpeg for this |
+| 5c2d remux | NOT DONE / NOT DEPLOYED | local WIP; parent gate |
+
+## Evidence paths
+- `/tmp/misterplex-avsync/pmsloop2/r2-bbb24.log`
+- `/tmp/misterplex-avsync/pmsloop2/r2-play-bbb24.txt`
+- `/tmp/misterplex-avsync/pmsloop2/r2-still-bbb24.jpg` (false-black)
+- `/tmp/misterplex-agent-W-arm-net.txt`
+- `/tmp/misterplex-agent-W-inproc-env.txt` (788e-era HTTP-allow source)
+- `/tmp/misterplex-agent-W-unit.txt` (rtmp banned / http allowed)
+- `/tmp/misterplex-agent-W-pms-play.txt` (WAIT_ARMNET; this worker did not play)
+- `/tmp/misterplex-ffmpeg-net.ok`
+- `/tmp/ffmpeg-arm-u1-net/src/config.h` L4, L320, L691
+- `/tmp/ffmpeg-arm-u1-net/src/libavformat/url.c` L40–69
+- `/tmp/ffmpeg-arm-u1-net/src/libavformat/http.c` L250, L312–316
+- `/tmp/ffmpeg-arm-u1-net/src/libavformat/tcp.c` L184–186
+- `Makefile` L631–681
+- `arm/misterplexd/av_inproc_decode.cpp` L134–138 (living remux-era guard)
+- `arm/misterplexd/media_player.cpp` L1753–1795, L3242–3253 (living remux; not on box)
+- `build/arm/misterplexd.KEEP_788e5ee6_armnet`
+- `/tmp/misterplex-loop-status.txt` 14:29Z
+- `/tmp/misterplex-agent-bucket.txt` n/a; bucket JSON tick 14:29Z
+
+END RCA_OK NAME=STATIC_NSS_GETADDRINFO_ABORT

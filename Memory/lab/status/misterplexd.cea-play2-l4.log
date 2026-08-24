@@ -1,0 +1,48 @@
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: CLI_DECODE_WINS --decode 1280x720
+misterplexd: FFMPEG_SWS_FLAGS=fast_bilinear
+misterplexd: FFMPEG_FPS_FILTER=off
+misterplexd: GLASS-MAX glass=L4 bank=1280x720 doorbell=0x3047F000
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40 AV_RESYNC_DROP_MS=0
+misterplexd: OSD_CONTROL=1
+misterplexd: IDLE_SCREEN=logo AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)
+media: fabric_direct=0 (MPX_FABRIC_DIRECT env/compile; 720p may poke PLXP)
+media: stick_i420=1 (MPX_STICK_I420; idle+play memcpy PHYS_BASE 0x30180000)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+misterplexd: LAB play-file=/media/fat/misterplex/clips/real720p_1500k_av.mp4 seconds=15 decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+media: display raster 480p → video_mode 5
+media: OSD word=0xa010 av_offset_ms=0 clock_ppm=-638 resync=on content_res=480p display_res=480p decode=1280x720
+media: idle paint DDR failed (will retry on re-probe): sendDdrFrame: no kick/frame via SPI or doorbell: frame store status unavailable (PLXF mailbox absent/unwritten): readFrameStoreStatus: PLXF mailbox absent/unwritten (lo=0x00000000 hi=0x00000000)
+media: source aspect publish optional-continue: sendSourceAspect: PLXJ ACK timeout want=16:9 token=1 last=4:3 token=0
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)
+media: fabric_direct=0 (MPX_FABRIC_DIRECT env/compile; 720p may poke PLXP)
+media: stick_i420=1 (MPX_STICK_I420; idle+play memcpy PHYS_BASE 0x30180000)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+media: MiSTer pid=17716 nice=19 (was 0)
+media: scale/pad skipped (local_identity_file coded=1280x720 scale=bypass)
+media: content fps UNKNOWN — pacing at 24/1 and relying on drift correction
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=1280x720 coded=1280x720 display=1280x720 clock=wall-48k-audio+every-frame-present
+media: video_pipe_sz want=4194304 set0=4194304 set1=4194304 get=4194304
+media: spawn 720p split A/V (video -an + audio-only) — hypothesized audio backpressure relief
+media: spawn 720p video /media/fat/misterplex_v2/bin/ffmpeg -hide_banner -loglevel error -nostdin -threads 2 -sws_flags fast_bilinear -i /media/fat/misterplex/clips/real720p_1500k_av.mp4 -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p pipe:1
+media: DDR layout coded=1280x720 frame_bytes=1382400 direct_ingest=on
+media: MrAudio open — software-paced 48kHz delay_ms=0 clock_ppm=-638 (adelay in ffmpeg if >0)
+media: A/V origin armed audio_active=1 waited_ms=2
+media: present_pipeline=2slot_cached_ring frame_bytes=1382400 true480_exact_gate=0 strict_ddr_gate=1 fabric_direct=0 stick_i420=1
+media: fabric_direct src_phys=STUB slots=0x00000000,0x00000000 alloc=stub
+media: MrAudio playback position available — video now paces off what is HEARD, not what is sent
+media: audio latency 0ms queued=0B rptr=5888 wptr=5888
+misterplexd: PLXD wait_us=3000000 (720p MPX_PLXD_WAIT_US)
+media: DDR_PIPE present fail frame=1: sendDdrFrame: no kick/frame via SPI or doorbell: frame store status unavailable (PLXF mailbox absent/unwritten): readFrameStoreStatus: PLXF mailbox absent/unwritten (lo=0x00000000 hi=0x00000000)
+ERROR media: true480 DDR pipeline aborted; suppressing natural EOF
+media: audio pump end bytes=323584 f2=0
+media: session end frames=2 recon=0 cabac=0 stream=off rawvideo=on true480_pipeline_aborted=1 present=fpga skip_rgb=0
+media: MiSTer nice restored
+misterplexd: LAB play-file done frames=2 presented=0 recon=0 totalBytes=2764800

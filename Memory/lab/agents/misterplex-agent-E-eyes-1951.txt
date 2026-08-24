@@ -1,0 +1,75 @@
+# E-eyes-1951 — farm HDMI glass after play3
+UTC: 2026-08-14T19:53Z
+Worker: E-eyes-1951
+SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-E-eyes-1951.txt
+Card: Memory/lab/status/FARM_HDMI_EYES.md  Lesson: L58
+
+======== VERDICT ========
+Status: DONE
+unique24=FAIL
+EYES_OK=YES (video0 free; grabs pulled and read)
+PICTURE=NO
+HDMI_PHY_PASS=NO
+video_mode 0 ≠ PHY PASS (L55)
+OSD 24Hz ≠ unique-24
+BLACK ≠ unique-24
+EYES-ON ≠ unique-24
+USB grab ≠ CRT
+
+play3 (H-arm-play DONE 19:48Z cite scoreboard + H-arm-play):
+  presented=200  pfps=13.2  hw_fps=NONE  drops=0  F@118=NO  F@110=YES
+  2/5 gates only → unique24=FAIL
+
+======== CONSTRAINTS ========
+PLAY=NO  no ssh 192.168.1.183
+Quartus=NO  FIT_GO=NO  n29=NO  deploy=NO
+video0 was FREE (NO_FFMPEG / NO_LSOF). Did not fight.
+
+======== EXISTING POST-PLAY (classified + looked at JPEG) ========
+file: JPEG 1280x720 baseline 8-bit 3-comp (all)
+
+| path | B | md5 | MEAN | I SAW |
+|------|--:|-----|-----:|-------|
+| /tmp/misterplex-eyes/cea-raster-kick.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | 7.000 | BLACK. Solid near-black. Known first-frame false-black. |
+| /tmp/misterplex-eyes/cea-raster-kick-2.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | 7.000 | BLACK. Same. |
+| /tmp/misterplex-eyes/cea-raster-kick-ss1.jpg | 16995 | 3c7e869f1ccf95d21f08d7616a452d7c | 2.169 | OSD. Dark-red UL box: "1280x720 18.19KHz 24.0Hz" over "640x480 25.18MHz 59.9Hz". Rest black. No movie/chevron/fill. BYTE_IDENTICAL cea-idle-1940b + idle-1937b. |
+
+======== NEW GRAB (ONE + 1951b because first black) ========
+cmd1: ssh node-worker1 'ffmpeg … -frames:v 1 /tmp/misterplex-eyes/cea-raster-kick-1951.jpg'
+  FFMPEG_RC=0  scp_rc=0  UTC~19:52Z
+cmd2: sleep 1; same → cea-raster-kick-1951b.jpg
+  FFMPEG_RC=0  scp_rc=0  UTC~19:53Z
+
+| path | B | md5 | MEAN | I SAW |
+|------|--:|-----|-----:|-------|
+| /tmp/misterplex-eyes/cea-raster-kick-1951.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | 7.000 | BLACK. Same false-black as kick/kick-2. No OSD. No picture. |
+| /tmp/misterplex-eyes/cea-raster-kick-1951b.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | 7.000 | BLACK. Retry still e74e3559. Stopped (ONE+retry). |
+
+Did not claim glass-is-black vs dongle false-black: 7401/e74e3559/MEAN=7 is the known first-frame signature.
+Last non-black post-play frame remains ss1 OSD (3c7e869f), identical to pre-play idle.
+
+======== PHY / unique24 ========
+OSD 24.0Hz on 1280x720 line is scaler/CEA beam text, not unique-24.
+Lower line still 640x480 25.18MHz 59.9Hz → ascal HDMI PHY still 480p59.9.
+video_mode 0 ≠ HDMI PHY PASS (L55).
+Black grab ≠ unique-24. Eyes-on ≠ unique-24.
+
+======== BACKLOG SUGGESTION ========
+E-eyes-1951 DONE. unique24=FAIL.
+Glass: new 1951/1951b BLACK e74e3559; last content-class frame = OSD 3c7e869f (idle-identical).
+≠ HDMI PHY PASS. ≠ unique-24.
+Next=RCA/docs (parent). FIT_GO=NO. PLAY=NO. NOT second play of 347bb7ea. NOT n29.
+
+======== BLOCKERS ========
+None for this eyes tick. unique24 still FAIL on pfps/hw_fps/F@118.
+
+Evidence:
+  /tmp/misterplex-eyes/cea-raster-kick.jpg
+  /tmp/misterplex-eyes/cea-raster-kick-2.jpg
+  /tmp/misterplex-eyes/cea-raster-kick-ss1.jpg
+  /tmp/misterplex-eyes/cea-raster-kick-1951.jpg
+  /tmp/misterplex-eyes/cea-raster-kick-1951b.jpg
+  /tmp/misterplex-agent-H-arm-play.txt
+  /tmp/misterplex-unique-scoreboard.txt
+  /tmp/pfps-720p24-cea-raster-kick.txt

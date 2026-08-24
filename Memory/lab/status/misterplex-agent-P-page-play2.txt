@@ -1,0 +1,34 @@
+P-page-play2  2026-08-14T15:40Z  corrective ARM-pin play DONE
+
+VERDICT: unique24=FAIL  PLAY_RAN=YES  PLAY_RC=0
+RBF d8d376f20e835d32b385ee4db3edef0e  PREFIX8=d8d376f2
+HOST /media/fat/Plex.rbf md5 MATCH  HOST_MISPIN=NO
+SKIP_RESTORE=YES  bak 07f54d9f UNTOUCHED  no /bin/fpga
+MENU_OK=YES PLEX_OK=YES ARM_DEPLOY=YES onbox=5cdf140a MATCH local
+MPX_STICK_I420=1 FABRIC_DIRECT=0 glass=L4 doorbell=0x3047F000
+
+SCORE /tmp/pfps-720p24-page-after-build.txt UTC=15:39Z
+  frames=215 presented=107 pfps=7.18 hw_fps=NONE drops=108
+  MAGIC_F_AT_118=NO  MAGIC_F_AT_110=YES  PEEK_PLXM=46584c5002000000
+  PLXJ/PLXD/PLXF addrs L4  PEEK zeros except PLXM MAGIC_F
+
+VS warm 2d6c228a 6.92: +0.26 presented 107 vs 104  NOT 23.9
+VS n14 00f36ca0 7.23: -0.05 WASH  NOT closer-than-7.23 as a win
+VS 23.9: NO
+
+CLASS=PATH_SDRAM_STICK_FILL
+  PAGEFILL DID_NOT_LIFT
+  ARM pin caveat CLOSED (first play 15:35Z presented=0 HOST true480 ignore)
+  Silicon F still +0x110 — do not loosen
+  fabric=stick copy_us=0 stick_i420=1 true480_pipeline_aborted=0
+
+LOG /tmp/misterplexd.page-after-build.log
+LAB stays d8d376f2 SKIP_RESTORE
+PLAY_GO_PAGE consumed  no third play  no Quartus  no n29  no restore 07f54d9f
+
+BACKLOG: PRODUCT_STICK_PAGEFILL CLOSED as play unique24=FAIL pfps=7.18
+  Next=parent named leftover (porches 1312x762 / gather) later only. FIT_GO=NO.
+  NOT n29. NOT replay d8d376f2/2d6c228a/0f5fa5ed.
+
+BLOCKERS: unique24 FAIL. BUILD_OK+DEPLOY ≠ unique-24. PLAY_RC=0 ≠ unique-24.
+======== END ========

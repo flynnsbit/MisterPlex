@@ -1,0 +1,157 @@
+WORKER=R-copy-hv
+UTC=2026-08-14T03:07Z
+ROLE=HARVEST ONLY
+REPO_SOT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+GOAL=honest harvest of L-n2-copy play evidence; unique-24 FAIL; do not invent L4
+ZERO_QUARTUS=YES
+NO_GATE=YES
+NO_PLEX_RBF_OVERWRITE=YES
+NO_CARDS=YES
+NO_INVENT_L4=YES
+NO_INVENT_PFPS=YES
+
+# --- VERDICT (this copy; assigned /tmp score + daemon log) ---
+VERDICT=UNIQUE24_FAIL
+UNIQUE24=FAIL
+UNIQUE24_PASS=NO
+PFPS=NONE
+pfps=NONE
+PLAY_RC=1
+ACK=NO
+frames=NONE
+presented=NONE
+hw_fps=NONE
+drops=NONE
+glass=true480
+doorbell=0x300FF000
+PLXJ=0x300FF130
+bank=640x480
+content=1280x720
+FAIL_TEXT=source display aspect unavailable
+BUILD_OK_0FC=YES
+BUILD_OK_0FC_NE_UNIQUE24=YES
+SOFT_SKIP_NE_PASS=YES
+HZ24_NE_UNIQUE24=YES
+L4_THIS_COPY=NO
+# Do not treat 02:59 L4 0x3047F000 as fact. Assigned current /tmp copy files
+# contain no GLASS-MAX 0x3047F000.
+
+# --- 1) assigned score (quote, do not rewrite) ---
+FILE=/tmp/pfps-720p24-live-gate-0fc77c10-copy.txt
+MTIME=2026-08-13 22:04:15.271024167 -0500 = 2026-08-14T03:04:15Z
+SIZE=409
+MD5=2fc495a581b0245524716bef60fe0550
+# quoted body:
+#   UTC=2026-08-14 L-n2-copy unique-fps COPY 0fc77c10 onto Plex.rbf
+#   PLAY_RC=1
+#   ACK=NO
+#   frames=NONE
+#   presented=NONE
+#   pfps=NONE
+#   hw_fps=NONE
+#   drops=NONE
+#   audio=off
+#   audio_s=NONE
+#   av_drift_ms=NONE
+#   doorbell=0x300FF000
+#   PLXJ=0x300FF130
+#   misterplexd: GLASS-MAX glass=true480 content=1280x720 → bank=640x480 doorbell=0x300FF000
+#   last=
+#   UNIQUE24=FAIL
+#   soft-skip≠PASS BUILD_OK≠unique-24 24Hz≠unique-24 ARM=6214f775 pin 0fc77c10
+
+# --- 2) assigned daemon log (quote, do not rewrite) ---
+FILE=/tmp/misterplexd.t7gate-0fc77c10-copy.log
+MTIME=2026-08-13 22:04:15.215329371 -0500 = 2026-08-14T03:04:15Z
+SIZE=1375
+MD5=88fe5a23ff86d51b0f80cb2256fb3c05
+BIRTH=2026-08-13 21:57:57.427868298 -0500 = 2026-08-14T02:57:57Z
+# file was overwritten after birth (R-copy-status 02:59Z saw size=1558)
+# quoted lines:
+#   misterplexd: CLI_DECODE_WINS --decode 1280x720 (conf DECODE=640x480 ignored)
+#   misterplexd: GLASS-MAX glass=true480 content=1280x720 → bank=640x480 doorbell=0x300FF000
+#   misterplexd: LAB play-file=/tmp/real720p_1500k_av.mp4 seconds=15 decode=640x480 doorbell=0x300FF000 PLXJ=0x300FF130
+#   media: display raster 480p → video_mode 5
+#   media: OSD word=0xa010 av_offset_ms=0 clock_ppm=-638 resync=on content_res=480p display_res=480p decode=640x480
+#   misterplexd: play-file failed: source display aspect unavailable
+# ZERO 0x3047F000. ZERO glass=L4. ZERO pfps= numeric.
+
+# sibling same-text log (not the assigned score file):
+#   /tmp/misterplexd.t7gate.log mtime 22:01:22 size=1375
+#   GLASS-MAX glass=true480 ... doorbell=0x300FF000
+#   play-file failed: source display aspect unavailable
+
+# --- 3) L4 claim: do not invent / do not repeat as this-copy fact ---
+# Assigned constraint: Parent 02:59 claimed L4 0x3047F000 — NO file in /tmp
+# contains that GLASS-MAX. Do not repeat as fact.
+#
+# Search of THIS-COPY files (score + copy.log + t7gate.log + l-n2-gate-run.log):
+#   0x3047F000 = NONE
+#   glass=L4    = NONE
+#   GLASS-MAX   = only true480 / 0x300FF000
+#
+# What 02:59 actually left (not this-copy fact):
+#   /tmp/misterplex-agent-R-copy-status.txt UTC=2026-08-14T02:59:10Z quoted
+#   then-current copy.log size=1558 mtime 02:57:57Z:
+#     decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+#   That quote is STALE vs the file now on disk (1375 B, true480, 03:04:15Z).
+#   Parent 03:04Z loop-status: "DO NOT quote 02:59 L4 0x3047F000 — no log has
+#   that; all t7 say true480"
+#
+# Later derived note (NOT assigned evidence; born AFTER this-copy score):
+#   /tmp/misterplex-evidence-n2-l4-play.txt mtime 22:05:56Z
+#   cites session call-842f91fa, not the surviving /tmp copy.log.
+#   This harvest does not promote that to glass=L4 for THIS copy.
+#   Even that note says UNIQUE24=FAIL pfps=NONE.
+#
+# Historical GLASS-MAX glass=L4 0x3047F000 files exist (t7b / j 968b828a) —
+# not this 0fc copy.
+
+# --- 4) L-n2-copy owner report ---
+FILE=/tmp/misterplex-agent-L-n2-copy.txt
+MTIME=2026-08-13 21:52:31 = 2026-08-14T02:52:31Z
+STATUS=IN_PROGRESS stub never closed
+VERDICT=PENDING
+UNIQUE24_PASS=NO
+PFPS=NONE
+RESTORE=pending
+# harvest of play files supersedes stub for unique-24 score.
+
+# --- 5) BUILD_OK 0fc ≠ unique-24 ---
+# Parent 03:04Z / 03:06Z: X-n2=BUILD_OK 0fc77c10
+# M-n2-term: BUILD_OK=YES unique-24=NO md5 0fc77c10f47a33d5e4379fe129658e93
+# This copy: UNIQUE24=FAIL pfps=NONE. BUILD_OK ≠ unique-24.
+
+# --- 6) gate-run leftover (not a pfps score) ---
+FILE=/tmp/l-n2-gate-run.log mtime 22:04Z
+#   J_MD5=0fc77c10f47a33d5e4379fe129658e93
+#   CORENAME=MENU then Timeout; GATE_SCRIPT_RC=255
+#   not a unique-24 pass.
+
+# --- constraints honored ---
+QUARTUS=NONE
+GATE_STARTED=NO
+PLEX_RBF_TOUCHED=NO
+CARDS_WRITTEN=NO
+PHASE_BACKLOG_WRITTEN=NO
+
+BACKLOG_SUGGEST=P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+  L-n2-copy play UNIQUE24_FAIL pfps=NONE glass=true480 doorbell=0x300FF000
+  ACK=NO PLAY_RC=1 frames=NONE (source display aspect unavailable).
+  BUILD_OK 0fc77c10 ≠ unique-24. Soft-skip ≠ PASS. 24Hz ≠ unique-24.
+  Do not quote 02:59 L4 0x3047F000 as this-copy fact.
+  L-n2-copy stub still IN_PROGRESS/RESTORE=pending.
+
+BLOCKERS=none for this harvest. unique-24 remains FAIL.
+  L-n2-copy never closed its own report.
+
+EVIDENCE:
+  /tmp/pfps-720p24-live-gate-0fc77c10-copy.txt
+  /tmp/misterplexd.t7gate-0fc77c10-copy.log
+  /tmp/misterplexd.t7gate.log (same true480 FAIL; 22:01Z)
+  /tmp/misterplex-agent-L-n2-copy.txt (stub)
+  /tmp/misterplex-agent-R-copy-status.txt (02:59Z stale L4 quote of overwritten log)
+  /tmp/misterplex-loop-status.txt (03:04Z: do not quote 02:59 L4)
+  /tmp/l-n2-gate-run.log
+  /tmp/misterplex-agent-M-n2-term.txt (BUILD_OK 0fc)
+  /tmp/misterplex-agent-R-copy-hv.txt

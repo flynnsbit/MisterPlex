@@ -1,0 +1,70 @@
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: CLI_DECODE_WINS --decode 1280x720
+misterplexd: FFMPEG_SWS_FLAGS=fast_bilinear
+misterplexd: FFMPEG_FPS_FILTER=off
+misterplexd: GLASS-MAX glass=L4 bank=1280x720 doorbell=0x3047F000
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40 AV_RESYNC_DROP_MS=0
+misterplexd: OSD_CONTROL=1
+misterplexd: IDLE_SCREEN=logo AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)
+media: fabric_direct=0 (MPX_FABRIC_DIRECT env/compile; 720p may poke PLXP)
+media: stick_i420=1 (MPX_STICK_I420; idle+play memcpy PHYS_BASE 0x30180000)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+misterplexd: LAB play-file=/media/fat/misterplex/clips/real720p_1500k_av.mp4 seconds=15 decode=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 L4
+media: display raster 480p → video_mode 5
+media: OSD word=0xa010 av_offset_ms=0 clock_ppm=-638 resync=on content_res=480p display_res=480p decode=1280x720
+media: idle screen painted (mode=0)
+media: source aspect publish optional-continue: sendSourceAspect: PLXJ ACK timeout want=16:9 token=1 last=4:3 token=0
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)
+media: fabric_direct=0 (MPX_FABRIC_DIRECT env/compile; 720p may poke PLXP)
+media: stick_i420=1 (MPX_STICK_I420; idle+play memcpy PHYS_BASE 0x30180000)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+media: MiSTer pid=30833 nice=19 (was 0)
+media: scale/pad skipped (local_identity_file coded=1280x720 scale=bypass)
+media: content fps UNKNOWN — pacing at 24/1 and relying on drift correction
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=1280x720 coded=1280x720 display=1280x720 clock=wall-48k-audio+every-frame-present
+media: video_pipe_sz want=4194304 set0=4194304 set1=4194304 get=4194304
+media: spawn 720p split A/V (video -an + audio-only) — hypothesized audio backpressure relief
+media: spawn 720p video /media/fat/misterplex_v2/bin/ffmpeg -hide_banner -loglevel error -nostdin -threads 2 -sws_flags fast_bilinear -i /media/fat/misterplex/clips/real720p_1500k_av.mp4 -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p pipe:1
+media: DDR layout coded=1280x720 frame_bytes=1382400 direct_ingest=on
+media: MrAudio open — software-paced 48kHz delay_ms=0 clock_ppm=-638 (adelay in ffmpeg if >0)
+media: A/V origin armed audio_active=1 waited_ms=2
+media: present_pipeline=2slot_cached_ring frame_bytes=1382400 true480_exact_gate=0 strict_ddr_gate=1 fabric_direct=0 stick_i420=1
+media: fabric_direct src_phys=STUB slots=0x00000000,0x00000000 alloc=stub
+media: MrAudio playback position available — video now paces off what is HEARD, not what is sent
+media: audio latency 19ms queued=3776B rptr=255808 wptr=259584
+media: DDR_PIPE A/V resync drop frame=1 drift_ms=142 drops=1
+misterplexd: PLXD wait_us=3000000 (720p MPX_PLXD_WAIT_US)
+media: frames=5 vfps=4.92 pfps=0.98 audio_s=0.545 wall_s=1.016 audio=on clock=av-lock av_drift_ms=180 drops=2 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=19 vfps=8.85 pfps=4.19 audio_s=1.685 wall_s=2.145 audio=on clock=av-lock av_drift_ms=792 drops=10 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=33 vfps=10.1 pfps=4.94 audio_s=2.765 wall_s=3.237 audio=on clock=av-lock av_drift_ms=1288 drops=17 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: DDR_PIPE A/V resync drop frame=49 drift_ms=1681 drops=25
+media: frames=49 vfps=11.4 pfps=5.59 audio_s=3.825 wall_s=4.289 audio=on clock=av-lock av_drift_ms=1681 drops=25 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=63 vfps=11.8 pfps=5.85 audio_s=4.825 wall_s=5.299 audio=on clock=av-lock av_drift_ms=2099 drops=32 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: audio latency 101ms queued=19467B rptr=160240 wptr=179712
+media: frames=79 vfps=12.4 pfps=6.12 audio_s=5.905 wall_s=6.366 audio=on clock=av-lock av_drift_ms=2512 drops=40 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=94 vfps=12.7 pfps=6.23 audio_s=6.905 wall_s=7.373 audio=on clock=av-lock av_drift_ms=2887 drops=47 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: fpga frame_tx ok via DDR_PIPE presents=48 frames=96 ms=17 prep_us=3842 copy_us=13471 plxd_us=1156 total_us=17328 fabric=stick
+media: DDR_PIPE A/V resync drop frame=97 drift_ms=2942 drops=49
+media: frames=109 vfps=13.0 pfps=6.44 audio_s=7.925 wall_s=8.384 audio=on clock=av-lock av_drift_ms=3282 drops=55 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=124 vfps=13.1 pfps=6.48 audio_s=8.925 wall_s=9.402 audio=on clock=av-lock av_drift_ms=3657 drops=62 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=139 vfps=13.2 pfps=6.59 audio_s=9.985 wall_s=10.46 audio=on clock=av-lock av_drift_ms=4092 drops=70 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: audio latency 100ms queued=19350B rptr=79472 wptr=98816
+media: DDR_PIPE A/V resync drop frame=145 drift_ms=4262 drops=73
+media: frames=154 vfps=13.4 pfps=6.62 audio_s=11.00 wall_s=11.47 audio=on clock=av-lock av_drift_ms=4488 drops=77 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=169 vfps=13.4 pfps=6.69 audio_s=12.06 wall_s=12.54 audio=on clock=av-lock av_drift_ms=4923 drops=85 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: frames=184 vfps=13.5 pfps=6.71 audio_s=13.08 wall_s=13.54 audio=on clock=av-lock av_drift_ms=5318 drops=92 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: fpga frame_tx ok via DDR_PIPE presents=96 frames=192 ms=17 prep_us=3872 copy_us=13406 plxd_us=1160 total_us=17292 fabric=stick
+media: DDR_PIPE A/V resync drop frame=193 drift_ms=5523 drops=97
+media: frames=199 vfps=13.6 pfps=6.79 audio_s=14.08 wall_s=14.56 audio=on clock=av-lock av_drift_ms=5693 drops=100 hw_presents=unavailable hw_presents_src=plxd_swap_count fps=24/1 decode=1280x720 pipe=1
+media: audio pump end bytes=2777344 f2=0
+media: pipeline short read got=229376/1382400
+media: session end frames=204 recon=0 cabac=0 stream=off rawvideo=on true480_pipeline_aborted=0 present=fpga skip_rgb=0
+media: MiSTer nice restored
+misterplexd: LAB play-file done frames=204 presented=102 recon=0 totalBytes=282238976

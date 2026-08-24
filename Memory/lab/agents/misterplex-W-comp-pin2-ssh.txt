@@ -1,0 +1,15 @@
+PIN_TS=2026-08-13T23:25:55Z HOST=192.168.1.183 RO ssh
+pidof misterplexd=2397
+supervise=2385 /media/fat/misterplex/bin/misterplexd_supervise.sh
+cmdline=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+exe=/media/fat/misterplex/bin/misterplexd
+/proc/2397/exe md5=6f1afebe746a89f794ee102734fc5330
+on-box bin md5=6f1afebe746a89f794ee102734fc5330 size=13004348 mtime=2026-08-13 18:10:59 -0500
+local staged md5=6f1afebe746a89f794ee102734fc5330 size=13004348
+MD5_EQUAL=YES
+Plex.rbf=07f54d9f8f0eda2fe75d9cc314f6de54
+named j=/media/fat/_Utility/Plex.720p24.968b828a.rbf md5=968b828a8ec572bccf43b7bc2d31625a
+CORENAME=Plex RBFNAME=Plex
+product conf md5=4a05032a39803428a63369ceca898c50 DECODE=640x480 OSD_CONTROL=1 DISPLAY_RES=480p STREAM=0 PRESENT=fpga
+sidecar /tmp/t7-l4.conf md5=95bff255c605f81dd543b861f9e5472c DECODE=1280x720 OSD_CONTROL=0 STREAM=0 PRESENT=fpga
+ZERO deploy/kill/scp/menu/quartus

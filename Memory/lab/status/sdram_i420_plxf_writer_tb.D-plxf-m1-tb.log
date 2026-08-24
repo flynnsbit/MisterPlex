@@ -1,0 +1,2 @@
+INFO: PLXF_W=0608fe23 PLXM_W=0608fe22 (must never issue PLXM)
+sdram_i420_plxf_writer_tb: PASS ADDR=doorbell+0x118 want_held WE_until_accept MAGIC_F m1

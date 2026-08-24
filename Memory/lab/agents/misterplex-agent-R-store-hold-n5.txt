@@ -1,0 +1,47 @@
+worker=R-store-hold
+slot=slot720p24n5
+when=2026-08-14T04:38:35Z
+mode=READ_ONLY
+EDITED=NO
+unique24=FAIL
+
+STORE_MD5=47e8bc88bd3e2b539f85424da30f065e
+FARM_STORE_MD5=47e8bc88bd3e2b539f85424da30f065e
+EXPECT=47e8bc88bd3e2b539f85424da30f065e
+MATCH=YES
+DRIFT=NO
+
+store_path=/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+farm_store=/home/flynnsbit/mplex-builds/slot720p24n5/Plex_MiSTer/rtl/sdram_i420_store.sv
+store_mtime=2026-08-13 23:30:38.176528941 -0500 (live+farm identical; fit docker 20260813233303 — store older than fit start)
+
+N5_GATES=YES
+  reset_bank_mbox_req_0        YES  L720  bank_mbox_req <= 1'b0  (NOT <=1; n3/n4 RCA)
+  doorbell_ok_reset_0          YES  L710  doorbell_ok <= 1'b0
+  heartbeat_doorbell_and_valid YES  L849  if (doorbell_ok && bank_mbox_valid && (bank_mbox_hb == 18'd0))
+  bank_mbox_req_gated          YES  L838-850  all four req<=1 paths require doorbell_ok
+  MAGIC_D                      YES  L111 MAGIC_D=32'h504C_5844; L668-669 mailbox_d_din packs MAGIC_D
+  rd_act_d2_gate               YES  L859 !rd_act_d2 && source_aspect_mbox_req
+                                   L866 !rd_act_d2 && bank_mbox_req
+  no_PLEX_CLK_SYS_24           YES  store: zero matches
+                                   overlay QSF: comment-only L20/L100/L123 (#set_global... PLEX_CLK_SYS_24=1)
+
+QSF:
+  live_Plex.qsf=84c2f4b2e85f150e073578e7e4406b69  OVERLAY LIVE (Plex_720p24n2.qsf identity)
+  farm_Plex.qsf=84c2f4b2e85f150e073578e7e4406b69  MATCH overlay
+  product_bak=/tmp/Plex.qsf.product-480p.slot720p24n5.bak  b049c94413d02a1a63dfd03b7234d7e1
+  wrapper=fit_slot720p24n5.sh trap restore EXIT → b049c94413d02a1a63dfd03b7234d7e1
+  NOTE=overlay-in-progress during exclusive fit; this worker did NOT restore
+
+exclusive=LIVE  fit_slot720p24n5.sh + farm mplex-fit-flynnsbit-slot720p24n5-20260813233303
+mid_fit_edit=NO  (store hash+mtime unchanged; worker wrote zero RTL/QSF)
+
+verdict=HOLD_OK  n5 store 47e8bc88 still has doorbell_ok PLXD gate; live==farm; no drift; not edited mid-fit.
+backlog_suggestion=keep slot720p24n5 IN_PROGRESS exclusive; do not claim unique-24; do not touch sdram_i420_store.sv until fit TERMINAL.
+blockers=none for this hold. unique24 remains FAIL (no n5 RBF / no pfps). BUILD_OK not claimed here.
+
+evidence:
+  /tmp/misterplex-agent-R-store-hold-n5.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-store-hold-n5.txt
+  /tmp/misterplex-loop-status.txt (unique24=FAIL; store=47e8bc88 overlay 84c2f4b2 bak b049c944)
+  /tmp/plex_quartus_slot720p24n5.log (overlay 84c2f4b2 bak b049c944 STORE_MD5=47e8bc88)

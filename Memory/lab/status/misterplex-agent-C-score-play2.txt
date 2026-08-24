@@ -1,0 +1,77 @@
+C-score-play2  UTC=2026-08-14T19:42Z
+WORKER=C-score-play2
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report=/tmp/misterplex-agent-C-score-play2.txt
+Scoreboard=/tmp/misterplex-unique-scoreboard.txt
+PLAY=NO  Quartus=NO  SSH=NO  RTL=NO  /bin/fpga=NO  n29=NO  third_play=NO
+
+VERDICT=SCORE_OK
+SCORE_OK≠unique-24
+unique24=FAIL
+INVENT_23.9=NO
+fill=NOT_MEASURED (play1+play2 presented=0)
+play2=ARM_PIN_HOLE_CLOSED leftover=PLXF@118_EMPTY
+do_not=third play 347bb7ea this tick
+
+## Table (play1 vs play2 vs memcpy vs page)
+
+run     | glass    | doorbell    | frames | presented | pfps | F@118 | F@110 | class                              | ARM
+play1   | true480  | 0x300FF000  | 2      | 0         | NONE | NO    | YES   | HOST_GLASS_TRUE480_ARM_PIN_MISS    | 6ef2b67e
+play2   | L4       | 0x3047F000  | 2      | 0         | NONE | NO    | YES   | PLXF_ABSENT                        | 9e56b5fd
+memcpy  | L4       | 0x3047F000  | 204    | 102       | 6.79 | NO    | YES   | PATH_SDRAM_STICK_MEMCPY            | 88e70427
+page    | L4       | 0x3047F000  | 215    | 107       | 7.18 | NO    | YES   | PATH_SDRAM_STICK_FILL              | 5cdf140a
+
+RBF play1/play2=`347bb7ea` (CEA 1650x758). memcpy/page=`d8d376f2` (PAGEFILL).
+All four: MAGIC_F_LO=00000000 PEEK_PLXF=0 PEEK_PLXM=46584c5002000000. hw_fps=NONE.
+unique24 PASS iff pfps>=23.9 AND hw_fps>=23.9 AND drops=0 AND presented>0 AND MAGIC_F@+0x118.
+None of the four meet it. Do not loosen F to +0x110. Do not invent 23.9.
+
+## play2 closed the ARM-pin hole
+
+play1 19:31/34 Cite=/tmp/misterplex-agent-P-cea-play.txt
+  ARM 6ef2b67e5682b3c48aa30403bb5004eb strings NO 347bb7ea
+  probeLiveGlass → true480 → doorbell 0x300FF000 → PLXD ACK fail → abort
+  IGNORE for fill (same class as first page play stale ARM 57405ae7)
+
+play2 19:35 Cite=/tmp/pfps-720p24-cea-play2-l4.txt + /tmp/misterplexd.cea-play2-l4.log
+  ARM onbox 9e56b5fda6679d627defdffea9867a4c HAS pin 347bb7ea (local md5 MATCH; strings HAS)
+  GLASS-MAX glass=L4 bank=1280x720 doorbell=0x3047F000 PLXJ=0x3047F130 PLXF=0x3047F118
+  leftover: PLXF mailbox absent/unwritten (lo=0 hi=0) — idle paint + frame1 abort
+  Host abort on +0x118 EMPTY is CORRECT.
+  presented=0 pfps=NONE → fill-ratio NOT MEASURED
+
+## Leftover / what this is not
+
+PLXF@118 empty. Silicon F still +0x110 (PLXM). CEA fill NOT measured.
+play2 vs memcpy 6.79/102: NOT COMPARABLE (abort; no fill score)
+play2 vs page   7.18/107: NOT COMPARABLE (abort; no fill score)
+CEA_DID_NOT_LIFT — cannot claim lift or wash vs 6.79/7.18/7.23/14.1
+BEST stick still n14 00f36ca0 7.23. BEST overall j 968b828a 14.1. 23.9=NO.
+
+## Archives (play2 already at /tmp paths; copied if Memory missing)
+
+KEEP /tmp/pfps-720p24-cea-play2-l4.txt          md5=2be6869a
+KEEP /tmp/misterplexd.cea-play2-l4.log          md5=c4397395
+NOTE /tmp/pfps-720p24-cea-after-build.txt OVERWRITTEN by play2 (byte-identical 2be6869a)
+     play1 19:31 snap kept at /tmp/pfps-720p24-cea-play1-1931.txt
+COPIED → Memory/lab/status/ (primary + worktree) play2/play1/memcpy/page pfps+logs
+         + P-cea-play / P-memcpy-play / P-page-play2 / play1 run log
+
+## Lab / this tick
+
+Lab NOW 347bb7ea SKIP_RESTORE. Bak KEEP 07f54d9f.
+PLAY_GO_CEA consumed (play1+play2). FIT_GO=NO. Do not third-play this tick.
+Do not n29. Do not /bin/fpga. Do not restore 07f54d9f. Do not invent 23.9.
+
+## Backlog suggestion
+
+P3-720P24 IN_PROGRESS / unique24 FAIL.
+P1 CEA play2 CLOSED (L4 glass; PLXF_ABSENT; fill NOT MEASURED).
+Next=parent later (PRODUCT_PLXF_WRITER; FIT_GO=NO until parent). NOT third play.
+
+## Blockers
+
+unique24 FAIL (pfps/hw_fps/drops/presented/F@118 all miss on play2).
+Soft-skip ≠ PASS. PLAY_RC=0 ≠ unique-24. ARM pin OK ≠ unique-24. L4 glass ≠ unique-24.
+None for SCORE_OK. No play this worker.
+======== END ========

@@ -1,0 +1,213 @@
+play_slot720p24cea host=192.168.1.183 (AFTER freddo BUILD_OK + PLAY_GO_CEA only)
+LOCAL_RBF_MD5=347bb7ea4954e4f5087dd2669f3d08c6
+PREFIX8=347bb7ea
+BAN /bin/fpga of /media/fat/_Utility/Plex.720p24.347bb7ea.rbf — load_core product /media/fat/Plex.rbf only
+BAN load_core of named Plex.720p24.*
+PIN_OK prefix8=347bb7ea (present_bank L4)
+SOFT_STOP daemon (TERM only)
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+TERM 12364
+TERM 12375
+DAEMON_STOP_DONE
+SCP freddo RBF -> /tmp then copy onto /media/fat/Plex.rbf (not named overwrite)
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+SIDECAR_MD5=347bb7ea4954e4f5087dd2669f3d08c6
+NAMED_WROTE=YES
+PRODUCT_MD5=347bb7ea4954e4f5087dd2669f3d08c6
+WIPE_L4=YES before load_core (PLXK 0x3047F000 / PLXF +0x118 / PLXD +0x128 / PLXJ +0x130)
+wipe_l4_leftover_mbox  WIPE_L4=YES  LOCAL=NO
+class=n7 SECOND / n8 FIRST leftover-DDR (R-n8-plxj / R-kick-stuck)
+not unique-24  not /bin/fpga  complementary to n9 RTL leftover-ignore
+WOULD_ZERO 8 bytes @ 0x3047F000  PLXK doorbell
+WOULD_ZERO 8 bytes @ 0x3047F118  PLXF
+WOULD_ZERO 8 bytes @ 0x3047F128  PLXD
+WOULD_ZERO 8 bytes @ 0x3047F130  PLXJ
+NEVER_TOUCH 0x300FF000 true480 doorbell
+NEVER_TOUCH 0x3007F000 240p doorbell
+MODE=REMOTE_WRITE host=192.168.1.183 (ssh /dev/mem on box)
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+wipe_l4_leftover_mbox  WIPE_L4=YES  LOCAL=1
+class=n7 SECOND / n8 FIRST leftover-DDR (R-n8-plxj / R-kick-stuck)
+not unique-24  not /bin/fpga  complementary to n9 RTL leftover-ignore
+WOULD_ZERO 8 bytes @ 0x3047F000  PLXK doorbell
+WOULD_ZERO 8 bytes @ 0x3047F118  PLXF
+WOULD_ZERO 8 bytes @ 0x3047F128  PLXD
+WOULD_ZERO 8 bytes @ 0x3047F130  PLXJ
+NEVER_TOUCH 0x300FF000 true480 doorbell
+NEVER_TOUCH 0x3007F000 240p doorbell
+MODE=ONBOX_WRITE
+BEFORE PLXK 0x3047F000 lo=0x504c584b hi=0x20000080
+BEFORE PLXF 0x3047F118 lo=0x00000000 hi=0x00000000
+BEFORE PLXD 0x3047F128 lo=0x00000000 hi=0x00000000
+BEFORE PLXJ 0x3047F130 lo=0x00000000 hi=0x00000000
+mmap flush: [Errno 22] Invalid argument (ok if pwrite used)
+AFTER PLXK 0x3047F000 lo=0x00000000 hi=0x00000000
+AFTER PLXF 0x3047F118 lo=0x00000000 hi=0x00000000
+AFTER PLXD 0x3047F128 lo=0x00000000 hi=0x00000000
+AFTER PLXJ 0x3047F130 lo=0x00000000 hi=0x00000000
+WIPE_OK zeros at PLXK 0x3047F000 / PLXF 0x3047F118 / PLXJ 0x3047F130
+DEPLOY_LOAD=menu equivalent: timeout 3 load_core menu then /media/fat/Plex.rbf
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+FPGA_NAMED_COUNT=0
+UP0=52809.38
+CORE0=Plex
+MENU_CMD_RC=0
+POLL_MENU i=1 CORE=Plex
+POLL_MENU i=2 CORE=MENU
+MENU_OK_AT=2s
+MENU_OK=YES
+PLEX_CMD_RC=0
+POLL_PLEX i=1 CORE=MENU
+POLL_PLEX i=2 CORE=Plex
+PLEX_OK_AT=2s
+PLEX_OK=YES
+CORENAME=Plex
+RBFNAME=Plex
+PLEX_RBF=347bb7ea4954e4f5087dd2669f3d08c6 /media/fat/Plex.rbf
+UP_AFTER_LOAD=52811.68
+HOST_MISPIN: md5 /media/fat/Plex.rbf (NOT /media/fat/_Utility/Plex.rbf) expect 347bb7ea4954e4f5087dd2669f3d08c6
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+HOST_HASH_PATH=/media/fat/Plex.rbf
+NEVER_HASH_UTILITY=/media/fat/_Utility/Plex.rbf
+HOST_PLEX_MD5=347bb7ea4954e4f5087dd2669f3d08c6
+HOST_PREFIX8=347bb7ea
+HOST_MISPIN=NO
+COPY_FAIL=NO
+HOST_STILL_TRUE480=NO
+HOST_PIN_OK product /media/fat/Plex.rbf md5=347bb7ea4954e4f5087dd2669f3d08c6 == freddo (not Utility)
+SCP ARM /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/arm/misterplexd -> /media/fat/misterplex/bin/misterplexd
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+ARM_ONBOX=6ef2b67e5682b3c48aa30403bb5004eb /media/fat/misterplex/bin/misterplexd
+SETTLE 8s after load before first doorbell (load-first)
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+UPA=52827.07
+UPB=52835.09
+COREB=Plex
+PLEX=347bb7ea4954e4f5087dd2669f3d08c6 /media/fat/Plex.rbf
+SOC_REBOOT=NO
+DELTA=8.02
+SETTLE_DELTA=8.02 STAY_UP=YES
+PLAY 15s MPX_STICK_I420=1 MPX_FABRIC_DIRECT=0 MPX_PLXD_WAIT_US=3000000 MPX_ASPECT_ACK_OPTIONAL=1
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+---PLAY_ENV---
+MPX_STICK_I420=1
+MPX_FABRIC_DIRECT=0
+MPX_PLXD_WAIT_US=3000000
+MPX_ASPECT_ACK_OPTIONAL=1
+PLAY_RC=0
+LOG_BYTES=3534
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+PLAY_RC_LOG=1
+frames=2
+presented=0
+pfps=NONE
+hw_fps=NONE
+drops=NONE
+PLXJ=0x300FF130
+PLXD=NONE
+PLXF=NONE
+last=
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+PEEK_PLXK=4b584c5081000020
+PEEK_PLXS=45584c5001000000
+PEEK_PLXM=46584c5002000000
+PEEK_PLXF=0000000000000000
+PEEK_DIAG=0000000000000000
+PEEK_PLXD=0000000000000000
+PEEK_PLXJ=0000000000000000
+PEEK_PLXP=50584c5000006809
+MAGIC_F_LO=00000000 MAGIC_F_AT_118=NO MAGIC_F_AT_110=YES
+NOTE=Do not loosen MAGIC_F to +0x110 (n20/n24/n25 RCA). unique24 requires +0x118.
+UTC=2026-08-14T19:31Z play_slot720p24cea
+LOCAL_RBF=/home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24cea/Plex.rbf
+PLEX_RBF_MD5=347bb7ea4954e4f5087dd2669f3d08c6
+PREFIX8=347bb7ea
+NEED_PIN=NO
+ARM_DEPLOY=YES
+WIPE_L4=YES
+WIPE_OK=YES
+HOST_HASH_PATH=/media/fat/Plex.rbf
+HOST_PLEX_MD5=347bb7ea4954e4f5087dd2669f3d08c6
+HOST_PREFIX8=347bb7ea
+HOST_MISPIN=NO
+COPY_FAIL=NO
+HOST_STILL_TRUE480=NO
+NEVER_HASH_UTILITY=/media/fat/_Utility/Plex.rbf
+FABRIC_DIRECT=0
+STICK_I420=1
+MPX_STICK_I420=1
+MPX_FABRIC_DIRECT=0
+MPX_PLXD_WAIT_US=3000000
+MPX_ASPECT_ACK_OPTIONAL=1
+IDENTITY=--name MiSTerPlex --id misterplex --port 3005
+CLIP=/media/fat/misterplex/clips/real720p_1500k_av.mp4
+PRODUCT_RBF=/media/fat/Plex.rbf
+TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+LOAD_METHOD=load_core_menu_then_plex
+FPGA_NAMED_COUNT=0
+LOAD_FIRST=YES
+SETTLE_S=8
+SETTLE_DELTA=8.02
+STAY_UP=YES
+SOC_REBOOT=NO
+MENU_OK=YES
+PLEX_OK=YES
+NAMED_SIDECAR=/media/fat/_Utility/Plex.720p24.347bb7ea.rbf
+NAMED_WROTE=NO
+PLAY_RAN=YES
+PLAY_RC=0
+frames=2
+presented=0
+pfps=NONE
+hw_fps=NONE
+drops=NONE
+PLXJ=0x300FF130
+PLXD=0x3047F128
+PLXF=0x3047F118
+PEEK_PLXJ=0000000000000000
+PEEK_PLXD=0000000000000000
+PEEK_PLXF=0000000000000000
+PEEK_PLXM=46584c5002000000
+MAGIC_F_EXPECT=0x504C5846
+MAGIC_F_LO=00000000
+MAGIC_F_AT_118=NO
+MAGIC_F_AT_110=YES
+REASON=NONE
+UNIQUE24=FAIL
+unique24=FAIL
+soft-skip≠PASS 24Hz≠unique-24 script-exists≠PASS script-exists≠play-ran no-/bin/fpga
+NOTE=MPX_STICK_I420=1 (n15 missed) + MPX_FABRIC_DIRECT=0 (D-n25 PLXP src_phys; stick-only does not poke).
+NOTE=MAGIC_F 0x504C5846 required at +0x118. Do not loosen to +0x110 (n20 4e13e022 / n24 84720a7e / n25 2a0706ca).
+UNIQUE24=FAIL
+RESTORE=SKIP keep 720p on /media/fat/Plex.rbf (bak /media/fat/_Utility/Plex.true480.07f54d9f.rbf untouched)
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+KEEP_PRODUCT=347bb7ea4954e4f5087dd2669f3d08c6 /media/fat/Plex.rbf
+RESTORE_DAEMON /media/fat/misterplex/bin/misterplexd_supervise.sh

@@ -1,0 +1,48 @@
+# misterplex agent L-n5-copy-wait
+Date: 2026-08-14T04:39:30Z
+Worker: L-n5-copy-wait
+Slot: slot720p24n5
+COPY_OK: WAIT
+BUILD_OK: NO (not proven)
+NAMED: NONE
+PLEX_RBF: not touched (lab ssh NEVER this tick)
+FPGA: NO
+unique24: FAIL
+pfps: NONE
+LAB_PLEX_RBF_TOUCHED: NO
+cards: none
+
+## Verdict
+WAIT. n5 BUILD_OK is not proven. Did nothing to the lab (no scp, no ssh 192.168.1.183, no /bin/fpga, no load_core, no play). Did not start Quartus. Did not edit store.
+
+## BUILD_OK gates (ALL required; NONE complete after one ~60s recheck)
+- [ ] FIT_WRAPPER_DONE in /tmp/plex_quartus_slot720p24n5.log — ABSENT (log 12 lines / 758 B; last write ~23:33 local)
+- [ ] FIT_WRAPPER_RC=0 — ABSENT
+- [ ] Full Compilation successful — ABSENT (farm still in quartus_fit; no fit.rpt/sta.rpt/asm.rpt/Plex.rbf)
+- [ ] FARM_RBF_MD5 / local named Plex.720p24.<md5>.rbf — ABSENT
+- [ ] md5 prefix8 not banned — N/A (no RBF)
+- M-fitmon-n5: BUILD_OK=PENDING Status=LIVE (2026-08-14T04:35:40Z)
+- X-n5: BUILD_OK=PENDING Status=LIVE (2026-08-14T04:32:35Z)
+
+## Evidence snapshot 2026-08-14T04:39:24Z
+- wrapper LIVE: bash ./scripts/fit_slot720p24n5.sh pid 356143
+- remote build LIVE: bash ./scripts/build_rbf_remote.sh slot720p24n5 pid 356199
+- farm docker: mplex-fit-flynnsbit-slot720p24n5-20260813233303 Up ~5 min
+- farm quartus_fit pid 1307744 (map done; fit in progress)
+- local remote_out/slot720p24n5/: ABSENT
+- /tmp/Plex.720p24*.rbf: ABSENT
+- farm output_files/Plex.rbf: ABSENT
+- wrapper log markers: NO_TERMINAL_MARKERS
+- store still 47e8bc88 (not edited by this worker)
+- did not use leftover n4 e8960391 or n3 d1910177
+
+## Actions taken
+- Read wrapper + M-fitmon-n5 + X-n5
+- Waited ~60s once and rechecked (instruction cap)
+- Wrote WAIT; no lab copy
+
+## Backlog status suggestion
+Do not write PHASE_BACKLOG. COPY_OK=WAIT. Parent: re-spawn L-n5-copy-wait after FIT_WRAPPER_DONE + BUILD_OK=YES. unique-24 remains FAIL. Do not /bin/fpga.
+
+## Blockers
+Exclusive still LIVE. BUILD_OK not invented.

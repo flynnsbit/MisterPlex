@@ -1,0 +1,55 @@
+R-arm-i ARM local-only / on-box leave-alone
+SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+tick: 2026-08-14T04:40:00Z (approx)
+exclusive: n5 LIVE — ZERO Quartus, no sdram_i420_store.sv, no /bin/fpga, no load_core, no play
+
+VERDICT: DEPLOY=NO. Local ARM present and up to date vs sources. On-box misterplexd left untouched. Product daemon still --id misterplex :3005.
+
+MAKE_RC=SKIP
+  reason: /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/arm/misterplexd EXISTS
+  mtime: 2026-08-13 23:26:22 -0500
+  no arm/misterplexd *.{cpp,hpp} newer than binary (newest source fpga_spi.cpp 22:24 < bin 23:26)
+  prior R-arm-h already MAKE_RC=0 for this hash; no fresh rebuild this tick
+
+LOCAL_ARM_MD5=00eb62e5285befaed585d98ea9b02f3c
+  path: /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/arm/misterplexd
+  size: 13040836  (matches R-arm-h)
+
+ONBOX_MD5=274187232dc2957ed116a735b26d00ea
+  path: /media/fat/misterplex/bin/misterplexd
+  size: 13040732  mtime on-box: Aug 13 22:37
+  LOCAL != ONBOX (local newer rebuild not shipped). DEPLOY=NO either way.
+
+ONBOX_TOUCHED=NO
+  no scp, no kill, no restart, no overwrite /media/fat/misterplex/bin/misterplexd
+  read-only ssh only (md5/ps/ss)
+
+DAEMON:
+  pid=1085 (mpx-main) leave-alone — parent last saw 1085; still up
+  cmdline: /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+  exe: /proc/1085/exe -> /media/fat/misterplex/bin/misterplexd
+  listen: 0.0.0.0:3005 users:(("mpx-main",pid=1085,fd=8))
+  id=misterplex port=3005  EXPECT MATCH
+
+PLEX_RBF:
+  /media/fat/_Utility/Plex.rbf md5=07f54d9f8f0eda2fe75d9cc314f6de54
+  size=3831312  mtime=Aug 13 23:27
+  MUST still 07f54d9f — CONFIRMED (not 720p, not slot RBF)
+
+unique24=FAIL
+pfps=NONE
+  not claimed; no play this tick; do not invent pfps>=23.9
+
+DIFF local vs on-box:
+  00eb62e5285befaed585d98ea9b02f3c  LOCAL  (R-arm-h build, not deployed)
+  274187232dc2957ed116a735b26d00ea  ONBOX  (untouched)
+
+BACKLOG suggestion: R-arm leave DEPLOY=NO until n5 BUILD_OK and parent authorizes ARM ship. unique-24 NOT claimed.
+
+BLOCKERS: none for this worker. Play does not own the box (n5 not BUILD_OK). Exclusive remains n5.
+
+EVIDENCE:
+  this report
+  /tmp/misterplex-agent-R-arm-i.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-arm-i.txt
+  ssh read-only 192.168.1.183 (pass default)

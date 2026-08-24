@@ -1,0 +1,138 @@
+# misterplex agent R-m3-vblank-i
+WORKER: R-m3-vblank-i
+ROLE: reconfirm m3 sibling vblank sim isolation after n5 store 47e8bc88
+UTC: 2026-08-14T04:38Z
+REPO_SOT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+HEAD: 0e49a68
+Report: /tmp/misterplex-agent-R-m3-vblank-i.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-m3-vblank-i.txt
+PRIOR: /tmp/misterplex-agent-R-m3-vblank.txt SIM_OK=YES QIP_ISOLATED=YES at 04:27Z vs freeze 36ed39ad
+
+================================================================
+VERDICT
+================================================================
+SIM_OK=YES
+QIP_ISOLATED=YES
+store_md5=47e8bc88bd3e2b539f85424da30f065e
+unique24=FAIL
+pfps=NONE
+Quartus=ZERO
+
+TB_OK ≠ BUILD_OK ≠ unique-24.
+Soft-skip ≠ PASS.
+Host sim only this tick (did not invent a TB; did not run verilator.sh).
+Did not instantiate m3. Did not add to files.qip / present_core / QSF.
+Did not edit sdram_i420_store.sv (live freeze still 47e8bc88).
+Exclusive slot720p24n5 LIVE — not touched.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+- ZERO Quartus. Exclusive slot720p24n5 LIVE (fit_slot720p24n5.sh + remote farm).
+  This worker did not start a fit, did not edit QSF, did not touch n5 sources.
+- Did not edit sdram_i420_store.sv (md5 still 47e8bc88bd3e2b539f85424da30f065e).
+- Did not add m3 to files.qip, present_core.sv, or any QSF.
+- Never PLEX_CLK_SYS_24. No deploy. No ssh lab. No /bin/fpga. No play. No cards.
+- unique-24 NOT claimed.
+
+================================================================
+1) ISOLATION
+================================================================
+cmd: rg sdram_i420_store_m3 / sdram_i420_ddr_issue_m3
+
+  files.qip            ABSENT  (live: sdram_i420_store.sv + store_m2.sv + ddr_issue.sv)
+                       lines 25-27:
+                         rtl/sdram_i420_store.sv
+                         rtl/sdram_i420_store_m2.sv
+                         rtl/sdram_i420_ddr_issue.sv
+  present_core.sv      ABSENT  (instantiates store_m2 ifdef / store else — no _m3)
+                       L641-702: `ifdef SDRAM_I420_STORE_M2 sdram_i420_store_m2
+                                 `else sdram_i420_store
+  *.qsf                ABSENT
+                       checked: Plex.qsf Plex_720p24.qsf Plex_720p24m2.qsf Plex_720p24n2.qsf
+
+host-m3 isolation: OK (not in files.qip / present_core)  [HOST_SIM_RC=0]
+QIP_ISOLATED=YES
+
+================================================================
+2) LIVE STORE MD5 (read only)
+================================================================
+cmd: md5sum fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  47e8bc88bd3e2b539f85424da30f065e  fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime: 2026-08-13 23:30:38 -0500 (not touched this tick)
+  prefix8 47e8bc88 MATCHES n5 doorbell_ok delay freeze.
+
+================================================================
+3) HOST SIM (existing target; no new TB)
+================================================================
+cmd:
+  make /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/test_sdram_i420_store_m3_sim
+  MAKE_SIM_BIN_RC=0  (already up to date; bin mtime Aug 13 21:35)
+
+  build/test_sdram_i420_store_m3_sim \
+    --rtl=fpga/Plex_MiSTer/rtl/sdram_i420_store_m3.sv \
+    --helper=fpga/Plex_MiSTer/rtl/sdram_i420_ddr_issue_m3.sv \
+    --qip=fpga/Plex_MiSTer/files.qip \
+    --present=fpga/Plex_MiSTer/rtl/present_core.sv
+  HOST_SIM_RC=0
+  MAKE_RC=0
+
+stdout needles:
+  FAIL: both stick ports active (rd_active+fill)          [red twin expected]
+  FAIL broken-rgb: stick is not planar I420 (RGB payload?)
+  host-m3 correct: OK (mutex + RGB reject + I420)
+  host-m3 red: both-ports bug detected
+  host-m3 red: RGB-doorbell / RGB payload bug detected
+  host-m3 rtl-needles: OK (BURST_MAX + vblank/hblank policy + kick pipe)
+  host-m3 helper-needles: OK (registered dma_addr/kick + want_capped)
+  host-m3 isolation: OK (not in files.qip / present_core)
+  test_sdram_i420_store_m3_sim: OK (correct PASS; both-ports FAIL; RGB FAIL)
+
+RTL needles still present in sdram_i420_store_m3.sv (sibling, unchanged):
+  localparam [7:0] DDR_BURST_HBLANK = 8'd4;
+  localparam [7:0] DDR_BURST_VBLANK = 8'd24;
+  localparam [15:0] VBLANK_RUN_MIN = 16'd4096;
+  wire in_vblank = blank_run > VBLANK_RUN_MIN;
+  wire [7:0] burst_want = in_vblank ? DDR_BURST_VBLANK : DDR_BURST_HBLANK;
+  .BURST_MAX(32)
+
+Verilator: PATH missing (`command -v verilator` → VERILATOR_MISSING).
+  oss-cad-suite binary exists at /home/shawn/.local/oss-cad-suite/bin/verilator
+  but this tick is HOST SIM ONLY — did not run
+  tests/unit/test_sdram_i420_store_m3_verilator.sh
+  Did not claim lint PASS. Host C++ sim does not require verilator.
+  SIM_OK is the host sim (MAKE_RC=0 HOST_SIM_RC=0), not a verilator claim.
+
+================================================================
+4) SIBLINGS ONLY
+================================================================
+m3 sources exist as untracked siblings (not in product qip/qsf):
+  ef79731d21d638c1f89393b80dfc285d  fpga/Plex_MiSTer/rtl/sdram_i420_store_m3.sv
+  261853cd849587d609597462bf4942f7  fpga/Plex_MiSTer/rtl/sdram_i420_ddr_issue_m3.sv
+  tests/unit/test_sdram_i420_store_m3_sim.cpp
+  tests/unit/test_sdram_i420_store_m3_verilator.sh
+  tests/rtl/sdram_i420_ddr_issue_m3_tb.sv
+
+git status: ?? fpga/Plex_MiSTer/rtl/sdram_i420_store_m3.sv
+            ?? fpga/Plex_MiSTer/rtl/sdram_i420_ddr_issue_m3.sv
+            (siblings; not staged into product compile)
+
+================================================================
+MD5
+================================================================
+  ef79731d21d638c1f89393b80dfc285d  fpga/Plex_MiSTer/rtl/sdram_i420_store_m3.sv       (unchanged vs prior)
+  261853cd849587d609597462bf4942f7  fpga/Plex_MiSTer/rtl/sdram_i420_ddr_issue_m3.sv  (unchanged vs prior)
+  47e8bc88bd3e2b539f85424da30f065e  fpga/Plex_MiSTer/rtl/sdram_i420_store.sv         (LIVE n5 freeze; not edited)
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+m3 stays isolated. QIP_ISOLATED=YES after n5 store 47e8bc88.
+Do not qip-add m3. n5 exclusive unchanged (LIVE; this worker did not touch it).
+unique-24 remains FAIL. TB_OK ≠ BUILD_OK ≠ unique-24.
+
+================================================================
+BLOCKERS
+================================================================
+None for this sibling reconfirm. unique-24 is not a sim claim.
+Exclusive left LIVE (n5). Quartus=ZERO from this worker.

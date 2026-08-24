@@ -1,0 +1,123 @@
+W-comp-pin2  RO PIN 6f1afebe DEPLOYED  2026-08-13T23:25:55Z
+Repo SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Cite-only dirty: /home/shawn/Projects/MisterPlex
+Report: /tmp/misterplex-agent-W-comp-pin2.txt
+Card: /home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/COMPANION_6f1afebe_DEPLOYED.md
+SSH snap: /tmp/misterplex-W-comp-pin2-ssh.txt
+
+ZERO deploy_misterplexd / scp binary / kill / SIGHUP / supervise restart.
+ZERO Quartus / play / menu / load_core / HDMI grab / overwrite Plex.rbf / write conf.
+Did NOT invent HDMI PASS / T7 PASS / mix PASS.
+Did NOT edit PHASE_BACKLOG.
+
+================================================================
+VERDICT: PIN_OK
+PIN_OK: YES (live RO ssh 2026-08-13T23:25:55Z)
+DEPLOYED: parent 23:14Z/23:15Z claim CONFIRMED live
+T7: FAIL (pfps=14.1) unchanged
+HDMI / mix: not this ticket; still TODO / FAIL
+FIT_GO: NO
+================================================================
+
+PIN_OK ≠ T7 PASS. DEPLOYED ≠ T7 PASS ≠ HDMI PASS ≠ mix PASS.
+W-comp-pin 23:22Z PIN_BLOCKED SUPERSEDED by this PIN_OK.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+
+- ZERO deploy_misterplexd.sh / scp of misterplexd
+- ZERO kill / TERM / SIGHUP / supervise restart (2397 / 2385 / anyone)
+- ZERO Quartus / play / menu / load_core / HDMI grab
+- ZERO overwrite Plex.rbf / write misterplex.conf / write t7-l4.conf
+- ZERO PHASE_BACKLOG edit
+- Did not invent T7 PASS / HDMI PASS / mix PASS
+
+================================================================
+LIVE RO SSH (root@192.168.1.183  2026-08-13T23:25:55Z)
+================================================================
+
+  pidof misterplexd = 2397
+  supervise / ppid  = 2385  {misterplexd_sup} /bin/sh /media/fat/misterplex/bin/misterplexd_supervise.sh
+  cmdline = /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+  exe_link = /proc/2397/exe -> /media/fat/misterplex/bin/misterplexd
+
+  /proc/2397/exe md5 = 6f1afebe746a89f794ee102734fc5330
+  on-box bin md5     = 6f1afebe746a89f794ee102734fc5330
+  on-box size        = 13004348
+  on-box mtime       = 2026-08-13 18:10:59 -0500
+
+  local staged       = /tmp/misterplexd-lessons-6f1afebe746a89f794ee102734fc5330
+  local staged md5   = 6f1afebe746a89f794ee102734fc5330
+  local staged size  = 13004348
+  equal-md5 staged == on-box disk == /proc/2397/exe : YES
+
+  Plex.rbf  /media/fat/_Utility/Plex.rbf
+    md5 07f54d9f8f0eda2fe75d9cc314f6de54
+  named j   /media/fat/_Utility/Plex.720p24.968b828a.rbf
+    md5 968b828a8ec572bccf43b7bc2d31625a
+  CORENAME=Plex
+  RBFNAME=Plex
+
+  product conf /media/fat/misterplex/misterplex.conf
+    md5 4a05032a39803428a63369ceca898c50
+    DECODE=640x480
+    OSD_CONTROL=1
+    DISPLAY_RES=480p
+    STREAM=0
+    PRESENT=fpga
+    DECODE_ALLOW_LAB_480P=1
+    DRIFT noted: was 025e4af6 (DISPLAY recipe may have touched persist)
+
+  sidecar /tmp/t7-l4.conf
+    on-box md5 95bff255c605f81dd543b861f9e5472c
+    local  md5 95bff255c605f81dd543b861f9e5472c
+    equal-md5 local == on-box : YES
+    DECODE=1280x720
+    OSD_CONTROL=0
+    STREAM=0
+    PRESENT=fpga
+
+================================================================
+MATCH TABLE
+================================================================
+
+  pid 2397                         MATCH
+  exe /media/fat/misterplex/bin/misterplexd  MATCH
+  md5 6f1afebe746a89f794ee102734fc5330       MATCH (disk+exe+staged)
+  size 13004348                    MATCH
+  Plex.rbf 07f54d9f                MATCH
+  named j 968b828a                 MATCH
+  CORE=Plex                        MATCH
+  conf 4a05032a39803428a63369ceca898c50  MATCH
+  sidecar 95bff255c605f81dd543b861f9e5472c  MATCH
+
+================================================================
+STAMPS
+================================================================
+
+  COMPANION_6f1afebe_DEPLOYED.md   PIN_OK YES  pid 2397  do not kill
+  ONBOX_54ff33a0_VS_6f1afebe.md    STALE vs PIN_OK (24016/54ff33a0 gone)
+  COMPANION_PKG_NOT_DEPLOYED.md    STALE vs PIN_OK (NOT_DEPLOYED false)
+  T7 still FAIL 14.1               unchanged
+  P4-DISPLAY / P4-720P-MIX         still TODO
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+
+- Companion: PIN_OK 6f1afebe pid 2397 sup 2385. Close W-comp-pin PIN_BLOCKED.
+  Do not kill 2397. Do not redeploy.
+- P3-720P24 stays IN_PROGRESS / pfps FAIL 14.1. PIN_OK ≠ T7 PASS.
+- P4-DISPLAY / P4-720P-MIX stay TODO.
+- FIT_GO=NO.
+
+================================================================
+BLOCKERS
+================================================================
+
+- None for this pin ticket.
+- T7 unique-fps still FAIL 14.1 (not this ticket; PIN_OK ≠ T7 PASS).
+- P4-DISPLAY PHY still 640x480@59.9 (not this ticket).
+
+Did not kill 2397. Did not deploy. Did not invent T7 PASS.

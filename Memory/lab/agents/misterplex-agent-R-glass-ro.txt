@@ -1,0 +1,141 @@
+WORKER: R-glass-ro
+ROLE: read-only confirm lab product Plex.rbf is still 07f54d9f
+UTC: 2026-08-14T02:55:54Z (resample; first sample 02:55:00Z)
+REPO_SOT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST: root@192.168.1.183 (sshpass -p 1)
+CONSTRAINTS_HONORED:
+  no load_core
+  no second gate
+  ZERO Quartus
+  ZERO cards
+  no invent pfps
+  prefer report-only if gate live
+  restore only if Plex.rbf is 0fc/720p AND no live gate (304633 or ssh children)
+
+================================================================
+VERDICT
+================================================================
+RESTORE_NEEDED=NO
+PLEX_RBF_PREFIX8=07f54d9f
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PLEX_RBF_IS_0FC=NO
+PLEX_RBF_IS_720P=NO
+NAMED_0FC_EXISTS=YES
+TRUE480_BAK_INTACT=YES
+GATE_304633=DEAD
+COPY_GATE_L_N2=LIVE
+SSH_CHILDREN=LIVE
+WINDOW=L-n2-copy owner (do not overwrite)
+RESTORE_RAN=NO
+DAEMON_RESTART_RAN=NO
+UNIQUE24=NOT_MEASURED
+PFPS=NONE
+QUARTUS=FREE
+
+Product /media/fat/_Utility/Plex.rbf is still true480 glass 07f54d9f.
+Named 0fc77c10 exists as a sidecar only. Did not restore. Did not
+touch daemon. L-n2-copy-gate.sh is LIVE with ssh children — even if
+that owner later copies 0fc onto Plex.rbf, this worker must not
+overwrite (WINDOW). PID 304633 is DEAD; successor gate is 306313.
+
+================================================================
+1) PRODUCT Plex.rbf
+================================================================
+PATH: /media/fat/_Utility/Plex.rbf
+LS:   -rwxr-xr-x 1 root root 3831312 2026-08-13 21:55:16.000000000 -0500
+MD5:  07f54d9f8f0eda2fe75d9cc314f6de54
+SIZE: 3831312  (true480 class; 0fc named is 2831748)
+MATCH_WANT_07F54D9F: YES
+
+/media/fat/Plex.rbf        MISSING
+/media/fat/cores/Plex.rbf  MISSING
+
+Resample 02:55:54Z same md5 + same mtime 21:55:16. Copy-gate had
+not yet swapped product bytes at sample time.
+
+================================================================
+2) NAMED 0fc77c10 (sidecar; not product)
+================================================================
+PATH: /media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+LS:   -rwxr-xr-x 1 root root 2831748 2026-08-13 21:45:11.000000000 -0500
+MD5:  0fc77c10f47a33d5e4379fe129658e93
+SIZE: 2831748
+ON_PRODUCT_SLOT: NO
+
+Other named 720p24 on disk (not loaded as Plex.rbf):
+  4f16350ec39d6cc9cb23230c798ce927  Plex.720p24.4f16350e.rbf
+  968b828a8ec572bccf43b7bc2d31625a  Plex.720p24.968b828a.rbf
+  cc9dbd74df99858fb1a43d636b769574  Plex.720p24.cc9dbd74.rbf
+  a69a62f947a6314046c7b9932cb33aac  Plex.720p24k.a69a62f9.rbf
+
+================================================================
+3) true480 BAK
+================================================================
+PATH: /media/fat/_Utility/Plex.true480.07f54d9f.rbf
+LS:   -rwxr-xr-x 1 root root 3831312 2026-08-13 11:54:12.000000000 -0500
+MD5:  07f54d9f8f0eda2fe75d9cc314f6de54
+MATCH_PRODUCT: YES
+MATCH_WANT: YES
+
+================================================================
+4) CORENAME / RBFNAME
+================================================================
+/tmp/CORENAME = Plex   (hex 506c6578)
+/tmp/RBFNAME  = Plex   (hex 506c6578)
+NAME_PIN_L4: NO  (RBFNAME is Plex, not Plex.720p24*)
+LOADED_NAME: product class (matches disk 07f54d9f)
+
+================================================================
+5) DAEMON
+================================================================
+PID=15069 CMD=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+LISTEN: 0.0.0.0:3005  (netstat 15069/misterplexd)
+ONBOX_BIN_MD5: 721578ec14ae673c3d589b4bc824595f
+ONBOX_BIN_LS:  -rwxr-xr-x 1 root root 13036468 Aug 13 20:36 /media/fat/misterplex/bin/misterplexd
+LEFT_RUNNING: YES (this worker did not kill/restart)
+
+At 02:55:54Z L-n2-copy remote bash 27985 was starting a daemon
+stop + bin backup (misterplexd.prev-0fc). Product RBF was still
+07f54d9f. This worker did not intervene.
+
+================================================================
+6) GATE / SSH CHILDREN / EXCLUSIVE
+================================================================
+PID 304633: DEAD
+PID 303277: DEAD
+run_720p24_live_gate.sh: not running
+Quartus / misterfpga-dev docker: FREE
+
+LIVE successor (not 304633):
+  PID=306313  bash /tmp/l-n2-copy-gate.sh   etime~01:09 @ 02:55:53Z
+  PID=306617  sshpass ssh root@192.168.1.183 bash -s   (child of 306313)
+  PID=306618  ssh root@192.168.1.183 bash -s            (child of 306617)
+  report: /tmp/misterplex-agent-L-n2-copy.txt STATUS=IN_PROGRESS
+  goal: copy 0fc77c10 onto Plex.rbf then ALWAYS restore 07f54d9f
+
+GATE_LIVE_FOR_RESTORE_RULE: YES (ssh children of L-n2-copy)
+→ do not overwrite Plex.rbf even if it later becomes 0fc during that window.
+
+================================================================
+DECISION TREE
+================================================================
+Plex.rbf == 07f54d9f  → RESTORE_NEEDED=NO  (taken)
+Plex.rbf == 0fc77c10 && 304633 LIVE → WINDOW, do not overwrite  (not taken)
+Plex.rbf == 0fc77c10 && gate DEAD   → restore from bak + daemon --id misterplex :3005  (not taken)
+
+================================================================
+EVIDENCE
+================================================================
+- this report: /tmp/misterplex-agent-R-glass-ro.txt
+  (store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-glass-ro.txt)
+- live ssh: md5sum Plex.rbf + named 0fc + true480 bak + CORENAME/RBFNAME + daemon ps
+- local: ps -p 304633 DEAD; pgrep l-n2-copy-gate LIVE; pgrep quartus FREE
+
+BACKLOG_STATUS_SUGGESTION:
+  R-glass-ro DONE. Product glass stays 07f54d9f (RESTORE_NEEDED=NO).
+  Named 0fc77c10 present as sidecar. L-n2-copy LIVE owns any 0fc
+  window + restore. Do not second-gate. Do not invent pfps.
+  P3-TRUE480 still DONE (07f54d9f stays). No PHASE_BACKLOG edit.
+
+BLOCKERS: none for this pin. Restore is not this worker's job while
+product is 07f54d9f and/or L-n2-copy ssh children are LIVE.

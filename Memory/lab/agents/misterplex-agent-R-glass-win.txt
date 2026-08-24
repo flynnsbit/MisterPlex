@@ -1,0 +1,148 @@
+WORKER: R-glass-win
+ROLE: after named-load window (pid 310569), ensure product Plex.rbf is 07f54d9f + daemon --id misterplex :3005
+UTC: 2026-08-14T03:08:27Z
+REPO_SOT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST: root@192.168.1.183 (sshpass -p 1)
+CONSTRAINTS_HONORED:
+  if 310569 or ssh children LIVE → read-only only (they were DEAD)
+  no overwrite of 07f54d9f product slot
+  no second unique-24 gate
+  ZERO Quartus
+  no invent pfps
+  no load_core / menu bounce (product already on Plex)
+
+================================================================
+VERDICT
+================================================================
+WINDOW=CLOSED
+GATE_310569=DEAD
+SSH_CHILDREN_310569=DEAD
+RESTORE_NEEDED=NO
+RESTORE_RAN=NO
+PLEX_RBF_PREFIX8=07f54d9f
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PLEX_RBF_IS_0FC=NO
+PLEX_RBF_IS_720P=NO
+PLEX_RBF_IS_TIMING_FAIL=NO
+TRUE480_BAK_INTACT=YES
+NAMED_0FC_EXISTS=YES (sidecar only)
+CORENAME=Plex
+RBFNAME=Plex
+DAEMON_RESTART_RAN=YES
+DAEMON_PID=1369
+DAEMON_CMD=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+LISTEN_3005=YES 0.0.0.0:3005 pid=1369
+BIN_MD5=6214f77568fa2303405603747e5dd5e7
+BOX_REBOOT=YES (first SSH 03:06:27Z uptime 0:00; named-load window left box down)
+UNIQUE24=NOT_MEASURED
+PFPS=NONE
+QUARTUS=FREE
+SECOND_GATE=NO
+
+Product /media/fat/_Utility/Plex.rbf was already true480 glass 07f54d9f
+after the named-load window died. Did not copy bak onto product.
+Box had just rebooted; product daemon was absent. Started one
+explicit product daemon (no supervise, no FPGA reload). Did not
+invent pfps. Did not start a unique-24 gate.
+
+================================================================
+1) WINDOW / GATE
+================================================================
+PID 310569: DEAD at first local sample 03:05:xxZ and every resample
+  through 03:08:27Z. pstree empty. No leftover ssh children of 310569.
+310886 bash /tmp/l-n2-copy-gate3.sh: seen briefly then DEAD before SSH.
+Quartus / misterfpga-dev / build_rbf: none.
+
+Sibling (not 310569): grok worker 312962 held sshpass 313056/313057
+~03:06:12–03:08:26Z running a restore/fpga/menu script. Gone by
+03:08:26Z. Did not fight it. Daemon 1369 survived that window.
+
+================================================================
+2) PRODUCT Plex.rbf
+================================================================
+PATH: /media/fat/_Utility/Plex.rbf
+LS:   -rwxr-xr-x 1 root root 3831312 2026-08-13 22:05:24.000000000 -0500
+MD5:  07f54d9f8f0eda2fe75d9cc314f6de54
+SIZE: 3831312  (true480 class; named 0fc is 2831748)
+MATCH_WANT_07F54D9F: YES
+/media/fat/Plex.rbf        MISSING
+/media/fat/cores/Plex.rbf  MISSING
+
+mtime 22:05:24 -0500 is post-reboot file timestamp on the just-booted
+box; bytes are still 07f54d9f (not 0fc77c10).
+
+================================================================
+3) BAK + NAMED SIDECAR
+================================================================
+BAK: /media/fat/_Utility/Plex.true480.07f54d9f.rbf
+  LS:  -rwxr-xr-x 1 root root 3831312 2026-08-13 11:54:12.000000000 -0500
+  MD5: 07f54d9f8f0eda2fe75d9cc314f6de54
+  MATCH_PRODUCT: YES
+
+NAMED 0fc (NOT product slot):
+  /media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+  MD5: 0fc77c10f47a33d5e4379fe129658e93
+  SIZE: 2831748
+  ON_PRODUCT_SLOT: NO
+
+Other named 720p24 on disk (not loaded as Plex.rbf):
+  4f16350ec39d6cc9cb23230c798ce927  Plex.720p24.4f16350e.rbf
+  968b828a8ec572bccf43b7bc2d31625a  Plex.720p24.968b828a.rbf
+  cc9dbd74df99858fb1a43d636b769574  Plex.720p24.cc9dbd74.rbf
+  a69a62f947a6314046c7b9932cb33aac  Plex.720p24k.a69a62f9.rbf
+
+================================================================
+4) CORENAME
+================================================================
+CORENAME=Plex
+RBFNAME=Plex
+/tmp/CORENAME /tmp/RBFNAME mtime 2026-08-13 22:06:34.143 -0500 size=4
+Main: pid 533 /media/fat/MiSTer LIVE
+No load_core issued by this worker.
+
+================================================================
+5) DAEMON
+================================================================
+Pre-start (03:06:57Z, uptime ~26s): NO_DAEMON, NO_LISTEN_3005
+  (prior pid 913 / 15069 died with the reboot)
+
+Start (03:07:36Z): RESTORE_NEEDED=NO confirmed then
+  nohup /media/fat/misterplex/bin/misterplexd \
+    --name MiSTerPlex --id misterplex --port 3005 \
+    --conf /media/fat/misterplex/misterplex.conf \
+    >>/media/fat/misterplex/misterplexd.log 2>&1 &
+  DAEMON_START pid=1369
+
+Final (03:08:27Z):
+  PID=1369 CMD=... --name MiSTerPlex --id misterplex --port 3005 --conf ...
+  LISTEN: tcp 0.0.0.0:3005 pid=1369/misterplexd
+  BIN: /media/fat/misterplex/bin/misterplexd md5 6214f77568fa2303405603747e5dd5e7
+  No twin product daemon. (bash -c lines that contain the string
+  misterplexd in the remote probe are not daemons.)
+
+================================================================
+6) WHAT WAS NOT DONE
+================================================================
+- Did not cp bak → Plex.rbf (already 07f54d9f)
+- Did not /bin/fpga, load_core, or menu bounce
+- Did not start run_720p24_live_gate / copy-gate
+- Did not Quartus
+- Did not measure unique-24 / pfps (NONE; do not quote stale T7)
+
+================================================================
+EVIDENCE
+================================================================
+- this report: /tmp/misterplex-agent-R-glass-win.txt
+- live ssh 192.168.1.183 md5sum + CORENAME + ps + netstat -lntp
+- first connect 03:06:22Z: ping loss, ssh OK, uptime 0:00, CORENAME=Plex
+- local: pid 310569 DEAD; exclusive Quartus FREE
+
+BACKLOG_STATUS_SUGGESTION:
+  R-glass-win DONE. RESTORE_NEEDED=NO. Product Plex.rbf 07f54d9f
+  stays. Daemon product --id misterplex :3005 pid=1369 LIVE after
+  post-window reboot. UNIQUE24 still FAIL/unmeasured this tick
+  (pfps=NONE). FIT_GO=NO. Do not leave 0fc as Plex.rbf (it is not).
+
+BLOCKERS: none for this restore-or-not decision.
+  Named-load 310569 is harvested DEAD. Box reboot is the window
+  aftermath; product identity is back.

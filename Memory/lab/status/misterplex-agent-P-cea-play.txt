@@ -1,0 +1,81 @@
+P-cea-play  2026-08-14T19:34Z  ONE play DONE + farm HDMI eyes-on
+
+VERDICT: unique24=FAIL  PLAY_RAN=YES  PLAY_RC=0  WRAPPER_RC=2
+RBF 347bb7ea4954e4f5087dd2669f3d08c6  PREFIX8=347bb7ea
+DESIGN=PRODUCT_CEA_1650x758_PIX30  BUILD_OK_CEA=YES TIMING_OK=YES
+HOST /media/fat/Plex.rbf md5 MATCH  HOST_MISPIN=NO
+SKIP_RESTORE=YES  bak 07f54d9f UNTOUCHED  no /bin/fpga  FPGA_NAMED_COUNT=0
+MENU_OK=YES PLEX_OK=YES SETTLE=8.02 STAY_UP=YES SOC_REBOOT=NO WIPE_OK=YES
+LOAD_METHOD=load_core_menu_then_plex
+ARM_DEPLOY=YES onbox=6ef2b67e5682b3c48aa30403bb5004eb MATCH local
+MPX_STICK_I420=1  MPX_FABRIC_DIRECT=0
+
+SCORE /tmp/pfps-720p24-cea-after-build.txt  UTC=2026-08-14T19:31Z
+  pfps=NONE  hw_fps=NONE  drops=NONE  presented=0  frames=2
+  MAGIC_F_AT_118=NO  MAGIC_F_AT_110=YES  MAGIC_F_LO=00000000
+  PEEK_PLXF=0000000000000000  PEEK_PLXM=46584c5002000000
+  PEEK_PLXJ=0  PEEK_PLXD=0  PEEK_PLXP=50584c5000006809
+  glass=true480 doorbell=0x300FF000 PLXJ=0x300FF130
+  decode=640x480 video_mode=5 true480_pipeline_aborted=1 src_phys=STUB
+  copy_us=NONE (aborted before present)
+  ARM_MD5=6ef2b67e5682b3c48aa30403bb5004eb  ARM_HAS_PIN_347bb7ea=NO
+
+UNIQUE24 PASS iff pfps>=23.9 AND hw_fps>=23.9 AND drops=0 AND presented>0 AND MAGIC_F@+0x118.
+  pfps=NONE  hw_fps=NONE  drops=NONE  presented=0  MAGIC_F@118=NO  → FAIL
+  Do not loosen MAGIC_F to +0x110. Do not invent 23.9.
+  PLAY_RC=0 ≠ unique-24. BUILD_OK+DEPLOY ≠ unique-24. Soft-skip ≠ PASS.
+
+VS page d8d376f2 7.18 presented=107: WORSE (presented=0 pfps=NONE)
+VS memcpy 6.79 presented=102: WORSE (aborted; fill-ratio NOT MEASURED)
+VS n14 00f36ca0 7.23: WORSE
+VS j 968b828a 14.1: WORSE
+VS 23.9: NO
+CEA_DID_NOT_LIFT=YES  fill-ratio NOT MEASURED
+
+CLASS=HOST_GLASS_TRUE480_ARM_MISSING_PIN + MAGIC_F@+0x110
+  present_bank.hpp SOURCE pinEquals 347bb7ea (L4) — PIN_OK is hpp grep
+  ARM ELF 6ef2b67e strings: 0f5fa5ed 2d6c228a d8d376f2 — NO 347bb7ea (count=0)
+  probeLiveGlass → true480 → doorbell 0x300FF000 → PLXD ACK fail
+    sendDdrFrame: PLXD acknowledgement required but unavailable
+    (doorbell=0x300ff000 plxd=0x300ff128)
+  Same class as first page play STALE ARM 57405ae7 presented=0
+  Disk pin MATCH ≠ ARM compile pin. Source pin ≠ unique-24.
+  SILICON still MAGIC_F @ +0x110 (PLXM) not +0x118 — CEA DID_NOT_MOVE_F
+  Host abort on +0x118 EMPTY is CORRECT.
+
+EYES node-worker1 MacroSilicon 534d:2109 /dev/video0 MJPEG 1280x720
+  recipe: ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -i /dev/video0 -frames:v 1
+  during/just-after play:
+    /tmp/misterplex-eyes/cea-after-play.jpg  19591B  md5=28cb2431f1ed26afe282ec75e239c80f
+    OSD: 1280x720 18.19KHz 24.0Hz  (CEA: 30e6/1650=18.182kHz; 30e6/(1650*758)=23.97Hz)
+         640x480  25.18MHz 59.9Hz  (ARM true480 bank / video_mode 5)
+    NOT idle. USB scaler ≠ CRT. OSD 24Hz ≠ unique-24.
+  after play (required name, 19:33Z scp from farm):
+    /tmp/misterplex-eyes/after-cea.jpg  7401B  md5=e74e3559b2ae3a20988fa691e404c7e6
+    BYTE_IDENTICAL idle e74e3559. BLACK 1280x720. Black grab ≠ unique-24.
+
+RO peek 19:34Z (not a play) product still 347bb7ea bak 07f54d9f:
+  PEEK_L4_PLXM=46584c5002000000  PEEK_L4_PLXF=0  PEEK_L4_PLXD=0  PEEK_L4_PLXJ=0
+  PEEK_L4_PLXP=50584c5000006809  F still +0x110
+
+LAB stays 347bb7ea SKIP_RESTORE  bak 07f54d9f UNTOUCHED
+ONE play only — ZERO second play / ZERO Quartus / ZERO /bin/fpga / ZERO n29
+PLAY_GO_CEA consumed
+
+LOG /tmp/misterplexd.cea-after-build.log
+RUN /tmp/misterplex-P-cea-play-run.log
+SCORE /tmp/pfps-720p24-cea-after-build.txt
+EYES /tmp/misterplex-eyes/after-cea.jpg  (black=idle)
+EYES_DURING /tmp/misterplex-eyes/cea-after-play.jpg  (OSD 720p24 timing)
+
+BACKLOG: P1 CEA play DONE (measure). unique24=FAIL (all five gates miss).
+  slot720p24cea ONE play CLOSED. Fill-ratio NOT MEASURED (host glass true480 abort).
+  Next = parent only (rebuild ARM so ELF contains 347bb7ea, then may authorize
+    ONE corrective play — page-play2 class). This worker does NOT second-play.
+  NOT n29. NOT second Quartus. NOT loosen MAGIC_F. NOT restore 07f54d9f.
+  Do not stamp unique24 PASS.
+
+BLOCKERS: unique24 FAIL (pfps/hw_fps/drops/presented/F@118 all miss).
+  Soft-skip ≠ PASS. PLAY_RC=0 ≠ unique-24. PIN_OK source ≠ ARM pin.
+  BUILD_OK+DEPLOY ≠ unique-24. OSD 24Hz ≠ unique-24. Black eyes ≠ unique-24.
+======== END ========

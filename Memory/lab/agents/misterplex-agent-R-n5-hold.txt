@@ -1,0 +1,96 @@
+# misterplex agent R-n5-hold
+Date: 2026-08-14T04:44:52Z
+Worker: R-n5-hold
+Slot: slot720p24n5
+Mode: READ_ONLY
+EDITED: NO
+QUARTUS: ZERO
+LAB_SSH: NEVER
+CARDS: none
+PHASE_BACKLOG: not written
+n6: NOT STARTED
+unique24: FAIL
+
+EXCLUSIVE=FREE
+STORE_MD5=47e8bc88bd3e2b539f85424da30f065e
+QSF_MD5=b049c94413d02a1a63dfd03b7234d7e1
+RBF_MD5=4554fdb392b1030ed523dfb082e3bad8
+SECOND_QUARTUS=NO
+unique24=FAIL
+
+## Verdict
+HOLD_OK. Exclusive stays FREE after n5 BUILD_OK. Product Plex.qsf restored to 480p. Store 47e8bc88 untouched. Named RBF still 4554fdb3. Did not start n6. Did not claim unique-24.
+
+## Exclusive (local studio + farm node-worker1)
+LOCAL_EXCL=FREE
+  pgrep -x quartus / quartus_sh / quartus_fit / quartus_map / quartus_sta / quartus_cdb / quartus_asm / quartus_cpf / quartus_syn: empty
+  docker ^mplex-fit: none (local docker: matter-server, plex only)
+  fit_slot720p24n5.sh / fit_slot720p24n6.sh / build_rbf_remote: none
+  .build-lock: absent (project, remote_out/slot720p24n5, /tmp/slot720p24n5.build-lock)
+
+FARM_EXCL=FREE  host=node-worker1  when=2026-08-14T04:44:52Z
+  pgrep -x quartus_*: empty
+  pgrep quartus_*: NO_QUARTUS_STAR
+  docker mplex-fit: NO_MPLEX_FIT_DOCKER
+  docker names: plex-cors-proxy, plex, discord-bbs-games (no mplex-fit)
+  slot720p24n5 .build-lock: NO_N5_LOCK
+  /home/flynnsbit/mplex-builds/slot720p24n6: ABSENT (n6 not started)
+
+EXCLUSIVE=FREE both sides. SECOND_QUARTUS=NO.
+
+## Store (untouched)
+EXPECT=47e8bc88bd3e2b539f85424da30f065e
+LOCAL=47e8bc88bd3e2b539f85424da30f065e
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime=2026-08-13 23:30:38.176528941 -0500 size=44000
+FARM=47e8bc88bd3e2b539f85424da30f065e
+  /home/flynnsbit/mplex-builds/slot720p24n5/Plex_MiSTer/rtl/sdram_i420_store.sv
+  mtime=2026-08-13 23:30:38.176528941 -0500 size=44000
+MATCH=YES DRIFT=NO EDITED=NO
+
+## Product Plex.qsf (restored; 480p)
+EXPECT=b049c94413d02a1a63dfd03b7234d7e1
+LIVE=b049c94413d02a1a63dfd03b7234d7e1
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/Plex.qsf
+  mtime=2026-08-13 22:32:51.710124510 -0500 size=6343
+BAK=b049c94413d02a1a63dfd03b7234d7e1
+  /tmp/Plex.qsf.product-480p.slot720p24n5.bak
+OVERLAY_SIBLING=84c2f4b2e85f150e073578e7e4406b69
+  Plex_720p24n2.qsf (sibling only; not live product)
+FARM_COMPILED_QSF=84c2f4b2e85f150e073578e7e4406b69
+  leftover n5 overlay on farm tree (expected; product SoT restored)
+DRIFT=NO  (product is b049c944, NOT overlay 84c2f4b2)
+RESTORE=YES (wrapper already restored; this worker did NOT restore)
+
+## PLEX_CLK_SYS_24
+product Plex.qsf: ZERO_MATCHES_PLEX_CLK_SYS_24
+no_PLEX_CLK_SYS_24=YES
+
+## Named RBF (local still 4554fdb3)
+EXPECT=4554fdb392b1030ed523dfb082e3bad8
+LOCAL_NAMED=4554fdb392b1030ed523dfb082e3bad8
+  /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n5/Plex.720p24.4554fdb3.rbf
+LOCAL_ALSO=4554fdb392b1030ed523dfb082e3bad8
+  .../remote_out/slot720p24n5/Plex.rbf
+FARM_RBF=4554fdb392b1030ed523dfb082e3bad8
+  /home/flynnsbit/mplex-builds/slot720p24n5/Plex_MiSTer/output_files/Plex.rbf
+bytes=2846036 MATCH=YES
+
+## unique-24
+NOT claimed. unique24=FAIL. No cards. No pfps. No live gate from this worker.
+
+## Actions
+READ_ONLY confirm only. Zero Quartus. Zero store/QSF edits. Zero lab ssh. Zero n6. Zero PHASE_BACKLOG.
+
+## Backlog status suggestion
+(not written) keep slot720p24n5 TERMINAL BUILD_OK 4554fdb3; exclusive FREE; unique24 FAIL; do not start n6.
+
+## Blockers
+none for this hold.
+
+## Evidence
+  /tmp/misterplex-agent-R-n5-hold.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-n5-hold.txt
+  /tmp/slot720p24n5-hold-excl-local.txt
+  /tmp/slot720p24n5-hold-excl-remote.txt
+  /tmp/misterplex-agent-X-n5.txt (prior BUILD_OK)

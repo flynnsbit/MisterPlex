@@ -1,0 +1,250 @@
+# misterplex agent R-glass-f
+WORKER: R-glass-f
+UTC: 2026-08-14T04:07:16Z (SSH pins 04:04:52Z / 04:05:32Z / 04:06:21Z / 04:06:59Z / 04:07:16Z; local 04:04:51Z)
+REPO_SOT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST: root@192.168.1.183 (sshpass -p 1)
+GOAL: Want Plex.rbf 07f54d9f8f0eda2fe75d9cc314f6de54.
+      Restore bak copy-only if 720p/d191 is Plex.rbf.
+      NO load_core / /bin/fpga / run_720p24.
+      Pin daemon 931, ARM 27418723, named sidecar d191.
+      unique24=FAIL pfps=NONE. Do not second n3 fpga.
+Report: /tmp/misterplex-agent-R-glass-f.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-glass-f.txt
+
+================================================================
+VERDICT
+================================================================
+RESTORE=NO
+RESTORE_NEEDED=NO
+RESTORE_RAN=NO
+PLEX_RBF_PREFIX8=07f54d9f
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PLEX_RBF_SIZE=3831312
+PLEX_RBF_IS_D191=NO
+PLEX_RBF_IS_0FC=NO
+PLEX_RBF_IS_720P=NO
+720P_LEFT_AS_PLEX_RBF=NO
+TRUE480_BAK_INTACT=YES
+NAMED_D191_EXISTS=YES (sidecar only; not product)
+NAMED_0FC_EXISTS=YES (sidecar only)
+CORENAME=Plex
+RBFNAME=Plex (4 bytes after reboot; pre-reboot file was 56-byte xxd pollution of "Plex")
+RBFNAME_IS_720P=NO
+NAME_PIN_L4=NO
+DAEMON_PID_WANT=931
+DAEMON_PID_LIVE=ABSENT
+DAEMON_931=SUPERSEDED (SoC reboot mid-ticket; L-n3-nofab /bin/fpga named)
+PARENT_CLAIM_DAEMON=967 (loop 04:07Z) NOT_SEEN this worker
+LISTEN_3005=NO
+DAEMON_RESTART_THIS_WORKER=NO
+DAEMON_PIN=BROKEN_REBOOT (931 dead; no new pid started here)
+BIN_MD5=274187232dc2957ed116a735b26d00ea
+EXE_MD5=N/A (no live misterplexd)
+ARM_PREFIX8=27418723 MATCH disk+local (live exe absent)
+MAIN_PID=535 /media/fat/MiSTer (post-reboot; pre-reboot was 534)
+BOX_UPTIME_S=1311 @ 04:04:52Z (pre-reboot session)
+BOX_UPTIME_S=25.83 @ 04:05:32Z (first post-reboot)
+BOX_UPTIME_S=36.43 @ 04:06:21Z
+BOX_UPTIME_S=74.49 @ 04:06:59Z
+BOX_UPTIME_S=91.39 @ 04:07:16Z
+SOC_REBOOT_MIDTICK=YES (~04:05:06Z; second SSH flap 04:05:06–04:05:25)
+leftover_run_720p24=NONE
+KILLED_RUN720=NO
+unique24=FAIL
+last_honest_pfps=NONE
+PLAY_RAN=NO
+FPGA_FLASH=NO
+LOAD_CORE=NO
+MENU=NO
+BIN_FPGA=NO
+RUN_720P24=NO
+SECOND_N3_FPGA=NO
+
+Product /media/fat/_Utility/Plex.rbf already matches want
+07f54d9f8f0eda2fe75d9cc314f6de54 on every pin (pre and post reboot).
+Did not copy bak. Did not flash. Did not invent pfps.
+unique24=FAIL pfps=NONE.
+931 cannot be pinned after L-n3-nofab SoC reboot. This worker did not
+start a replacement daemon.
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+- NO load_core, NO /bin/fpga, NO menu, NO run_720p24.
+- Restore bak copy-only IFF product slot is 720p / d191. Slot matched
+  want 07f54d9f on all five SSH pins → RESTORE=NO.
+- Do not use /media/fat/_Utility/Plex.rbf.bak as restore source
+  (that file is 15bd5db2, historical slot i, not true480).
+- unique-24=FAIL; last honest pfps=NONE (do not quote stale T7 / 14.1).
+- leftover run_720p24: none locally or on box; no PID kill.
+- Soft-skip ≠ PASS. Did not invent BUILD_OK / unique24 / pfps.
+- Did not start a second Quartus. Exclusive FREE observed locally.
+- Did not second n3 /bin/fpga (BAN this tick). L-n3-nofab did (not this worker).
+- Did not start/kill misterplexd after reboot (R-arm-f DEPLOY=NO;
+  assigned pin was 931, which cannot exist post-reboot).
+
+================================================================
+1) leftover run_720p24 (local + box)
+================================================================
+UTC 04:04:51Z local:
+  pgrep -a run_720p24 → none
+  leftover (l-n2-copy-gate|named-load|720p24_live|/bin/fpga|load_core) → none
+  exclusive / docker quartus / fit_slot720p24 → none on this host (FREE)
+  Resample 04:06:58Z: still none; exclusive FREE
+
+Box 04:04:52Z / 04:05:32Z / 04:06:21Z / 04:06:59Z / 04:07:16Z:
+  ps | run_720p24 → NONE
+  ps | load_core|/bin/fpga|menu.rbf → NONE
+
+KILLED: none (nothing to kill by PID).
+
+================================================================
+2) PRODUCT Plex.rbf
+================================================================
+PATH: /media/fat/_Utility/Plex.rbf
+SIZE: 3831312  (true480 class; named d191 is 2844720; named 0fc is 2831748)
+MD5:  07f54d9f8f0eda2fe75d9cc314f6de54  (all five pins)
+MATCH_WANT: YES
+/media/fat/Plex.rbf        MISSING
+/media/fat/cores/Plex.rbf  MISSING
+
+mtime:
+  04:04:52Z  2026-08-13 22:42:56 -0500  (same as R-glass-e 03:51Z)
+  04:06:21Z+ 2026-08-13 23:05:40 -0500  (rewrite during L-n3-nofab restore
+                                         window = 04:05:40 UTC; bytes still
+                                         07f54d9f; THIS worker did not write)
+
+d191 / 0fc / other 720p24 not on the product slot at any pin.
+
+================================================================
+3) BAK + named sidecars (NOT product slot)
+================================================================
+TRUE480 BAK: /media/fat/_Utility/Plex.true480.07f54d9f.rbf
+  LS:  -rwxr-xr-x 1 root root 3831312 2026-08-13 11:54:12.000000000 -0500
+  MD5: 07f54d9f8f0eda2fe75d9cc314f6de54
+  MATCH_PRODUCT: YES
+  MATCH_WANT: YES
+
+Plex.rbf.bak (DO NOT use as restore source):
+  /media/fat/_Utility/Plex.rbf.bak
+  MD5: 15bd5db29e4c56d0a8019cd8e30f8349  (04:04:52Z)
+  SIZE: 2902920  (historical slot i; NOT true480)
+  MATCH_WANT: NO
+
+NAMED d191 (sidecar; not product):
+  /media/fat/_Utility/Plex.720p24.d1910177.rbf
+  LS:  -rwxr-xr-x 1 root root 2844720 2026-08-13 22:36:22.000000000 -0500
+  MD5: d19101778905687efb869fbf3ac8628b
+  SIZE: 2844720
+  ON_PRODUCT_SLOT: NO
+  LOCAL_NAMED_MATCH: YES
+    /home/shawn/Projects/MisterPlex-wt-480p-lessons/fpga/Plex_MiSTer/remote_out/slot720p24n3/Plex.720p24.d1910177.rbf
+    md5 d19101778905687efb869fbf3ac8628b size 2844720
+    sibling Plex.rbf in that dir same md5 (local farm output; not lab product)
+
+NAMED 0fc (sidecar):
+  /media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+  LS:  -rwxr-xr-x 1 root root 2831748 2026-08-13 21:45:10.000000000 -0500
+  MD5: 0fc77c10f47a33d5e4379fe129658e93
+  SIZE: 2831748
+  ON_PRODUCT_SLOT: NO
+
+Other named 720p24 on disk (not Plex.rbf) @ 04:04:52Z:
+  4f16350ec39d6cc9cb23230c798ce927  Plex.720p24.4f16350e.rbf
+  968b828a8ec572bccf43b7bc2d31625a  Plex.720p24.968b828a.rbf
+  cc9dbd74df99858fb1a43d636b769574  Plex.720p24.cc9dbd74.rbf
+  a69a62f947a6314046c7b9932cb33aac  Plex.720p24k.a69a62f9.rbf
+
+================================================================
+4) CORENAME / RBFNAME / Main
+================================================================
+Pre-reboot 04:04:52Z:
+  CORENAME=Plex  (4 bytes; hex 506c6578) mtime 22:43:03.193 -0500
+  RBFNAME POLLUTED 56 bytes xxd of "Plex" mtime 22:50:47.402 -0500
+    (same class as R-glass-e; NOT "Plex.720p24.d1910177")
+  Main pid 534 /media/fat/MiSTer
+  FB=640,480
+  uptime 1311–1312s (same post-n3-gate session as 931)
+
+Post-reboot 04:06:21Z / 04:07:16Z:
+  CORENAME=Plex  (4 bytes) mtime 23:05:48.160 -0500
+  RBFNAME=Plex   (4 bytes) mtime 23:05:48.160 -0500  (pollution wiped)
+  RBFNAME_IS_720P=NO
+  Main pid 533 @ 04:05:32Z then 535 @ 04:06:21Z+
+  FB=640,480
+  No load_core / /bin/fpga / menu this worker.
+
+================================================================
+5) DAEMON + ARM pin
+================================================================
+Pre-reboot 04:04:52Z (SUPERSEDED by reboot):
+  PID=931 PPID=1
+  CMD=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+  LISTEN: tcp 0.0.0.0:3005 pid=931/misterplexd
+  BIN+exe md5 274187232dc2957ed116a735b26d00ea MATCH
+  size 13040732 mtime 2026-08-13 22:37:16 -0500
+
+Reboot: first resample SSH timeout 04:05:06Z; ping 100% loss then
+SSH 04:05:32Z uptime 25.83s. 931 gone (/proc/931 missing).
+
+Post-reboot 04:05:32Z / 04:06:21Z / 04:06:59Z / 04:07:16Z:
+  pidof misterplexd → DAEMON_ABSENT
+  LISTEN_3005=NO
+  Parent loop 04:07Z claims "restored FPGA True480 RC=0 daemon 967"
+  — this worker did not see pid 967 or :3005. Do not invent 967 LIVE.
+
+DISK ARM still:
+  /media/fat/misterplex/bin/misterplexd
+  md5 274187232dc2957ed116a735b26d00ea
+  size 13040732
+local ARM build/arm/misterplexd same md5 (observe only)
+CONF observe only (survived reboot):
+  /media/fat/misterplex/misterplex.conf md5 a5e016f26a438e0dae8c410cf641b06a
+  DECODE=320x240 OSD_CONTROL=1 PRESENT=fpga STREAM=0
+
+Did not start / kill / deploy ARM.
+Prior pins SUPERSEDED: 931 (this ticket pre-reboot) / 3096 (R-glass-n3) / 1564 (R-glass-hold).
+
+================================================================
+6) WHAT WAS NOT DONE
+================================================================
+- Did not cp bak → Plex.rbf (already 07f54d9f; mtime rewrite is L-n3-nofab)
+- Did not /bin/fpga, load_core, or menu bounce
+- Did not start run_720p24
+- Did not second n3 /bin/fpga
+- Did not Quartus / mid-fit edit
+- Did not measure unique-24 / pfps (NONE; unique24=FAIL)
+- Did not pkill -f
+- Did not restore from Plex.rbf.bak (that file is 15bd5db2, not glass)
+- Did not rewrite /tmp/RBFNAME
+- Did not write PHASE_BACKLOG essays / Memory/lab/status cards
+- Did not start a post-reboot daemon (931 dead; 967 not seen; ARM DEPLOY=NO)
+
+================================================================
+EVIDENCE
+================================================================
+- this report: /tmp/misterplex-agent-R-glass-f.txt
+- store copy: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-glass-f.txt
+- live ssh 192.168.1.183 04:04:52Z + 04:05:32Z + 04:06:21Z + 04:06:59Z + 04:07:16Z
+- local leftover scan 04:04:51Z + 04:06:58Z: no run_720p24 PID; exclusive FREE
+- local named n3 md5 d19101778905687efb869fbf3ac8628b MATCH on-box sidecar
+- parent tick 04:04Z: lab_glass=07f54d9f daemon=931:3005 BIN=27418723 unique24=FAIL
+- parent tick 04:07Z: L-n3-nofab SoC reboot; lab_glass=07f54d9f; claim daemon 967
+- prior pin R-glass-e 03:51:17Z same product md5 (this tick reconfirm + reboot)
+
+BACKLOG_STATUS_SUGGESTION:
+  R-glass-f DONE. RESTORE=NO. Product Plex.rbf 07f54d9f stays (pre+post reboot).
+  named d191 sidecar ON BOX (not product). 0fc sidecar ON BOX (not product).
+  720p_as_Plex.rbf=NO.
+  DAEMON 931 SUPERSEDED by mid-ticket SoC reboot (L-n3-nofab named /bin/fpga).
+  Post-reboot: DAEMON_ABSENT LISTEN_3005=NO. Parent-claim 967 NOT_SEEN.
+  ARM disk 274187232dc2957ed116a735b26d00ea MATCH local (live exe absent).
+  unique24=FAIL last_honest_pfps=NONE PLAY_RAN=NO.
+  leftover_run_720p24=NONE. Do not leave d191/0fc as Plex.rbf (they are not).
+  Do not invent pfps. Do not /bin/fpga named from this report.
+  Parent owns post-reboot daemon start (not this glass restore worker).
+
+BLOCKERS: none for the restore-or-not decision.
+  Product glass already 07f54d9f. Named n3 is sidecar only.
+  Daemon pin 931 is stale after L-n3-nofab reboot — not a glass restore fail.
+  unique24 stays FAIL (L-n3-gate SOC_REBOOT; L-n3-nofab reboot; pfps=NONE).

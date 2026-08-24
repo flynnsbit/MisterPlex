@@ -1,0 +1,36 @@
+# misterplex agent R-glass-arm
+Date: 2026-08-14T03:19Z
+Worker: R-glass-arm
+Status: PASS
+UNIQUE24: FAIL
+pfps: NONE
+DEPLOY: NO
+RESTORE: NO
+
+## Constraints obeyed
+- No Quartus, load_core, /bin/fpga, menu, named-load, ARM deploy.
+- Restore only if Plex.rbf ≠ 07f54d9f. It matched.
+
+## Box pin 03:18–03:19Z
+HOST=192.168.1.183 UP~211s (post-reboot)
+PLEX_RBF=/media/fat/_Utility/Plex.rbf
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+SIZE=3831312
+BAK=07f54d9f8f0eda2fe75d9cc314f6de54
+NAMED_0FC=0fc77c10f47a33d5e4379fe129658e93 (sidecar only)
+CORENAME=Plex
+RBFNAME=Plex
+720P_LEFT_AS_PLEX_RBF=NO
+BIN=/media/fat/misterplex/bin/misterplexd md5=6214f77568fa2303405603747e5dd5e7
+DAEMON_PID=1564 --id misterplex --port 3005 LISTEN=yes
+ARM_DEPLOY: NO (already 6214f775; would not scp)
+
+SSH timed out 03:14Z (uptime had been 0:01 at 03:13Z). Returned by 03:18Z. Product glass intact. Did not start daemon (already live). Did not play.
+
+Note: on-box /tmp/misterplexd.t7gate.log 3751B 22:15 is a sibling L4 play (ACK matched, PLXD fail) — not this worker.
+
+## Backlog suggestion
+Glass HOLD 07f54d9f. DEPLOY=NO. unique-24 FAIL.
+
+## Blockers
+none for restore. Box had a reboot this window; do not named-load.

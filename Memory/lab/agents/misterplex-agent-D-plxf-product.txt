@@ -1,0 +1,119 @@
+# misterplex agent D-plxf-product
+UTC=2026-08-14T19:33:59Z
+WORKER=D-plxf-product
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+branch=lessons/true480-720p24
+Report=/tmp/misterplex-agent-D-plxf-product.txt
+Card=/home/shawn/Projects/MisterPlex-wt-480p-lessons/Memory/lab/status/PLXF_PRODUCT_WRITER.md
+
+## VERDICT
+DESIGN_OK=YES
+RTL_SIBLING=YES
+STORE_HUNKS=YES
+LIVE_STORE_EDIT=NO
+TB_OK=YES
+TB_SCRIPT_RC=0
+IVL_RC=0
+VVP_RC=0
+PATCH_DRY_RC=0
+ELAB_PATCHED_COPY=YES
+ELAB_RC=0
+DESIGN_OK≠unique-24
+TB_OK≠unique-24
+ELAB≠BUILD_OK
+FIT_GO=NO
+QUARTUS=NO
+PLAY=NO
+HOST_LOOSEN=NO
+N29=NO
+unique24=FAIL
+
+unique24 FAIL: lab d8d376f2 pfps=7.18; MAGIC_F_AT_118=NO; MAGIC_F_AT_110=YES. Do not invent 23.9.
+
+## Exclusive
+cea_log=/tmp/plex_quartus_slot720p24cea.log wrap FIT_WRAPPER_DONE
+loop 19:30Z exclusive=FREE slot720p24cea TERMINAL
+parent BUILD_OK_CEA=YES TIMING_OK=YES RBF=347bb7ea4954e4f5087dd2669f3d08c6
+PLAY_GO_CEA=YES (sibling play — this worker PLAY=NO)
+STORE_FREEZE=8dc97b71620833ddacd4f52f0a11b4f6 MATCH UNTOUCHED
+SDRAM=10ef07ea9b28ec9ed07bb929a06204d7 UNTOUCHED
+files.qip no plxf_writer (UNTOUCHED this worker)
+This tick DID NOT apply hunks (CEA play owns freeze vs 347bb7ea; DRIFT if applied).
+
+## md5
+writer  fpga/Plex_MiSTer/rtl/sdram_i420_plxf_writer.sv     50012e63ec3f01419da8a5769f03d465
+patch   fpga/Plex_MiSTer/rtl/sdram_i420_store.plxf.patch   2a0fe386b49aee50331d106edbf2d7ef
+tb      tests/rtl/sdram_i420_plxf_writer_tb.sv             a2299030ed3868d1959a32e597b99c2e
+tb.sh   tests/rtl/sdram_i420_plxf_writer_tb.sh             1240a6c7df68380c2989a5739d9f9f93
+live    sdram_i420_store.sv                                8dc97b71620833ddacd4f52f0a11b4f6
+
+## TB
+cmd=tests/rtl/sdram_i420_plxf_writer_tb.sh
+IVL=/home/shawn/.local/oss-cad-suite/bin/iverilog
+IVL_RC=0 VVP_RC=0 TB_SCRIPT_RC=0
+PASS ADDR=doorbell+0x118 WE_own MAGIC_F
+PLXF_W=0x608fe23 PLXM_W=0x608fe22 (never issued)
+DIN lo forced MAGIC_F even if payload lo=MAGIC_D
+hold-arm: one WE (wait_r until !arm)
+log=/home/shawn/Projects/MisterPlex-wt-480p-lessons/build/iverilog/sdram_i420_plxf_writer/plxf_writer_tb.log
+
+## Patch (copy only)
+WORKDIR=/tmp/plxf-product-dry-772081
+patch --dry-run -p1 RC=0
+patch apply on COPY RC=0 copy_store=547074c1
+live store after still 8dc97b71 u_plxf=0
+iverilog -t null -s sdram_i420_store (copy store + writer + async_fifo + line_buf_ram) ELAB_RC=0
+
+## Design
+Registered ADDR=doorbell+0x118 every clk_ddr beat (keep/preserve).
+Registered DIN={payload[63:32], MAGIC_F}. Own WE pulse.
+wait_r until !arm && bus_idle (parent fw_ack drops frame_mbox_req).
+Mux DDRAM_* only while fw_we. Park D_IDLE iss_* F arm.
+Not n29 S_MBOX_ISS / PHYS+8 / shared iss port / ddr_frame_store.
+
+## Why not n29
+n29 is ddr_frame_store mailbox-loop leftover. Product path is sdram_i420_store.
+Same leftover class (WE_WITHOUT_ADDR_COMMIT on shared DDRAM_ADDR/WE) but L57
+forbids another n17–n29 experiment. Host unique24 stays MAGIC_F @ +0x118.
+
+## QSF SYSTEMVERILOG_FILE (after CEA + parent FIT_GO; not live)
+files.qip after rtl/sdram_i420_store.sv:
+  set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_i420_plxf_writer.sv
+Plex.qsf sources files.qip. Do not edit Plex.qsf / Plex_720p24cea.qsf.
+
+## NOT done
+- Did not edit live sdram_i420_store.sv / sdram.sv / present_core / pll / QSF
+- Did not add writer to live files.qip
+- Did not Quartus / FIT_GO stamp / play / deploy / /bin/fpga / lab ssh
+- Did not loosen host +0x118
+- Did not apply the patch to SoT
+
+## Apply later (parent FIT_GO after CEA ONE play)
+cd /home/shawn/Projects/MisterPlex-wt-480p-lessons
+patch --dry-run -p1 < fpga/Plex_MiSTer/rtl/sdram_i420_store.plxf.patch
+patch -p1 < fpga/Plex_MiSTer/rtl/sdram_i420_store.plxf.patch
+tests/rtl/sdram_i420_plxf_writer_tb.sh
+FIT_GO=NO from this worker.
+
+## Backlog status suggestion
+P3 DESIGN sibling ready. P3-720P24 IN_PROGRESS / unique24 FAIL.
+PRODUCT_PLXF_WRITER DESIGN_OK (sibling+hunks+TB).
+FIT_GO=NO until CEA FREE + parent stamp (CEA play of 347bb7ea first).
+Not n29. Host MAGIC_F stays +0x118.
+
+## Blockers
+FIT_GO=NO — parent must stamp after CEA ONE play; do not drift 8dc97b71 vs 347bb7ea.
+unique24 FAIL (already measured). No DESIGN blocker.
+
+## Evidence
+/tmp/misterplex-agent-D-plxf-product.txt
+Memory/lab/status/PLXF_PRODUCT_WRITER.md
+Memory/lab/status/PRODUCT_PLXF_WRITER.md
+fpga/Plex_MiSTer/rtl/sdram_i420_plxf_writer.sv
+fpga/Plex_MiSTer/rtl/sdram_i420_store.plxf.patch
+tests/rtl/sdram_i420_plxf_writer_tb.sh
+build/iverilog/sdram_i420_plxf_writer/plxf_writer_tb.log
+/tmp/plxf-product-dry-772081
+/tmp/plex_quartus_slot720p24cea.log
+/tmp/misterplex-loop-status.txt
+docs/LESSONS.md L57

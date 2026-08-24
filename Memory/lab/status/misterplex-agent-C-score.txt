@@ -1,0 +1,104 @@
+C-score  UTC=2026-08-14T19:51Z
+WORKER=C-score
+SoT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report=/tmp/misterplex-agent-C-score.txt
+Scoreboard=/tmp/misterplex-unique-scoreboard.txt
+PLAY=NO  Quartus=NO  SSH=NO  RTL=NO  /bin/fpga=NO  n29=NO  restore=NO
+
+VERDICT=SCORE_OK
+SCORE_OK≠unique-24
+unique24=FAIL
+INVENT_23.9=NO
+PLAY3_SCORED=YES
+H-arm-play report=YES (harvested after kick wait)
+
+======== five gates (unique24 PASS iff ALL) ========
+gate          need           play3          hit
+pfps          ≥23.9          13.2           NO
+hw_fps        ≥23.9          NONE           NO
+drops         0              0              YES
+presented     >0             200            YES
+MAGIC_F@118   0x504C5846     NO (F@110)     NO
+→ unique24=FAIL (2/5). Do not loosen F to +0x110. Soft-skip ≠ PASS.
+
+======== archive play1 vs play2 vs play3 ========
+run    | glass   | doorbell   | vm | frames | pres | pfps | drops | F118 | class
+play1  | true480 | 0x300FF000 | 5  | 2      | 0    | NONE | NONE  | NO   | HOST_GLASS_TRUE480 (IGNORE)
+play2  | L4      | 0x3047F000 | 5  | 2      | 0    | NONE | NONE  | NO   | HOST_RASTER+PLXF_ABORT
+play3  | L4      | 0x3047F000 | 0  | 200    | 200  | 13.2 | 0     | NO   | HOST_KICK_OK+RASTER_CMD + STICK + PLXF_ABSENT
+memcpy | L4      | 0x3047F000 | —  | 204    | 102  | 6.79 | 100   | NO   | PATH_SDRAM_STICK_MEMCPY
+page   | L4      | 0x3047F000 | —  | 215    | 107  | 7.18 | 108   | NO   | PATH_SDRAM_STICK_FILL
+
+RBF play1/2/3=`347bb7ea` CEA 1650×758. memcpy/page=`d8d376f2`.
+All: MAGIC_F_LO=00000000 PEEK_PLXF=0 PEEK_PLXM=46584c5002000000.
+
+play1 19:31Z Cite=/tmp/misterplex-agent-P-cea-play.txt
+  ARM 6ef2b67e NO pin. glass=true480 abort. fill NOT MEASURED. IGNORE.
+  after-build score OVERWRITTEN by play2 then play3.
+  ARCHIVE=/tmp/pfps-720p24-cea-play1-1931.txt
+
+play2 19:35Z Cite=/tmp/pfps-720p24-cea-play2-l4.txt + /tmp/misterplexd.cea-play2-l4.log
+  ARM 9e56b5fd HAS pin. L4. video_mode 5. PLXF abort frames=2 presented=0.
+  fill NOT MEASURED. IGNORE for fill.
+
+play3 19:48Z Cite=/tmp/pfps-720p24-cea-raster-kick.txt md5=24e85e45
+  LOG=/tmp/misterplexd.cea-raster-kick.log md5=bfa64252
+  SNAP=/tmp/pfps-720p24-cea-raster-kick-20260814T1948Z.txt
+  H-arm=/tmp/misterplex-agent-H-arm-play.txt 19:50Z
+  PLAY_RAN=YES PLAY_RC=0 PLAY_SCRIPT_RC=2 ARM_DEPLOY=NO
+  ARM local+onbox 1c220c80eaf6490a1e01ea7f53cbc69a MATCH pin 347bb7ea=YES
+    (H-arm-play ssh; this worker did not peek)
+  glass=L4 doorbell=0x3047F000
+  display raster 720p → video_mode 0
+  idle painted  true480_pipeline_aborted=0
+  frames=200 presented=200 pfps=13.2 hw_fps=NONE drops=0
+  fabric=stick copy_us 13623/13389/13228/13299 (~13.3ms)
+  audio=on av-lock  hw_presents=unavailable
+  PEEK_PLXK=4b584c50cd000020 MAGIC_K (doorbell write visible)
+  PEEK_PLXF=0  F@118=NO  F@110=YES
+
+======== play3 vs page 7.18 and n14 7.23 ========
+vs page   d8d376f2 7.18 / 107 / drops 108:  LIFT +6.02; pres 200 vs 107; drops 0 vs 108
+vs n14    00f36ca0 7.23 / 108 / drops 108:  LIFT +5.97  NEW BEST stick
+vs memcpy d8d376f2 6.79 / 102 / drops 100:  LIFT +6.41
+  6.79*2≈13.58 ≈ play3 13.2 (no-drop twin of 2:1 stick memcpy; same ~13.4ms copy)
+vs j      968b828a 14.1 / 212 / drops 0 hw_fps=14.10 fabric=plxp copy_us=0 audio=off
+  play3 -0.9. j remains BEST overall. Cite=/tmp/pfps-slot720p24j-t7b.txt
+vs play1/play2 presented=0: first CEA fill MEASURED
+vs 23.9: NO (13.2). Do not invent 23.9.
+
+BEST stick NOW play3 347bb7ea 13.2 (was n14 7.23).
+BEST overall still j 968b828a 14.1.
+CEA_DID_LIFT vs abort plays. CEA_DID_NOT_HIT_23.9.
+
+======== what play3 is not ========
+PEEK_PLXF still 0. Silicon F still +0x110 (PLXM).
+AcceptMailbox on empty +0x118 ≠ MAGIC_F@118. Soft-skip ≠ PASS.
+video_mode 0 is ascal 720p60 write, not CEA 24 Hz / not HDMI PHY PASS (L55).
+PLAY_RC=0 ≠ unique-24. presented=200 ≠ unique-24. drops=0 ≠ unique-24.
+CLASS is HOST kick+raster + stick memcpy, leftover PLXF_ABSENT.
+
+======== eyes (not a picture PASS) ========
+/tmp/misterplex-eyes/cea-raster-kick.jpg     7401 md5=e74e3559 BLACK L58 first-frame
+/tmp/misterplex-eyes/cea-raster-kick-2.jpg   7401 md5=e74e3559 BLACK identical
+/tmp/misterplex-eyes/cea-raster-kick-ss1.jpg 16995 md5=3c7e869f BYTE_IDENTICAL idle-1937b
+  OSD 1280x720 18.19kHz 24.0Hz / 640x480 25.18MHz 59.9Hz (H-arm-play + E-eyes-1937)
+OSD 24Hz ≠ unique-24. USB scaler ≠ CRT. Black ≠ unique-24.
+
+======== lab / this tick ========
+Lab NOW 347bb7ea SKIP_RESTORE. Bak KEEP 07f54d9f.
+Waited for kick file: FOUND 19:48:39Z (wait started 19:45:09Z).
+H-arm-play report landed 19:50Z — ARM onbox confirmed; numbers unchanged.
+Did not play / Quartus / restore / /bin/fpga / n29.
+Did not invent 23.9. Did not treat 13.2 or PLAY_RC=0 as unique-24.
+
+======== backlog suggestion ========
+P3-720P24 IN_PROGRESS / unique24 FAIL.
+Play3 CLOSED as SCORE (13.2; 2/5 gates). New BEST stick. Not unique-24.
+Next=parent PLXF writer / F@118. FIT_GO=NO this worker.
+Do NOT second play 347bb7ea. NOT n29. NOT invent 23.9. NOT loosen MAGIC_F.
+
+======== blockers ========
+unique24 FAIL (pfps=13.2 hw_fps=NONE F@118=NO).
+None for SCORE_OK.
+======== END ========

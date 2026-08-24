@@ -1,0 +1,156 @@
+L-glass | RO pin lab product glass True480 07f54d9f (720p is NOT Plex.rbf)
+UTC: 2026-08-14T08:12:42Z (ssh)
+Worker: L-glass
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-L-glass.txt
+Host: 192.168.1.183 (read-only sshpass)
+
+ZERO Quartus. ZERO play. ZERO /bin/fpga. ZERO load_core. ZERO copy onto Plex.rbf.
+ZERO kill misterplexd. Did not restart daemon. Did not write cards.
+Did not invent pfps / BUILD_OK / unique-24.
+unique24=FAIL (not measured; pin only).
+
+================================================================
+DELIVERABLE
+================================================================
+
+GLASS_OK=YES
+PRODUCT_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+UTILITY_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+720p_as_plex=NO
+PLAY_RAN=NO
+unique24=FAIL
+
+PRODUCT_PREFIX=07f54d9f
+PRODUCT_IS_FE7211ED=NO
+PRODUCT_IS_720P_PREFIX=NO
+
+================================================================
+VERDICT
+================================================================
+
+GLASS_OK=YES. Lab product glass is True480 07f54d9f.
+
+All three restore-critical names MATCH expect
+07f54d9f8f0eda2fe75d9cc314f6de54 (size 3831312):
+
+  /media/fat/Plex.rbf                            07f54d9f8f0eda2fe75d9cc314f6de54
+  /media/fat/_Utility/Plex.rbf                   07f54d9f8f0eda2fe75d9cc314f6de54
+  /media/fat/_Utility/Plex.true480.07f54d9f.rbf  07f54d9f8f0eda2fe75d9cc314f6de54
+
+720p is NOT left as the product name. 720p_as_plex=NO.
+Named 720p sidecars exist under _Utility/ only (listed; NOT loaded).
+
+play_slot720p24n9b.sh restore source EXISTS and MATCHES:
+  TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+  BAK_MD5 == TRUE480_MD5 == PRODUCT_MD5
+
+/media/fat/Plex.rbf is NOT fe7211ed (n9 HOOK_PORT_GAP ban).
+/media/fat/Plex.rbf is NOT any listed 720p prefix
+  {0fc77c10,4554fdb3,4f16350e,5e256f4f,968b828a,a0ae0b45,
+   c4fd5eaf,cc9dbd74,d1910177,e8960391,a69a62f9,fe7211ed}.
+
+GLASS_OK ≠ unique-24. GLASS_OK ≠ T7 PASS. GLASS_OK ≠ BUILD_OK.
+
+================================================================
+STEP 1 — md5sum product / utility / bak
+================================================================
+
+Expect all 07f54d9f8f0eda2fe75d9cc314f6de54. OBSERVED MATCH.
+
+  07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/Plex.rbf
+  07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/_Utility/Plex.rbf
+  07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/_Utility/Plex.true480.07f54d9f.rbf
+
+ls:
+  -rwxr-xr-x 1 root root 3831312 Aug 13 11:54 /media/fat/Plex.rbf
+  -rwxr-xr-x 1 root root 3831312 Aug 14 02:37 /media/fat/_Utility/Plex.rbf
+  -rwxr-xr-x 1 root root 3831312 Aug 13 11:54 /media/fat/_Utility/Plex.true480.07f54d9f.rbf
+
+================================================================
+STEP 2 — 720p is not the product name
+================================================================
+
+720p_as_plex=NO. Product prefix 07f54d9f (True480).
+
+Named 720p sidecars under /media/fat/_Utility/ (OK to list; NOT loaded):
+
+  0fc77c10f47a33d5e4379fe129658e93  Plex.720p24.0fc77c10.rbf   2831748
+  4554fdb392b1030ed523dfb082e3bad8  Plex.720p24.4554fdb3.rbf   2846036
+  4f16350ec39d6cc9cb23230c798ce927  Plex.720p24.4f16350e.rbf   2812392
+  5e256f4f43eeaa7cbff46c44f65c638c  Plex.720p24.5e256f4f.rbf   2828592
+  968b828a8ec572bccf43b7bc2d31625a  Plex.720p24.968b828a.rbf   2937308
+  a0ae0b45ff23ca240096889b8cc48c27  Plex.720p24.a0ae0b45.rbf   2822504
+  c4fd5eaf835e9fb8d36adfba81a17ec4  Plex.720p24.c4fd5eaf.rbf   2843552
+  cc9dbd74df99858fb1a43d636b769574  Plex.720p24.cc9dbd74.rbf   2843408
+  d19101778905687efb869fbf3ac8628b  Plex.720p24.d1910177.rbf   2844720
+  e8960391f6126d2f89ef3cd3054cfe2d  Plex.720p24.e8960391.rbf   2813844
+
+Also present (not product):
+  Plex.720p24k.a69a62f9.rbf  2827744  (named 720p24k sidecar)
+
+No Plex.720p24.fe7211ed.rbf on disk. fe7211ed is NOT product.
+
+================================================================
+STEP 3 — true480 bak (play_slot720p24n9b.sh restore source)
+================================================================
+
+TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+PRESENT=YES
+BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+MATCH_PRODUCT=YES
+MATCH_SCRIPT_EXPECT=YES  (scripts/play_slot720p24n9b.sh TRUE480_MD5)
+
+Restore later is NOT blocked by missing/mismatch bak.
+
+================================================================
+STEP 4 — daemon (note only; do not restart)
+================================================================
+
+PRESENT=YES
+  pid=18903  /media/fat/misterplex/bin/misterplexd
+             --name MiSTerPlex --id misterplex --port 3005
+             --conf /media/fat/misterplex/misterplex.conf
+  supervise=18893  /media/fat/misterplex/bin/misterplexd_supervise.sh
+  listen: 0.0.0.0:3005  18903/misterplexd
+
+Did not kill. Did not bounce. Did not redeploy.
+
+================================================================
+STEP 5 — product is not fe7211ed / not 720p prefix
+================================================================
+
+PRODUCT_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PRODUCT_IS_FE7211ED=NO
+PRODUCT_IS_720P_PREFIX=NO
+720p_as_plex=NO
+
+================================================================
+CONSTRAINTS HONORED
+================================================================
+
+Quartus=NO  play=NO  /bin/fpga=NO  load_core=NO  copy_Plex.rbf=NO
+kill_misterplexd=NO  cards=NO
+PLAY_RAN=NO
+unique24=FAIL
+
+================================================================
+BLOCKERS
+================================================================
+
+NONE for this pin. Bak exists and matches; later n9b restore source is intact.
+
+Open (not this worker; do not invent):
+  unique24=FAIL  (gate ≥23.9; last named measure 14.1 B_NO_GAIN_15)
+  GLASS_OK ≠ T7 PASS ≠ unique-24 ≠ BUILD_OK
+  Do not play. Do not Quartus. Do not load 720p onto Plex.rbf.
+
+================================================================
+BACKLOG STATUS SUGGESTION
+================================================================
+
+P3-720P24 stays IN_PROGRESS / pfps FAIL unique24=FAIL.
+Glass pin: lab product Plex.rbf = True480 07f54d9f (720p_as_plex=NO).
+Do not treat GLASS_OK as unique-24.
+Cite /tmp/misterplex-agent-L-glass.txt

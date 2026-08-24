@@ -1,0 +1,95 @@
+# misterplex agent R-ddr-m2-wire
+Worker: R-ddr-m2-wire
+Repo: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+UTC: 2026-08-14T02:16Z
+Quartus: ZERO
+
+## Verdict
+PASS — sdram_i420_store_m2 instantiates sdram_i420_ddr_issue and drives
+iss_addr/iss_bcnt/kick from registered *_r. Live store + files.qip
+untouched. Not in qip. Not instantiated from present_core / Plex.sv.
+BUILD_OK: NO (not claimed). Soft-skip ≠ PASS.
+
+## Status
+WIRED: YES (m2 only)
+QIP: NO (helper and m2 still absent from files.qip — intentional)
+LIVE_STORE: UNTOUCHED (combo dma_addr/burst_cap/kick_now still in
+  sdram_i420_store.sv)
+QUARTUS: ZERO
+PLEX_CLK_SYS_24: never
+
+## Constraints
+- Exclusive slot720p24n treated LIVE. ZERO Quartus by this worker.
+- Did not edit: Plex.sv, Plex.qsf, Plex_720p24.qsf, pll_0002.v,
+  sdram_i420_store.sv, present_core.sv, Plex_clk_pix.sdc, files.qip.
+- Edited only: sdram_i420_store_m2.sv (clk_ddr issue combo) and
+  sdram_i420_ddr_issue.sv (header comment).
+- Did not revert m2 miss-scan Stage 0/1 or m2b kick stick_base pipe
+  (base_kick_r / kick_load_r still present).
+- No cards / PHASE_BACKLOG.
+
+## Evidence
+Helper:
+  fpga/Plex_MiSTer/rtl/sdram_i420_ddr_issue.sv
+  md5 1e5d5fc8ec023dba8a4738bcb78f0730
+  header now: instantiated from m2 only; parent must qip-add with m2.
+  Logic unchanged: posedge clk_ddr registers
+    dma_addr_r    <= hps_base + 29'(dma_qword)
+    burst_cap_r   <= min(qwords_left, burst_want)
+    kick_now_r    <= (db_token_new || spi_edge) && !dma_busy
+    qwords_left_r <= qwords_left
+
+m2 instance (clk_ddr issue only):
+  fpga/Plex_MiSTer/rtl/sdram_i420_store_m2.sv
+  md5 7d50bf3a614551e5a89bc9f18a33ce70
+  L640 comment: Parent must qip-add rtl/sdram_i420_ddr_issue.sv with m2
+  L641-660 u_ddr_issue #(FRAME_W/H/QWORDS, QWORD_W)
+    .reset(reset_ddr) .spi_edge(spi_edge_ddr) → dma_addr_r / burst_cap_r /
+    kick_now_r / qwords_left_r
+  Combo wires REMOVED: dma_addr, burst_cap, kick_now
+  Kept as helper inputs: qwords_left, hps_base, burst_want, db_token_new
+  Consume:
+    L803  if (kick_now_r && !dma_busy)  // !dma_busy: helper pulse is 2 beats
+    L836  (burst_cap_r != '0)
+    L838  iss_addr <= dma_addr_r
+    L839  iss_bcnt <= burst_cap_r[7:0]
+  D_BURST_ISS still: DDRAM_ADDR <= iss_addr; DDRAM_BURSTCNT <= iss_bcnt
+  so DDRAM_* D-pins see helper *_r via iss_* (not combo add).
+
+Handshake note (not a second exclusive, not BUILD_OK):
+  kick_now_r is a registered copy of (edge||token)&&!dma_busy, so it
+  stays 1 for two clk_ddr beats after the consume NBA of dma_busy.
+  Consume AND !dma_busy prevents a double kick (2nd beat would take the
+  doorbell bank path). After a finished frame burst_cap_r==0 for one
+  helper beat, which holds D_IDLE issue until dma_addr_r / burst_cap_r
+  settle to hps_base+0 / burst_want.
+
+m2b pipe left intact:
+  base_kick_r / kick_load_r / wr_stick_addr <= base_kick_r (L1075-1215)
+
+Live store (must stay combo; this worker did not write it):
+  fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  md5 fe5be949acb0598ecec2f35eb6f9d37a (unchanged this worker)
+  L629-633 still combo burst_cap / dma_addr / kick_now
+
+qip (must NOT list helper or m2):
+  fpga/Plex_MiSTer/files.qip
+  md5 8c99e4f8809442e99ca10efb985f8540 (unchanged this worker)
+  L25 rtl/sdram_i420_store.sv only
+  rg sdram_i420_store_m2|sdram_i420_ddr_issue files.qip → no matches
+
+Instantiation surface:
+  present_core.sv L641 still sdram_i420_store #(  — not m2, not helper
+  Plex.sv — no sdram_i420_ddr_issue
+  helper referenced only from sdram_i420_store_m2.sv
+
+## Next
+Parent next exclusive: add BOTH
+  rtl/sdram_i420_store_m2.sv
+  rtl/sdram_i420_ddr_issue.sv
+to files.qip together, then swap present_core to m2. Do not add either
+alone (L10/L11: helper absent from qip is invisible; m2 without helper
+is a missing module). No fit this worker. No deploy.
+
+Backlog suggestion: leave PHASE_BACKLOG alone (task: no cards). Item
+is next-slot wire-complete, qip-pending.

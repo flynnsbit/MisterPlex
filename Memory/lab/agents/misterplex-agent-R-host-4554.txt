@@ -1,0 +1,160 @@
+VERDICT: HOST_OK. unique-24 NOT claimed. DEPLOY=NO.
+
+R-host-4554 | pin BUILD_OK n5 prefix8 4554fdb3 in rbfPrefix8IsKnownL4
+UTC: 2026-08-14T04:44:45Z
+Worker: R-host-4554
+Tree SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Branch: lessons/true480-720p24
+HEAD: 0e49a68 (host pins uncommitted; last host-pin workers did not commit)
+Report: /tmp/misterplex-agent-R-host-4554.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-host-4554.txt
+
+HOST_OK ≠ unique-24 ≠ T7 PASS ≠ UNIT_OK ≠ DEPLOY_OK.
+Did NOT invent unique-24. Did NOT run make unit. ZERO Quartus.
+No ARM deploy. No ssh lab. No play. No /bin/fpga. No cards. No PHASE_BACKLOG essays.
+No commit (tree convention: host-pin workers leave pins uncommitted).
+This tick: pin already present (~04:42Z parent/prior). Did NOT re-edit.
+
+================================================================
+DELIVERABLE
+================================================================
+
+HOST_OK=YES
+PIN_4554=YES
+PIN_E896=YES (kept)
+PIN_D191=YES (kept)
+PIN_0FC=YES (kept)
+PIN_CC9=YES (kept)
+PIN_968=YES (kept)
+TRUE480_07F_NOT_L4=YES
+4f16350e_REJECT=YES
+TEST_RC=0
+DEPLOY=NO
+unique24=FAIL (NOT claimed)
+
+================================================================
+VERDICT
+================================================================
+
+HOST_OK. Verify-only. `rbfPrefix8IsKnownL4` already treats BUILD_OK n5
+prefix8 4554fdb3 as L4 (comment + pinEqualsIgnoreCase). Copy-onto-Plex.rbf
+(rbfname=Plex) pins L4. Named Plex.720p24.4554fdb3 + leftover prefix
+07f54d9f is L4 via rbfNameIsKnownL4. leftover 07f54d9f + PLXJ +
+rbfname=Plex stays True480.
+
+Kept 968b828a cc9dbd74 0fc77c10 d1910177 e8960391.
+Did NOT add 07f54d9f.
+Did NOT remove d1910177 / e8960391 (historical L4 pins).
+4f16350e stays reject (HIER_REJECT / DO_NOT_DEPLOY).
+TIMING_FAIL {a69a62f9,752fc1e2,17dd3b56,e494a767,740e19d6,c052be56,0bcc6081} stay out.
+
+n5 RBF md5 4554fdb392b1030ed523dfb082e3bad8 — live store PLXD-after-doorbell_ok
+store 47e8bc88, FIT_WRAPPER_RC=0 TIMING_OK (farm/parent; not this worker).
+This ticket is host pin only. BUILD_OK already stamped.
+
+================================================================
+rbfPrefix8IsKnownL4 (case-insensitive)
+================================================================
+
+YES: 968b828a, cc9dbd74, 0fc77c10, d1910177, e8960391, 4554fdb3
+NO:  07f54d9f (true480), 4f16350e (m2 reject), TIMING_FAIL set
+
+Cases (tests/unit/test_present_bank.cpp):
+  copied 4554fdb3 rbfname=Plex              → L4
+  leftover 07f54d9f + PLXJ + rbfname=Plex   → True480
+  named Plex.720p24.4554fdb3 + prefix 07f   → L4 via name
+  upper 4554FDB3 copied                     → L4
+  4f16350e / 4F16350E / 752fc1e2            → not L4
+
+================================================================
+rbfNameIsKnownL4
+================================================================
+
+Still matches Plex.720p24* without a disk pin:
+  if base.find("968b828a") → true
+  else base.size()>=11 && base.compare(0, 11, "Plex.720p24")==0
+Named sidecar L4 (Plex.720p24.4554fdb3 / any Plex.720p24*) does not need
+prefix8 in rbfPrefix8IsKnownL4. Disk pin is for copy-onto-Plex.rbf.
+
+================================================================
+UNIT
+================================================================
+
+Targeted only (this tick 04:44:45Z):
+  make /home/shawn/Projects/MisterPlex-wt-480p-lessons/build/test_present_bank
+  (make: already up to date)
+  ./build/test_present_bank
+stdout: test_present_bank: OK
+TEST_RC=0
+
+Did NOT run full make unit. not UNIT_OK.
+TEST_RC=0 ≠ UNIT_OK ≠ unique-24.
+HOST_OK ≠ unique-24.
+
+header md5 7eb63926696207050e1aabcb760c8d13  host/libmisterplex/present_bank.hpp
+test   md5 74459f5d3e5cc3b4cf0197b2bd5852ee  tests/unit/test_present_bank.cpp
+
+porcelain (uncommitted, convention):
+  ?? host/libmisterplex/present_bank.hpp
+  ?? tests/unit/test_present_bank.cpp
+
+================================================================
+NOT CLAIMED
+================================================================
+
+- unique-24 / pfps ≥23.9 / T7 PASS
+- UNIT_OK (did not run make unit)
+- BUILD_OK (parent/farm already stamped n5; this ticket is host pin only)
+- DEPLOY_OK / ARM deploy / live gate / HDMI raster PASS
+- P3-720P24 DONE
+- CARD_OK
+- copy 4554 onto Plex.rbf / named load_core / /bin/fpga
+
+================================================================
+BACKLOG SUGGESTION
+================================================================
+
+P3-720P24 stays IN_PROGRESS / pfps FAIL.
+Host pin HOST_OK: 4554fdb3 already in rbfPrefix8IsKnownL4 (verify-only,
+no re-edit). 07f54d9f leftover+PLXJ stays True480; named Plex.720p24*
+is L4 via rbfNameIsKnownL4. TEST_RC=0 ≠ UNIT_OK ≠ unique-24.
+Do not copy 4554 onto Plex.rbf from this report. Do not second Quartus.
+unique-24 still FAIL.
+
+================================================================
+BLOCKERS
+================================================================
+
+- unique-24 not claimed. HOST_OK ≠ unique-24.
+- DEPLOY=NO for 4554fdb3 (parent owns named copy / gate).
+- Full make unit not run.
+
+================================================================
+CONSTRAINTS HONORED
+================================================================
+
+- ZERO Quartus / fit / QSF / pll / files.qip / fpga/** / sdram_i420_store.sv
+- Exclusive not taken (FREE left FREE).
+- Did NOT deploy ARM. Did NOT ssh lab. Did NOT scp.
+- Did NOT run live gate / play / menu / poke / load_core / /bin/fpga.
+- Did NOT overwrite lab Plex.rbf 07f54d9f.
+- No cards. No PHASE_BACKLOG essays.
+- unique-24 NOT claimed.
+- 07f54d9f not added to known L4.
+- 4f16350e stays reject.
+- Pins left uncommitted.
+
+================================================================
+EVIDENCE
+================================================================
+
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/host/libmisterplex/present_bank.hpp
+  L95-99: rbfNameIsKnownL4 Plex.720p24* (named sidecar L4 without disk pin)
+  L110-112: 4554fdb3 comment (n5 BUILD_OK store 47e8bc88 FIT_WRAPPER_RC=0 TIMING_OK)
+  L114-120: 968b828a || cc9dbd74 || 0fc77c10 || d1910177 || e8960391 || 4554fdb3
+  07f54d9f not in function
+- /home/shawn/Projects/MisterPlex-wt-480p-lessons/tests/unit/test_present_bank.cpp
+  copiedN5 / namedN5 / leftover after n5 / 4554FDB3 / !07f54d9f / !4f16350e
+- TEST_RC=0 stdout "test_present_bank: OK" 2026-08-14T04:44:45Z
+- Prior same-id 04:42:12Z also TEST_RC=0 (same md5s)
+- No edit this tick. No commit. No Quartus. No ARM. No deploy.

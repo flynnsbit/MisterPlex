@@ -1,0 +1,129 @@
+WORKER=R-glass-post
+UTC=2026-08-14T04:53:20Z
+UTC_START=2026-08-14T04:44:20Z
+UTC_PROBE=2026-08-14T04:53:10Z
+STATUS=DONE
+VERDICT=GLASS_OK
+GLASS_OK=YES
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+CORE=Plex
+RBFNAME=Plex
+FB=640,480
+DAEMON=pid=905 --name MiSTerPlex --id misterplex --port 3005
+LISTEN=0.0.0.0:3005
+SIDECAR_4554_PRESENT=YES
+SIDECAR_4554_MD5=4554fdb392b1030ed523dfb082e3bad8
+UNIQUE24=FAIL
+UNIQUE24_CLAIMED=NO
+FPGA_DID=NO
+FPGA_NAMED=NO
+CP_BAK_TO_PLEX=NO
+LOAD_CORE=NO
+PLAY=NO
+QUARTUS=NO
+CARDS=NO
+RESTORE_BY_THIS_WORKER=NO
+
+GOAL=After L-n5-play finishes (or 8 min timeout), confirm lab glass is True480 07f54d9f + daemon --id misterplex :3005. Read-mostly.
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST=192.168.1.183
+ZERO_QUARTUS=YES
+NO_LOAD_CORE=YES
+NO_PLAY=YES
+NO_CARDS=YES
+NO_FPGA_4554=YES
+NO_FPGA_D191=YES
+NO_FPGA_E896=YES
+
+# --- wait ---
+WAIT_START=2026-08-14T04:44:20Z
+WAIT_END=2026-08-14T04:52:46Z
+WAIT_ELAPSED_S=491
+PLAY_REPORT=/tmp/misterplex-agent-L-n5-play.txt
+PLAY_REPORT_EXISTS=NO
+WAIT_RESULT=TIMEOUT_8MIN
+# Poll 20s. L-n5-play.txt never appeared.
+# Sibling L-n5-gate.txt IS terminal (STATUS=DONE VERDICT=UNIQUE24_FAIL RESTORE_OK=YES) at 04:46:02Z.
+# Loop 04:48Z harvested L-n5-gate as UNIQUE24_FAIL / SOC_REBOOT; do_not=/bin/fpga n3/n4/n5 again.
+GATE_REPORT=/tmp/misterplex-agent-L-n5-gate.txt
+GATE_STATUS=DONE
+GATE_VERDICT=UNIQUE24_FAIL
+GATE_RESTORE_OK=YES
+GATE_PLEX_RBF_AFTER=07f54d9f8f0eda2fe75d9cc314f6de54
+GATE_PLAY_RAN=NO
+GATE_SOC_REBOOT=YES
+GATE_DAEMON_AFTER=1082 --id misterplex --port 3005
+GATE_FB_AFTER=640,480
+
+# --- lab probe 2026-08-14T04:53:10Z (ssh root@192.168.1.183) ---
+UPTIME_HUMAN=23:53:10 up 0:02
+PROC_UPTIME=146.37
+# Note: gate reconfirm 04:46:30Z uptime=61.63 (pid 1082). Now uptime=146s / pid=905
+# implies another HPS boot ~04:50:44Z after gate. Glass still True480; no action by this worker.
+PLEX_RBF=/media/fat/_Utility/Plex.rbf
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+PLEX_RBF_BYTES=3831312
+PLEX_RBF_MTIME=Aug 13 23:27
+TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+TRUE480_BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+SIDECAR=/media/fat/_Utility/Plex.720p24.4554fdb3.rbf
+SIDECAR_4554_PRESENT=YES
+SIDECAR_4554_MD5=4554fdb392b1030ed523dfb082e3bad8
+SIDECAR_4554_BYTES=2846036
+SIDECAR_4554_MTIME=Aug 13 23:44
+# Plex.rbf is NOT 4554. Sidecar only. Did not copy 4554 onto Plex.rbf.
+CORENAME=Plex
+RBFNAME=Plex
+FB=640,480
+# fb 640,480 class = True480 product raster; NOT leftover 720p fabric.
+DAEMON_PID=905
+DAEMON_CMD=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+DAEMON_ID=misterplex
+DAEMON_PORT=3005
+LISTEN=0.0.0.0:3005 users:(("mpx-main",pid=905,fd=10))
+NOT_MISTERPLEX_T7=YES
+
+# --- GLASS_OK gates (ALL required) ---
+PLEX_RBF_IS_07f54d9f=YES
+CORE_RBF_PLEX=YES
+FB_640_480_CLASS=YES
+DAEMON_ID_MISTERPLEX_PORT_3005=YES
+GLASS_OK=YES
+
+# --- actions ---
+DID_FPGA=NO
+# No /bin/fpga: disk already 07f54d9f AND fabric is 640,480 (not leftover 720p).
+# Play report L-n5-play ABSENT (timeout). Gate says RESTORE_OK. Prefer no second load.
+# Never /bin/fpga named 4554/d191/e896.
+DID_CP_BAK=NO
+DID_START_DAEMON=NO
+DID_QUARTUS=NO
+DID_LOAD_CORE=NO
+DID_PLAY=NO
+DID_CARDS=NO
+DID_CLAIM_UNIQUE24=NO
+
+# --- deliverable ---
+GLASS_OK=YES
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+CORE=Plex
+FB=640,480
+daemon=pid=905 --id misterplex --port 3005 listen=0.0.0.0:3005
+sidecar_4554_present=YES (4554fdb392b1030ed523dfb082e3bad8; NOT Plex.rbf)
+unique24=FAIL (NOT claimed)
+
+BACKLOG_SUGGEST=Glass item post n5 named-fpga+restore: True480 07f54d9f + product daemon :3005 confirmed.
+  unique-24 remains FAIL (L-n5-gate PLAY_RAN=NO pfps=NONE SOC_REBOOT). Do not claim unique24.
+  Do not /bin/fpga n3/n4/n5 again. Do not copy 4554 onto Plex.rbf.
+  L-n5-play.txt never written; gate report is the terminal play sibling.
+
+BLOCKERS=none for glass.
+  unique-24 still FAIL by contract (not a glass fail).
+  L-n5-play.txt missing after 8min — parent used L-n5-gate instead.
+
+EVIDENCE:
+  /tmp/misterplex-agent-R-glass-post.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-glass-post.txt
+  /tmp/misterplex-agent-L-n5-gate.txt
+  /tmp/misterplex-agent-L-n5-copy.txt
+  /tmp/misterplex-loop-status.txt

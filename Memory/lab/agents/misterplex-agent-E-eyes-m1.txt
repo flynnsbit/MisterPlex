@@ -1,0 +1,133 @@
+# E-eyes-m1 — farm HDMI glass during/after f02aa88b play
+UTC: 2026-08-14T20:54Z
+WORKER: E-eyes-m1
+STATUS: DONE
+SoT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Report: /tmp/misterplex-agent-E-eyes-m1.txt
+Card: Memory/lab/status/FARM_HDMI_EYES.md  Lesson: L58
+Dongle: node-worker1 MacroSilicon 534d:2109 /dev/video0 MJPEG 1280x720 (not YUYV)
+
+======== VERDICT ========
+unique24=FAIL (P scored 2/5; I do not restamp PASS)
+PLAY_RAN=YES (P-plxf-m1-play STATUS=DONE 20:52Z; score 20:51Z PREFIX8=f02aa88b)
+EYES_OK=YES (video0 free; FFMPEG_A/B RC=0; official JPEGs pulled and READ)
+PICTURE=NO
+SNOW=NO on official ss1 (sparse unlock speckle only on later during-ss1)
+HDMI_PHY_PASS=NO
+OSD 24Hz ≠ unique-24
+OSD 1280x720 74.25MHz 60.0Hz ≠ unique-24
+OSD text ≠ PHY PASS (L55)
+BLACK ≠ unique-24
+EYES-ON ≠ unique-24
+USB grab ≠ CRT
+
+PLAY=NO this worker. Quartus=NO. /bin/fpga=NO. n29=NO.
+Did NOT ssh 192.168.1.183. Did NOT send OSD keys. Did NOT ask user to look at TV.
+
+======== POLL ========
+Start 20:48:55Z. Official poll files ABSENT at first read.
+PLAY_GO_PLXF.parent 20:47Z YES RBF=f02aa88b PRODUCT_PLXF_M1
+BUILD_OK_PLXF.parent 20:47Z YES HDMI=+0.716 TNS=0
+ARM g++ LIVE at 20:49Z (play worker compiling).
+Dongle UP. video0 FREE.
+PLAY_DETECT 20:50:24Z reason=PFILE+PROC+PGREP
+  P-plxf-m1-play.txt landed STATUS=LAUNCHING_PLAY
+  play_slot720p24plxf.sh f02aa88b2ea658bdaddc85759bc09bc2 LIVE
+Official grab 20:50:26Z DURING launch (before settle/content ended).
+P STATUS=DONE 20:53:31Z. pfps-720p24-plxf-m1.txt PRESENT 20:52:49Z.
+Did not start a play. Did not timeout (8 min window unused).
+
+======== FIVE GATES (cite P + score; I do not restamp) ========
+P report /tmp/misterplex-agent-P-plxf-m1-play.txt STATUS=DONE unique24=FAIL
+score /tmp/pfps-720p24-plxf-m1.txt
+     = /tmp/pfps-720p24-plxf-m1-after-build.txt
+     = /tmp/pfps-720p24-plxf-after-build.txt (script native, rewritten 20:51Z)
+PREFIX8=f02aa88b HOST_MISPIN=NO HOST_PLEX_MD5=f02aa88b2ea658bdaddc85759bc09bc2
+PLAY_RAN=YES PLAY_RC=0 presented=189 pfps=12.5 hw_fps=NONE drops=0
+MAGIC_F@+0x118=NO PEEK_PLXF=0000000000000000 F@110=YES leftover PLXM=46584c50
+
+pfps>=23.9          FAIL  12.5
+hw_fps>=23.9        FAIL  NONE
+drops=0             PASS  0
+presented>0         PASS  189
+MAGIC_F@+0x118      FAIL  NO
+→ unique24=FAIL (2/5). Do not loosen to +0x110.
+P did NOT score all five. unique24 stays FAIL.
+
+======== OFFICIAL GRABS (I looked at the JPEGs) ========
+cmdA 20:50:26Z: ssh node-worker1 ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -i /dev/video0 -frames:v 1 /tmp/misterplex-eyes/plxf-m1.jpg
+cmdB 20:50:26Z: same with ffmpeg -ss 1 → plxf-m1-ss1.jpg
+FFMPEG_A_RC=0 FFMPEG_B_RC=0  (image2 sequence warning only; files written)
+Both JPEG 1280x720 sRGB 8-bit. USB capture raster is always 1280x720 (dongle).
+
+| path | B | md5 | MEAN | I SAW |
+|------|--:|-----|-----:|-------|
+| /tmp/misterplex-eyes/plxf-m1.jpg | 7401 | e74e3559b2ae3a20988fa691e404c7e6 | 7.000 | Uniform near-black RGB(7,7,7) uniq=1. Known first-frame FALSE-BLACK. Do not claim glass-is-black from this alone. No OSD/movie/snow. |
+| /tmp/misterplex-eyes/plxf-m1-ss1.jpg | 19942 | 74851ab983ca26c5980d37fb2da765bd | 3.551 | OSD UL dark-red box. NOT 640x480. Rest black. No movie/chevron/fill/snow. |
+
+OSD text I READ on plxf-m1-ss1.jpg (during f02aa88b launch, play_slot LIVE):
+  1280x720  18.19KHz  24.0Hz     ← requested / core beam
+  1280x720  74.25MHz  60.0Hz     ← HDMI/scaler PHY line
+NOT the prior session line 640x480 25.18MHz 59.9Hz (md5 3c7e869f / 16995 B).
+ss1 md5 74851ab9 ≠ 3c7e869f. uniq=147 bright>40=6562 CENmean=(0,0,0).
+
+640x480 vs 1280x720:
+  USB grabber frame = 1280x720 MJPEG (both official files).
+  OSD requested = 1280x720 24.0Hz.
+  OSD PHY line  = 1280x720 74.25MHz 60.0Hz  (changed vs leftover 640x480 59.9).
+  Product raster picture = NONE (black under OSD).
+  unique-24 = FAIL. 60.0Hz HDMI line is HDMI_24_ON_60 class, not unique 24.
+
+======== SIBLING / TIMELINE GRABS (not official tags; I looked) ========
+| path | utc | B | md5 | MEAN | I SAW |
+|------|-----|--:|-----|-----:|-------|
+| plxf-m1-wait.jpg | 20:49:59Z pre-play | 7401 | e74e3559… | 7.000 | FALSE-BLACK. Lab still no-lock before play. |
+| plxf-m1-wait-ss1.jpg | 20:49:59Z pre-play | 7402 | 14c877c3a5242510de438ebbb58494f8 | 0.000 | TRUE black. No OSD. Pre-play USB no-lock. |
+| plxf-m1-during2.jpg | 20:50:35Z | 7402 | 14c877c3… | 0.000 | -ss seek failed; TRUE black. Discard. |
+| plxf-m1-during.jpg | 20:51:32Z | 7401 | e74e3559… | 7.000 | FALSE-BLACK. |
+| plxf-m1-during-ss1.jpg | 20:51:32Z ~end of 15s clip | 15344 | 521bac650c93a34f5cd159a85291bc4c | 0.182 | Sparse colored speckle on black (unlock/mix garbage). NOT full green snow. NOT OSD. NOT a movie. PICTURE=NO. |
+| plxf-m1-after.jpg | 20:52:12Z | 7401 | e74e3559… | 7.000 | FALSE-BLACK. |
+| plxf-m1-after-ss1.jpg | 20:52:12Z | 7402 | 14c877c3… | 0.000 | TRUE black / no-lock after play. |
+| plxf-m1-play.jpg | P worker 20:52:38Z | 7402 | 2edafa1a7ee13215fc11fa6dd790c129 | 0.000 | P's after-play 20-frame black. P did NOT see the 74.25 OSD. |
+
+P wrote PHY_PASS=NO and "last session OSD still 640x480 59.9" from their black after-play grab. That is stale vs my official ss1 (I SAW 1280x720 74.25MHz 60.0Hz during launch). Still HDMI_PHY_PASS=NO: OSD ≠ PHY PASS (L55); 60.0Hz ≠ unique-24; USB ≠ CRT.
+
+======== PHY / CLASS ========
+Last readable OSD this ticket = official plxf-m1-ss1.jpg:
+  1280x720 18.19 kHz 24.0 Hz over 1280x720 74.25 MHz 60.0 Hz.
+Matches HDMI_24_ON_60 leftover class (24 Hz core mixed onto 720p60 HDMI).
+video_mode 1280,110,40,220,720,5,5,20,74250 (from play log) ≠ PHY PASS (L55).
+Not 640x480 25.18 MHz 59.9 Hz.
+Not unique-24.
+Not a product picture.
+
+======== BACKLOG SUGGESTION ========
+E-eyes-m1 DONE. unique24=FAIL.
+Official glass: false-black then OSD 1280x720 74.25MHz 60.0Hz (no picture).
+During-end: sparse speckle. After-play: black/no-lock.
+HDMI_PHY_PASS=NO. USB ≠ CRT.
+slot720p24plxf PRODUCT_PLXF_M1 ONE play already scored (P-plxf-m1-play).
+Do NOT second-play f02aa88b. Do NOT play 849bc600 / 347bb7ea.
+Do NOT restore 07f54d9f. Do NOT n29. Do NOT Quartus unless parent FIT_GO a new design.
+P3-720P24 stays IN_PROGRESS / unique24 FAIL.
+Soft-skip ≠ PASS. BUILD_OK+DEPLOY ≠ unique-24. Eyes-on ≠ unique-24.
+
+======== BLOCKERS ========
+unique24 FAIL (pfps=12.5, hw_fps=NONE, F@118=NO). P did not score all five gates.
+No product picture on USB glass. OSD 60.0 Hz ≠ unique-24.
+USB grab ≠ CRT. Black/no-lock after play ≠ unique-24.
+
+Evidence:
+  /tmp/misterplex-eyes/plxf-m1.jpg
+  /tmp/misterplex-eyes/plxf-m1-ss1.jpg
+  /tmp/misterplex-eyes/plxf-m1-during-ss1.jpg
+  /tmp/misterplex-eyes/plxf-m1-wait-ss1.jpg
+  /tmp/misterplex-eyes/plxf-m1-after-ss1.jpg
+  /tmp/misterplex-agent-P-plxf-m1-play.txt
+  /tmp/pfps-720p24-plxf-m1.txt
+  /tmp/pfps-720p24-plxf-m1-after-build.txt
+  /tmp/misterplexd.plxf-after-build.log
+  /tmp/misterplex-e-eyes-m1-poll.log
+  Memory/lab/eyes/plxf-m1.jpg
+  Memory/lab/eyes/plxf-m1-ss1.jpg
+  Memory/lab/agents/misterplex-agent-E-eyes-m1.txt

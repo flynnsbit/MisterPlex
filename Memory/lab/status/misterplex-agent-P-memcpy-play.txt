@@ -1,0 +1,60 @@
+P-memcpy-play  2026-08-14T19:22Z  ONE play DONE
+
+VERDICT: unique24=FAIL  PLAY_RAN=YES  PLAY_RC=0  WRAPPER_RC=2
+RBF d8d376f20e835d32b385ee4db3edef0e  PREFIX8=d8d376f2
+HOST /media/fat/Plex.rbf md5 MATCH  HOST_MISPIN=NO
+SKIP_RESTORE=YES  bak 07f54d9f UNTOUCHED  no /bin/fpga  FPGA_NAMED_COUNT=0
+MENU_THRASH=NO  RBF_COPY=SKIP_ALREADY_PRODUCT  LOAD_METHOD=already_loaded_no_menu
+CORE already Plex  SETTLE=2.02  STAY_UP=YES  SOC_REBOOT=NO  WIPE_OK=YES
+ARM_DEPLOY=YES onbox=88e70427e0815ea62ef7a9467e1c714f MATCH local (scp SKIP_MATCH)
+MPX_STICK_I420=1  FABRIC_DIRECT=0  glass=L4  doorbell=0x3047F000
+true480_pipeline_aborted=0  src_phys=STUB
+
+SCORE /tmp/pfps-720p24-memcpy-after-arm.txt  UTC=2026-08-14T19:22Z
+  frames=204 presented=102 pfps=6.79 hw_fps=NONE drops=100
+  copy_us_last=13406 copy_us_max=13471 copy_us_avg=13438.5 copy_us_n=2
+  copy_us_gt0=YES  fabric=stick
+  MAGIC_F_AT_118=NO  MAGIC_F_AT_110=YES  MAGIC_F_LO=00000000
+  PEEK_PLXF=0000000000000000  PEEK_PLXM=46584c5002000000
+  PEEK_PLXJ=0  PEEK_PLXD=0  PEEK_PLXP=50584c5000006809
+  PEEK_PLXK=4b584c506b000020 (post-play leftover MAGIC_K)
+
+BANK_WRITE=YES
+  log: stick_i420=1 (MPX_STICK_I420; idle+play memcpy PHYS_BASE 0x30180000)
+  memcpy_string=YES (new ARM; old 5cdf140a said "may skip 0x30180000 memcpy")
+  idle screen painted (mode=0) then play memcpy
+  frame_tx presents=48  prep_us=3842 copy_us=13471 plxd_us=1156 total_us=17328 fabric=stick
+  frame_tx presents=96  prep_us=3872 copy_us=13406 plxd_us=1160 total_us=17292 fabric=stick
+  vs page baseline 7.18 copy_us=0 total_us~7530  (skip left bank empty)
+
+VS page d8d376f2 7.18 copy_us=0: pfps -0.39  copy_us 0→13.4ms  BANK NOW WRITTEN
+VS n14 00f36ca0 7.23 copy_us~13539: same memcpy class (~13.4ms)  pfps worse (6.79 vs 7.23)
+VS warm 2d6c228a 6.92: -0.13
+VS 23.9: NO
+
+CLASS=PATH_SDRAM_STICK_MEMCPY
+  ARM 88e70427 CLOSED the skip-memcpy hole: wantStick no longer leaves PHYS_BASE empty
+  copy_us>0 expected and OBSERVED
+  PAGEFILL silicon DID_NOT_LIFT (still ~7 class; F still +0x110)
+  memcpy cost explains pfps dip vs skip-memcpy 7.18
+  Do not loosen MAGIC_F to +0x110
+
+PLAY_GO_PAGE already YES at /tmp/misterplex-PLAY_GO_PAGE.parent (not re-stamped)
+Did NOT run scripts/play_slot720p24page.sh wrapper — it always scp+menu-bounces.
+Product already d8d376f2; worker brief: no menu-thrash. Play body = same
+STICK=1 FABRIC=0 --decode 1280x720 --play-file 15s + WIPE_L4 + ARM_DEPLOY.
+
+LOG /tmp/misterplexd.memcpy-after-arm.log
+RUN /tmp/misterplex-P-memcpy-play-run.log
+LAB stays d8d376f2 SKIP_RESTORE  bak 07f54d9f UNTOUCHED
+ONE play only — no second play / no Quartus / no /bin/fpga / no restore 07f54d9f
+CEA exclusive LIVE on farm (not this worker)
+
+BACKLOG: P0 host memcpy CLOSED as play. unique24=FAIL.
+  copy_us>0 PROVEN (13.4ms n14-class). Bank write ≠ unique-24.
+  Next = parent CEA 1650x750 / MAGIC_F@118 product. NOT n29.
+  NOT replay d8d376f2 for another memcpy measure.
+
+BLOCKERS: unique24 FAIL (pfps=6.79 hw_fps=NONE drops=100 F@118=NO).
+  Soft-skip ≠ PASS. PLAY_RC=0 ≠ unique-24. copy_us>0 ≠ unique-24.
+======== END ========

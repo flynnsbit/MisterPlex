@@ -1,0 +1,125 @@
+WORKER=L-n4-play
+UTC=2026-08-14T04:33:50Z
+UTC_START=2026-08-14T04:31:36Z
+UTC_END=2026-08-14T04:33:50Z
+STATUS=DONE
+VERDICT=UNIQUE24_FAIL
+FPGA_NAMED_RC=0
+FABRIC_DIRECT=0
+PLAY_RAN=NO
+pfps=NONE
+hw_fps=NONE
+drops=NONE
+audio=NONE
+PLEX_RBF_AFTER=07f54d9f8f0eda2fe75d9cc314f6de54
+DAEMON_AFTER=--name MiSTerPlex --id misterplex --port 3005
+unique24=FAIL
+
+GOAL=ONE /bin/fpga named e8960391; play MPX_FABRIC_DIRECT=0; restore True480 07f54d9f + product daemon
+REPO=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+HOST=192.168.1.183
+ZERO_QUARTUS=YES
+NO_SECOND_EXCLUSIVE=YES
+NO_CARDS=YES
+NO_LOAD_CORE=YES
+NO_RUN_720P24_LIVE_GATE=YES
+NO_FPGA_D191=YES
+FPGA_NAMED_COUNT=1
+FPGA_RESTORE_COUNT=1
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_NE_UNIQUE24=YES
+DID_NOT_QUOTE_OLD_12_15_PFPS=YES
+
+# --- copy wait ---
+COPY_REPORT=/tmp/misterplex-agent-L-n4-copy.txt
+COPY_OK=YES
+NAMED_ONBOX=/media/fat/_Utility/Plex.720p24.e8960391.rbf
+NAMED_ONBOX_MD5=e8960391f6126d2f89ef3cd3054cfe2d
+NAMED_WANT_MD5=e8960391f6126d2f89ef3cd3054cfe2d
+ONBOX_MD5SUM_MATCH=YES
+
+# --- named bitstream (sidecar only; never copied onto Plex.rbf) ---
+NAMED=/media/fat/_Utility/Plex.720p24.e8960391.rbf
+NAMED_BYTES=2813844
+COPY_ONTO_PLEX_RBF=NO
+PLEX_RBF_PRE=07f54d9f8f0eda2fe75d9cc314f6de54
+TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+TRUE480_BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+
+# --- named /bin/fpga (ONE only; not load_core; not d191) ---
+CMD=/bin/fpga /media/fat/_Utility/Plex.720p24.e8960391.rbf
+FPGA_NAMED_RC=0
+FPGA_NAMED_BYTES=2813844
+FPGA_NAMED_SSH_RC=0
+FPGA_NAMED_STDOUT=Bitstream size: 2813844 bytes
+FPGA_NAMED_WALL_IN_SESSION=0.13s (UP_PRE=259.83 UP_POST=259.96 same SSH)
+SSH_BACK_AFTER_FPGA=YES
+SOC_REBOOT=YES
+PLAY_FAIL_CLASS=FPGA_NAMED_THEN_SOC_REBOOT
+UP_BEFORE=254.50
+UP_AFTER_FPGA=24.56
+# same-SSH /bin/fpga returned RC=0; ~3s later HPS reboot (uptime 254.50 → 24.56 at 04:32:10Z).
+# Did NOT stamp RBFNAME. Did NOT start play. Did NOT second named /bin/fpga.
+STAMPED_RBFNAME=NOT_STAMPED
+CORENAME_AFTER_FPGA=Plex
+RBFNAME_AFTER_FPGA=Plex
+FB_AFTER_FPGA=640,480
+PLEX_RBF_STILL_07f54d9f_ON_DISK=YES
+
+# --- play (not run) ---
+PLAY_CMD=MPX_FABRIC_DIRECT=0 /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-t7 --port 3005 --conf /media/fat/misterplex/misterplex.conf --decode 1280x720 --play-file /tmp/real720p_1500k_av.mp4 --play-seconds 15
+PLAY_LOG_INTENDED=/tmp/misterplexd.t7n4.log
+PLAY_LOG=ABSENT (never started; /tmp wiped by SoC reboot)
+PLAY_RC=NONE
+ACK=NONE
+FRAMES=NONE
+PRESENTED=NONE
+PLXJ=NONE
+PLXD=NONE
+GLASS-MAX=NONE
+L4_PIN=NONE
+# Did not invent pfps>=23.9. Soft-skip ≠ PASS. BUILD_OK e8960391 ≠ unique-24.
+# Last honest unique on older 720p (~12-15) is NOT this-run.
+
+# --- restore (always; one /bin/fpga product Plex.rbf ONLY) ---
+RESTORE_OK=YES
+FPGA_RESTORE=/bin/fpga /media/fat/_Utility/Plex.rbf
+FPGA_RESTORE_RC=0
+FPGA_RESTORE_BYTES=3831312
+PLEX_RBF=/media/fat/_Utility/Plex.rbf
+PLEX_RBF_AFTER=07f54d9f8f0eda2fe75d9cc314f6de54
+720P_LEFT_AS_PLEX_RBF=NO
+CORENAME_AFTER=Plex
+RBFNAME_AFTER=Plex
+FB_AFTER=640,480
+DAEMON_CMD=/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+DAEMON_PID=1085
+DAEMON_ID=misterplex
+DAEMON_PORT=3005
+LISTEN_AFTER=YES
+LISTEN=0.0.0.0:3005
+NOT_MISTERPLEX_T7=YES
+NO_KILL9=YES
+NO_QUARTUS=YES
+# reconfirm 04:33:37Z (no second named fpga, no play)
+RECONFIRM_UPTIME=81.94
+RECONFIRM_PLEX_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+RECONFIRM_NAMED_KEPT_MD5=e8960391f6126d2f89ef3cd3054cfe2d
+RECONFIRM_DAEMON=1085 --name MiSTerPlex --id misterplex --port 3005
+RECONFIRM_LISTEN=0.0.0.0:3005
+
+BACKLOG_SUGGEST=P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+  n4 e8960391 BUILD_OK store 36ed39ad PATH_SDRAM+!rd_act ≠ unique-24.
+  Named sidecar COPY_OK. ONE /bin/fpga named RC=0 then HPS reboot (class FPGA_NAMED_THEN_SOC_REBOOT).
+  PLAY_RAN=NO pfps=NONE. Did not retry named fpga. Lab glass RESTORED 07f54d9f + product daemon.
+  FABRIC_DIRECT=0 never exercised. Do not invent 23.9. Do not load_core named. Do not /bin/fpga d191.
+
+BLOCKERS=FPGA_NAMED_THEN_SOC_REBOOT — e8960391 /bin/fpga RC=0 then SoC reboot; no unique-fps sample.
+  Not a Quartus blocker. Do not invent pfps>=23.9. Do not leave e896 as Plex.rbf.
+
+EVIDENCE:
+  /tmp/misterplex-agent-L-n4-play.txt
+  /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-L-n4-play.txt
+  /tmp/misterplex-agent-L-n4-copy.txt
+  /tmp/misterplex-agent-X-n4.txt
+  /tmp/l-n4-play-run.sh

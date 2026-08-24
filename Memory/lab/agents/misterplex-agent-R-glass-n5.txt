@@ -1,0 +1,50 @@
+worker: R-glass-n5
+goal: Confirm lab glass stays True480 07f54d9f + product daemon --id misterplex :3005 after n4 named-fpga SoC reboot
+mode: READ-ONLY (no Quartus, no /bin/fpga, no load_core, no play, no Plex.rbf copy, no 720p load)
+host: 192.168.1.183
+stamp: 2026-08-13 23:38:03 local on MiSTer (ssh)
+
+=== SNAPSHOT ===
+uptime: 23:38:03 up 0:05, 0 users, load 1.04 0.00 0.75
+/proc/uptime: 348.16 321.06  (~5.8 min since HPS reboot)
+PLEX_RBF_MD5: 07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/_Utility/Plex.rbf
+TRUE480_SIDECAR_MD5: 07f54d9f8f0eda2fe75d9cc314f6de54  /media/fat/_Utility/Plex.true480.07f54d9f.rbf
+CORE: Plex
+RBFNAME: Plex
+FB: 640,480
+daemon: pid=1085 id=misterplex port=3005
+  cmdline: /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex --port 3005 --conf /media/fat/misterplex/misterplex.conf
+listen: 0.0.0.0:3005 users:(("mpx-main",pid=1085,fd=8))
+
+named 720p sidecars present under _Utility (NOT loaded as Plex.rbf; OK):
+  Plex.720p24.0fc77c10.rbf  2831748  Aug 13 21:45
+  Plex.720p24.d1910177.rbf  2844720  Aug 13 22:36
+  Plex.720p24.e8960391.rbf  2813844  Aug 13 23:25
+
+=== SCORE ===
+Plex.rbf md5 == 07f54d9f8f0eda2fe75d9cc314f6de54: YES
+CORE/RBF name Plex: YES
+fb 640,480 class: YES
+daemon --id misterplex --port 3005: YES (pid 1085)
+unique24: FAIL (not measured; unique-24 FAIL by contract; do not invent pfps>=23.9)
+
+GLASS_OK: YES
+
+=== ACTIONS ===
+ZERO Quartus. No /bin/fpga. No load_core. No play. No named Plex.720p24.* load.
+Did not copy onto /media/fat/_Utility/Plex.rbf.
+Did not restore (parent owns restore). Did not edit store/RTL/cards/PHASE_BACKLOG.
+
+=== VERDICT ===
+GLASS_OK YES
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+CORE=Plex
+FB=640,480
+daemon pid=1085 id=misterplex port=3005
+uptime=~5 min (348.16s)
+unique24=FAIL
+
+backlog suggestion: leave P3-720P24 / glass item as confirmed True480 after n4 SoC reboot; unique-24 remains FAIL. No restore needed.
+blockers: none for glass. unique-24 still FAIL by contract (not a glass fail).
+evidence: this file; /tmp/misterplex-agent-R-glass-n5.txt
+copy: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-glass-n5.txt

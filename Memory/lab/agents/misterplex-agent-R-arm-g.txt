@@ -1,0 +1,303 @@
+# misterplex agent R-arm-g
+WORKER: R-arm-g
+ROLE: ARM DEPLOY=NO — box already 27418723; do not scp/rebuild/kill 1098
+UTC: 2026-08-14T04:14Z
+REPO_SOT: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+BRANCH: lessons/true480-720p24
+HEAD: 0e49a68 (cite R-arm-f / R-host-d191; this worker did not re-read packed-refs)
+HOST: 192.168.1.183 (this worker: no scp / no kill / no make / no ssh)
+Report: /tmp/misterplex-agent-R-arm-g.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-arm-g.txt
+Spawn: parent TICK=04:12Z spawned=R-nofab-hv R-glass-g R-arm-g R-fit-g R-fpga-rca R-aspect-g
+Parent SoT TICK=04:12Z: daemon=1098:3005 RESTARTED (was DOWN after nofab) BIN=27418723
+  unique24=FAIL last_honest_pfps=NONE
+  L-n3-gate=UNIQUE24_FAIL play-start SOC_REBOOT pfps=NONE
+  L-n3-nofab=UNIQUE24_FAIL /bin/fpga named then reboot ~27s PLAY_RAN=NO
+              isolate FABRIC=0 NOT done
+  next=do not /bin/fpga n3 again; RCA named-load hang
+Parent restamp TICK=04:13Z (after this spawn; observe only): exclusive=launching X-n4
+  store=36ed39ad !rd_act on PLXJ+PLXD (n3 4a4fa085 dropped that gate)
+  unique24=FAIL  do_not=second Quartus; thrash n3 fpga; invent pfps
+  THIS_WORKER did not start X-n4. ARM still DEPLOY=NO.
+
+================================================================
+VERDICT
+================================================================
+DEPLOY=NO
+MAKE=NO
+SCP=NO
+KILL_1098=NO
+KILL_931=NO
+KILL_DAEMON=NO
+REBUILD=NO
+ENV_CHANGE_1098=NO
+unique24=FAIL
+last_honest_pfps=NONE
+THIS_RUN_PFPS=NONE
+PLAY_RAN=NO
+ISOLATE_FABRIC0_DONE=NO
+PLAY_FAIL_CLASS=SOC_REBOOT / NAMED_FPGA_THEN_REBOOT (nofab) + PLAY_START_F2SDRAM_HANG (gate)
+lab_glass=07f54d9f (product Plex.rbf stays)
+named_sidecar=Plex.720p24.d1910177.rbf (not product)
+X-n3=BUILD_OK d1910177 (not an ARM deploy reason)
+SOC_REBOOT_IS_ARM_REDEPLOY_REASON=NO
+NOFAB_FPGA_REBOOT_IS_ARM_REDEPLOY_REASON=NO
+ISOLATE_FABRIC0_IS_ARM_REDEPLOY_REASON=NO
+ISOLATE_FABRIC0_IS_ENV=YES
+ISOLATE_FABRIC0_COMPLETED=NO
+COMPILE_DEFAULT_FABRIC_DIRECT=0
+ARM_ONBOX=274187232dc2957ed116a735b26d00ea
+ARM_LOCAL_CITE=274187232dc2957ed116a735b26d00ea (sibling observe; this worker did not re-md5)
+DAEMON_PID_CITE=1098 --id misterplex :3005 (parent restart after nofab; no MPX_FABRIC_DIRECT=1)
+DAEMON_931=SUPERSEDED (nofab SoC reboot)
+DAEMON_967_CLAIM=SUPERSEDED (R-glass-f NOT_SEEN; parent now 1098)
+ARM_REBUILD_THIS_WORKER=NO
+ARM_DEPLOY_THIS_WORKER=NO
+HOST_FIX_IN_27418723=UNVERIFIED (no unique string; not a deploy reason)
+X_N4_THIS_WORKER=NO
+
+Box already holds the exact ARM that L-n3-gate deployed, that the
+FABRIC=1 play started from, and that survived the L-n3-nofab named
+/bin/fpga reboot on disk. Redeploying 27418723 cannot change class
+NAMED_FPGA_THEN_REBOOT or PLAY_START_F2SDRAM_HANG.
+Isolate MPX_FABRIC_DIRECT=0 was NOT completed (play never started;
+named load rebooted ~27s). That isolate is ENV on existing 27418723
+anyway — not a rebuild. Do not scp. Do not kill 1098.
+
+Soft-skip ≠ PASS. BUILD_OK ≠ unique-24. DEPLOY=NO ≠ product PASS.
+RCA_OK ≠ ARM redeploy. ISOLATE_ENV ≠ rebuild. NOFAB ≠ ARM bounce.
+X-n4 launch ≠ ARM deploy. Did not invent pfps.
+
+================================================================
+DELIVERABLE (required tokens)
+================================================================
+DEPLOY=NO
+unique24=FAIL
+on-box=local 274187232dc2957ed116a735b26d00ea
+did not scp/kill 1098
+nofab named-/bin/fpga reboot is not an ARM redeploy reason this tick
+isolate FABRIC=0 NOT done; if later, it is env on existing 27418723
+
+================================================================
+CONSTRAINTS (honored)
+================================================================
+- Did not scp / rsync misterplexd.
+- Did not run scripts/deploy_misterplexd.sh.
+- Did not kill daemon 1098 (or 967 / 931 / 3096 / 1564 / supervise).
+- Did not change 1098 env / restart / bounce.
+- Did not make / arm-plexd / ARM toolchain.
+- ZERO Quartus / QSF / store edit / load_core / /bin/fpga / menu / play.
+- Did not leave d191 as Plex.rbf.
+- Did not write PHASE_BACKLOG essays / Memory/lab/status cards.
+- Did not start a second L-n3-gate / second n3 /bin/fpga / X-n4.
+- unique-24 NOT claimed. Did not invent pfps.
+
+================================================================
+1) PIN — box already 27418723 (cite; do not scp)
+================================================================
+Assigned this ticket: box **274187232dc2957ed116a735b26d00ea**.
+Do not scp. Do not rebuild. Do not kill 1098.
+
+This worker has no exec/ssh. Did not take a new md5sum. Pins below are
+cited, not re-run here. Do not invent a fresh live md5.
+
+A) L-n3-gate 03:45Z already built+deployed it:
+     PRESENT_BANK md5=3bf0696cc0d6d3fe4f140d25a23a6b62 (R-host-d191)
+     MAKE_ARM_PLEXD_RC=0
+     LOCAL_ARM_MD5=274187232dc2957ed116a735b26d00ea
+     ONBOX_ARM_MD5=274187232dc2957ed116a735b26d00ea
+     ARM_STRINGS=d1910177 YES; 0fc77c10 YES; Plex.720p24 YES
+     DEPLOY_ARM=YES (stop-TERM scp start --name MiSTerPlex --id misterplex :3005)
+     PRE_PLAY_DAEMON_PID=3096 (stopped before /bin/fpga)
+     Restore daemon then: pid=931 --id misterplex --conf (NOT misterplex-t7)
+     Cite: /tmp/misterplex-agent-L-n3-gate.txt
+           /tmp/misterplexd.t7gate-d1910177.log  ARM_ONBOX=27418723
+
+B) Disk pin survived nofab reboot (R-glass-f live ssh):
+     Pre-reboot 04:04:52Z pid=931 BIN+exe 274187232dc2957ed116a735b26d00ea
+       size 13040732 mtime 2026-08-13 22:37:16 -0500
+     Post-reboot 04:05:32Z–04:07:16Z: daemon ABSENT; disk STILL
+       /media/fat/misterplex/bin/misterplexd
+       md5 274187232dc2957ed116a735b26d00ea size 13040732
+     local build/arm/misterplexd same md5 (observe only)
+     Cite: /tmp/misterplex-agent-R-glass-f.txt
+
+C) Parent restart after nofab (not this worker):
+     TICK=04:12Z daemon=1098:3005 RESTARTED (was DOWN) BIN=27418723
+     R-glass-g: DAEMON_WAS_DOWN; parent started pid=1098 :3005; ARM 27418723
+     Prior claim daemon 967 (loop 04:07Z) NOT_SEEN by R-glass-f; SUPERSEDED.
+     Cite: /tmp/misterplex-loop-status.txt
+           /tmp/misterplex-agent-R-glass-g.txt
+           /tmp/misterplex-agent-bucket.json  arm_deploy=NO daemon=1098:3005
+
+D) Local needles last taken R-arm-f 04:10Z (rg; no md5sum):
+     path: build/arm/misterplexd  PRESENT
+     needle d1910177 / 0fc77c10 / Plex.720p24 / MPX_FABRIC_DIRECT / fabric_direct=
+     BINARY_MATCH. Agrees L-n3-gate ARM_STRINGS.
+     This worker did not re-md5 / re-strings. Binary not rebuilt here.
+     Do not scp to "confirm".
+
+PIN_27418723_ONBOX: YES (cited; R-glass-f disk post-reboot + parent 04:12Z).
+PIN_27418723_LIVE_EXE: YES pid=1098 (cited parent + R-glass-g; not re-md5 here).
+PIN_27418723_LOCAL: YES cited MATCH (L-n3-gate / R-glass-f / R-arm-f).
+PIN_6214f775_NOW: SUPERSEDED. Do not invent it live.
+PIN_931_NOW: SUPERSEDED (nofab reboot). Do not kill a dead pid.
+
+================================================================
+2) Why nofab named-/bin/fpga reboot is NOT an ARM redeploy
+================================================================
+L-n3-nofab (parent 04:07Z / 04:12Z; no /tmp/misterplex-agent-L-n3-nofab.txt):
+  SSH timeout after /bin/fpga named d191; SoC reboot uptime~27s;
+  play never started; Plex.rbf stayed 07f54d9f; FPGA restore True480;
+  isolate FABRIC=0 NOT done.
+  R-nofab-hv: PLAY_RAN=NO pfps=NONE unique24=FAIL.
+  R-glass-f: reboot ~04:05:06Z uptime 25.83s; 931 gone.
+  R-fpga-rca: R-reboot-rca “not /bin/fpga-alone” SUPERSEDED for a
+    SECOND named d191 load. m0 idle PLXD publish after /bin/fpga
+    (bank_mbox_req=1) is a live suspect without host play.
+
+(1) Same bytes already on disk before and after that load.
+    Disk ARM 27418723 at R-glass-f pre+post reboot. Scp of the same
+    md5 cannot change a hang that fires on named bitstream load
+    before play / before a new daemon env. That is thrash (L1: pair
+    the artifact you hold; L46 analog: do not thrash to buy fps).
+
+(2) Isolate FABRIC=0 never ran — so there is no “missing binary”
+    that would have made isolate succeed.
+    Compile default is already OFF (fpga_spi.hpp L18–20;
+    media_player.cpp L41–43 / fabricDirectWanted L60–69).
+    Makefile does not -DMPX_FABRIC_DIRECT=1.
+    A rebuild to “default 0” emits the same policy already in
+    27418723. Isolate is later PLAY env, not a binary delta.
+    Product 1098 is --id misterplex --conf (no MPX_FABRIC_DIRECT=1).
+    Do not export that env onto 1098. Do not bounce 1098 to “set 0”.
+
+(3) Named-load hang is host/RTL / bitstream class, not ARM identity.
+    First L-n3-gate: FPGA_NAMED_RC=0 SSH lived; play FABRIC=1 ~5s reboot
+    (R-reboot-rca PLAY_START_F2SDRAM_HANG).
+    Second L-n3-nofab: named /bin/fpga then SSH died; play never started.
+    R-fpga-rca: second named d191 load can reboot without host play.
+    Parent 04:12Z: do not /bin/fpga n3 again; RCA named-load hang.
+    ARM scp does not program the FPGA.
+
+(4) HOST_FIX is still the wrong class.
+    R-plxd-l4 BestEffort-if-L4-PLXD-empty is n2 presented=0 / 150 ms
+    spin. nofab never reached play/ACK/PLXD poll. HOST_FIX cannot be
+    shown to prevent named-load hang. HOST_FIX_IN_27418723 stays
+    UNVERIFIED. Do not rebuild to confirm. Do not scp.
+
+(5) unique24 is still FAIL with no sample.
+    Redeploy does not create a pfps number. Parent: do not invent
+    pfps; do not thrash n3 fpga.
+
+(6) Parent 04:13Z launching X-n4 is exclusive FPGA (store 36ed39ad
+    restore !rd_act on PLXJ+PLXD). Not an ARM rebuild. This worker
+    did not take exclusive. Do not mid-fit scp. Do not bounce 1098
+    while n4 may go LIVE.
+
+================================================================
+3) unique24=FAIL
+================================================================
+unique24=FAIL
+last_honest_pfps=NONE
+THIS_RUN_PFPS=NONE
+PLAY_RAN=NO
+ISOLATE_FABRIC0_DONE=NO
+PLAY_FAIL_CLASS=SOC_REBOOT / NAMED_FPGA_THEN_REBOOT + PLAY_START_F2SDRAM_HANG
+
+Do not quote stale T7b pfps=14.1 as this n3 gate.
+Do not quote n2 0fc presented=0 (PLXD absent after ACK 16:9) as a
+d191 score. n3 PLXD writer UNMEASURED on silicon (gate play died ~5s;
+nofab play never started; on-box t7 log wiped).
+
+Honest files (all pfps=NONE for d191):
+  /tmp/misterplex-agent-L-n3-gate.txt          UNIQUE24_FAIL PLAY_RAN=NO
+  /tmp/pfps-720p24-live-gate-d1910177.txt      pfps=NONE GATE=FAIL
+  /tmp/misterplexd.t7gate-d1910177.log         PLAY_RAN=NO ONBOX_T7 ABSENT
+  /tmp/misterplex-agent-R-nofab-hv.txt         nofab PLAY_RAN=NO isolate NOT done
+  /tmp/misterplex-agent-R-fpga-rca.txt         second named load reboot
+  parent TICK=04:12Z / 04:13Z                  unique24=FAIL pfps=NONE
+
+PLAY_RC / pfps not taken this worker. Soft-skip ≠ PASS.
+BUILD_OK + named sidecar + ARM pin ≠ unique-24.
+24 Hz beam ≠ 24 unique fps. Chevron ≠ unique-24.
+RCA_OK ≠ unique-24. ISOLATE_ENV ≠ unique-24. X-n4 launch ≠ unique-24.
+
+================================================================
+4) WHAT WAS NOT DONE
+================================================================
+- scp / rsync / deploy_misterplexd.sh
+- kill / bounce / supervise restart (1098 / 967 / 931 / 3096 / 1564)
+- change 1098 env (MPX_FABRIC_DIRECT or otherwise)
+- make arm-plexd / ARM toolchain
+- Quartus / named-load / load_core / menu / run_720p24 / play / X-n4
+- measure unique-24 / invent pfps
+- claim HOST_FIX_IN_27418723=YES (no unique needle)
+- claim 6214f775 or 931 still live
+- overwrite lab Plex.rbf
+- PHASE_BACKLOG essays / Memory/lab/status cards
+
+================================================================
+EVIDENCE
+================================================================
+- this report: /tmp/misterplex-agent-R-arm-g.txt
+- store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-arm-g.txt
+- parent: /tmp/misterplex-loop-status.txt
+    TICK=04:12Z spawn R-arm-g; daemon=1098 BIN=27418723 unique24=FAIL
+    TICK=04:13Z exclusive=launching X-n4; unique24=FAIL (observe)
+- bucket: /tmp/misterplex-agent-bucket.json  tick 04:12Z arm_deploy=NO
+- L-n3-gate (DEPLOY_ARM 27418723 then SOC_REBOOT on play):
+    /tmp/misterplex-agent-L-n3-gate.txt
+    /tmp/pfps-720p24-live-gate-d1910177.txt
+    /tmp/misterplexd.t7gate-d1910177.log
+- nofab harvest (named /bin/fpga then reboot; isolate NOT done):
+    /tmp/misterplex-agent-R-nofab-hv.txt
+    /tmp/misterplex-agent-R-fpga-rca.txt
+    /tmp/misterplex-agent-R-glass-f.txt   disk 27418723 survived; 931 dead
+    /tmp/misterplex-agent-R-glass-g.txt   parent started 1098; ARM 27418723
+- prior ARM hold (do not fight):
+    /tmp/misterplex-agent-R-arm-f.txt     DEPLOY=NO 931 (pre-nofab)
+    /tmp/misterplex-agent-R-arm-e.txt     DEPLOY=NO 27418723
+- env/compile default OFF:
+    arm/misterplexd/fpga_spi.hpp L18–20
+    arm/misterplexd/media_player.cpp L41–69, L985–987, L1185–1190
+    Makefile L641 comment only (standalone R1 does not set the flag)
+- header pin cite-only (not a deploy reason):
+    host/libmisterplex/present_bank.hpp L105–113 d1910177
+    /tmp/misterplex-agent-R-host-d191.txt  header 3bf0696c
+- HOST_FIX cite-only (not a deploy reason this tick):
+    /tmp/misterplex-agent-R-plxd-l4.txt
+- n3 BUILD_OK: /tmp/misterplex-agent-M-fitmon-n3.txt
+               /tmp/misterplex-agent-R-n3-verify.txt
+- siblings this wave:
+    /tmp/misterplex-agent-R-fit-g.txt     FIT_GO=NO (pre X-n4 restamp)
+    /tmp/misterplex-agent-R-aspect-g.txt  aspect not this class
+- case law: docs/LESSONS.md L1 (pair the artifact you hold);
+            L46 (do not thrash to buy fps)
+
+BACKLOG_STATUS_SUGGESTION:
+  R-arm-g DONE. DEPLOY=NO. unique24=FAIL.
+  Box already 274187232dc2957ed116a735b26d00ea (disk survived nofab;
+  live exe cited pid=1098 after parent restart).
+  Did not scp. Did not rebuild. Did not kill 1098.
+  L-n3-nofab named-/bin/fpga reboot (~27s, PLAY_RAN=NO) is not an
+  ARM redeploy reason. Isolate FABRIC=0 NOT done; if parent later
+  isolates, it is ENV on existing 27418723 (compile default already 0).
+  Do not change 1098 env. Do not second n3 /bin/fpga this worker.
+  Parent 04:13Z X-n4 launch is exclusive FPGA, not ARM.
+  P3-720P24 stays IN_PROGRESS / unique-24 FAIL / pfps=NONE.
+  Soft-skip ≠ PASS.
+
+BLOCKERS:
+  unique24=FAIL (pfps NONE; PLAY_RAN=NO; isolate FABRIC=0 NOT done;
+  n3 PLXD writer unmeasured).
+  This worker had no exec/ssh — on-box pin is cited from R-glass-f
+  (disk post-reboot) + parent 04:12Z + R-glass-g (pid 1098), not
+  independently re-md5'd here.
+  HOST_FIX_IN_27418723 UNVERIFIED — do not invent YES; do not
+  rebuild to confirm.
+  Named-load hang (R-fpga-rca) blocks a second n3 /bin/fpga; not
+  unblocked by ARM bounce.
+  Isolate play is PARENT later only after named-load RCA — not this
+  worker, not a scp.
+)

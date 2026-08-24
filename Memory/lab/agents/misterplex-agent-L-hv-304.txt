@@ -1,0 +1,133 @@
+WORKER=L-hv-304
+ROLE=HARVEST ONLY
+UTC=2026-08-14T02:58Z
+UTC_FIRST_PS=2026-08-14T02:54:42Z
+UTC_AFTER_WAIT=2026-08-14T02:56:21Z
+UTC_BOX_PIN=2026-08-14T02:58:28Z
+REPO_SOT=/home/shawn/Projects/MisterPlex-wt-480p-lessons
+GOAL=harvest live/hung gate pid 304633 (run_720p24_live_gate.sh 15, PLEX_720P24_RBF=Plex.720p24.0fc77c10.rbf)
+ZERO_QUARTUS=YES
+NO_SECOND_GATE=YES
+NO_MENU=YES NO_LOAD_CORE=YES NO_PLAY=YES
+NO_KILL=YES
+NO_OVERWRITE_PLEX_RBF=YES
+NO_CARDS=YES
+NO_INVENT_PFPS=YES
+
+# --- VERDICT ---
+VERDICT=FAIL
+UNIQUE24=FAIL
+UNIQUE24_PASS=NO
+PID_304633_STILL_LIVE=NO
+HUNG_AFTER_90S_WAIT=NO
+HUNG_CLASS=HUNG_MISTER_CMD / GPI31_MENU
+LAST_HONEST_PFPS=NONE
+PFPS=NONE
+PLAY_RC=NONE
+ACK=NONE
+frames=NONE
+presented=NONE
+hw_fps=NONE
+drops=NONE
+GLASS_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+NAMED_0FC_PRESENT=YES
+CORENAME=Plex
+RBFNAME=Plex
+DAEMON_ID_MISTERPLEX_3005=NO @ 02:58:28Z (this pin)
+SOFT_SKIP_NE_PASS=YES
+BUILD_OK_0FC_NE_UNIQUE24=YES
+
+# --- 1) pid 304633 ---
+FIRST_SEEN=2026-08-14T02:54:42Z
+  PID=304633 PPID=304621 ELAPSED=03:55 STAT=S
+  CMD=bash ./scripts/run_720p24_live_gate.sh 15
+  CHILD=sshpass 304647 -> ssh 304648 root@192.168.1.183
+    env J_RBF=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf
+        PRODUCT_RBF=/media/fat/_Utility/Plex.rbf
+        TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+    (this is the named-load / load_core remote block, not play-file, not score)
+WAIT=90s (02:54:42Z -> 02:56:21Z)
+AFTER_WAIT=DEAD  (ps -p 304633 empty; /proc/304633 gone)
+PARENT_304621=GONE
+KILLED_BY_THIS_WORKER=NO  (ZERO kill; parent did not authorize)
+run_720p24_live_gate.sh after wait=not running
+
+# --- 2) leftover ssh 303277 SWAP_DONE=1 ---
+FIRST_SEEN=2026-08-14T02:54:42Z
+  PID=303277 PPID=1750 ELAPSED=06:36 STAT=S
+  sshpass+ssh root@192.168.1.183 SWAP_DONE=1 DAEMON_STOPPED=0
+  (EXIT-trap restore class from prior gate; not 304633's child)
+AFTER_WAIT=DEAD
+KILLED_BY_THIS_WORKER=NO
+
+# --- 3) this-run score ---
+SCORE=/tmp/pfps-720p24-live-gate.txt
+SCORE_MTIME=2026-08-13 21:22:13.952174351 -0500 = 2026-08-14T02:22:13Z
+SCORE_CUTOFF=2026-08-14T02:50:00Z
+SCORE_THIS_RUN=NO  (mtime 02:22Z < 02:50Z — STALE; do not quote as 0fc/304633)
+T7GATE_LOCAL=/tmp/misterplexd.t7gate.log mtime=2026-08-13 21:22:13.885174494 -0500 STALE size=1287
+LAST_HONEST_PFPS=NONE
+# stale body is L-n-gate2 / cc9dbd74 PLAY_RC=1 ACK=NO pfps=NONE GATE=FAIL — NOT this run.
+unique-24 FAIL (this-run pfps is not ≥23.9; there is no this-run pfps).
+
+# --- 4) read-only box AFTER wait (this worker, 02:58:28Z) ---
+# first attempt ~02:58:01Z: ssh ConnectTimeout → Connection timed out (box busy;
+# sibling 307778 /bin/fpga+play ssh 307782 LIVE). Retry 02:58:28Z OK.
+PLEX_RBF=/media/fat/_Utility/Plex.rbf
+PLEX_RBF_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+MATCH_WANT_07F54D9F=YES
+PLEX_RBF_IS_0FC=NO
+TRUE480_BAK=/media/fat/_Utility/Plex.true480.07f54d9f.rbf
+TRUE480_BAK_MD5=07f54d9f8f0eda2fe75d9cc314f6de54
+NAMED=/media/fat/_Utility/Plex.720p24.0fc77c10.rbf PRESENT
+NAMED_MD5=0fc77c10f47a33d5e4379fe129658e93
+CORENAME=Plex
+RBFNAME=Plex
+NAME_PIN_L4=NO  (RBFNAME is Plex, not Plex.720p24*)
+DAEMON_PS_THIS_PIN=NONE  (ps|grep misterplexd empty; SSH_RC=1 from grep)
+LISTEN_3005_THIS_PIN=UNCONFIRMED (command aborted after empty daemon grep)
+# contemporaneous sibling pins (same tick; not invented):
+#   R-daemon-ro2 02:55:56Z: pid 15069 --id misterplex --port 3005 LISTEN 0.0.0.0:3005
+#   R-glass-ro 02:55:54Z: same daemon; Plex.rbf 07f54d9f; CORENAME/RBFNAME=Plex
+#   sibling 307778 then soft-stopped daemons before /bin/fpga named 0fc (not this worker)
+
+# --- class (304633) ---
+# 304633 start ~02:50:47Z (etime 03:55 at 02:54:42Z).
+# scripts/run_720p24_live_gate.sh named-load:
+#   load_core /media/fat/menu.rbf then load_core $J_RBF (0fc77c10)
+# R-cmd-hang newest /tmp/mister-main.n2gate.log mtime 02:50:55Z:
+#   Core path: /media/fat/menu.rbf
+#   GPI[31]==1. FPGA is uninitialized or incompatible core loaded.
+#   Quitting. Bye bye...
+# Same class as 301328 HUNG_MISTER_CMD / GPI31: Main quits; FIFO has no reader;
+# 304633 sat ~4–5 min on the load_core ssh (15s play budget) then vanished
+# without writing SCORE. Play never ran. Stamp Plex.720p24.0fc77c10 never landed.
+
+# --- observed sibling (NOT this harvest; do not score as 304633) ---
+# After 304633 died: /tmp/l-n2-copy-gate.sh 306313 + ssh 306617 seen by R-glass-ro
+# ~02:55:53Z; GONE by 02:56:21Z.
+# At 02:57–02:58Z grok pid 307778/307782 is a SECOND play (/bin/fpga named 0fc +
+# play-file). This worker did not start it and did not kill it.
+# Any later score mtime > 02:50Z from 307778 is NOT 304633.
+
+# --- what this worker did NOT do ---
+# no run_720p24_live_gate.sh; no menu; no load_core; no play-file;
+# no kill 304633/303277/307778; no overwrite Plex.rbf; ZERO Quartus; no cards.
+
+BACKLOG_SUGGEST=P3-720P24 stays IN_PROGRESS / unique-24 FAIL.
+  Harvest 304633: DEAD after 90s wait; LAST_HONEST_PFPS=NONE; unique-24 FAIL.
+  Class HUNG_MISTER_CMD / GPI31_MENU (same as 301328). Glass stays 07f54d9f.
+  Named 0fc sidecar present. Do not invent pfps. Do not second-gate.
+  Do not leave 0fc as Plex.rbf.
+
+BLOCKERS=named load_core menu.rbf while FPGA uninit → GPI[31]==1 → Main quit
+  → MiSTer_cmd FIFO hang → play never starts. 304633 died without a score.
+
+EVIDENCE:
+  /tmp/misterplex-agent-L-hv-304.txt
+  /tmp/pfps-720p24-live-gate.txt (STALE 02:22Z — not this run)
+  /tmp/misterplexd.t7gate.log (STALE 02:22Z)
+  this-worker box pin 02:58:28Z md5 Plex.rbf=07f54d9f* named 0fc present
+  /tmp/misterplex-agent-R-cmd-hang.txt (n2gate.log 02:50:55Z GPI31_MENU)
+  /tmp/misterplex-agent-L-n2-gate.txt (prior 301328 same class)
+  /tmp/misterplex-loop-status.txt TICK=02:54Z

@@ -1,0 +1,347 @@
+# misterplex agent R-fit-g
+Date: 2026-08-14T04:15Z
+Worker: R-fit-g
+Tree: /home/shawn/Projects/MisterPlex-wt-480p-lessons
+Branch: lessons/true480-720p24
+HEAD: 0e49a68 (cite R-fit-e / R-arm-g; this worker did not re-read packed-refs)
+Report: /tmp/misterplex-agent-R-fit-g.txt
+Store: /home/shawn/Projects/MisterPlex/Memory/lab/agents/misterplex-agent-R-fit-g.txt
+Role: exclusive hold after L-n3-nofab — FIT_GO=NO; do not start Quartus;
+      n4 rd_act still host-first blocked (isolate FABRIC_DIRECT=0 incomplete)
+
+Spawn: parent TICK=04:12Z spawned=R-nofab-hv R-glass-g R-arm-g R-fit-g R-fpga-rca R-aspect-g
+Ticket: Exclusive FREE. L-n3-nofab /bin/fpga named rebooted before play —
+        FABRIC_DIRECT=0 isolate incomplete. FIT_GO=NO. Do not start Quartus.
+        n4 rd_act still host-first blocked. Never PLEX_CLK_SYS_24.
+        unique24=FAIL pfps=NONE.
+
+ZERO Quartus this worker. No cards. No PHASE_BACKLOG write.
+Never PLEX_CLK_SYS_24. No /bin/fpga. No load_core. No play.
+Did not leave d191 as Plex.rbf. Did not invent pfps.
+Did not start X-n4. Did not edit store (sibling/parent 36ed39ad observed).
+Soft-skip ≠ PASS. BUILD_OK ≠ unique-24. 24 Hz beam ≠ 24 unique fps.
+ISOLATE_INCOMPLETE ≠ FIT_GO. STORE_PATCH ≠ BUILD_OK. WIRING ≠ exclusive LIVE.
+
+================================================================
+VERDICT
+================================================================
+FIT_GO=NO
+EXCLUSIVE_START=NO
+unique24=FAIL
+pfps=NONE
+last_honest_pfps=NONE
+PLAY_RAN=NO
+ISOLATE_FABRIC_DIRECT_0=INCOMPLETE
+N4_RDACT=HOST_FIRST_BLOCKED
+N4_WRAPPER=ABSENT
+N4_FIT_LOG=ABSENT
+X_N4_REPORT=ABSENT
+N4_BUILD_OK=NO (not claimed; no wrapper / no farm log / no X-n4)
+EXCLUSIVE_THIS_WORKER=NOT_TAKEN
+Quartus_this_worker=ZERO
+PLEX_CLK_SYS_24=NEVER
+READY_TO_DEPLOY=NO
+NEW_RBF=none
+n3=BUILD_OK d1910177 (already; unmeasured; do not /bin/fpga again)
+L-n3-gate=UNIQUE24_FAIL class=SOC_REBOOT PLAY_START_F2SDRAM_HANG PLAY_RAN=NO
+L-n3-nofab=UNIQUE24_FAIL /bin/fpga named then reboot ~27s PLAY_RAN=NO
+            isolate FABRIC=0 NOT done
+lab_glass=07f54d9f CORE=Plex daemon=1098 BIN=27418723
+HOLD_OK ≠ FIT_GO ≠ BUILD_OK ≠ T7 PASS ≠ unique-24
+ISOLATE_INCOMPLETE ≠ discriminator
+
+n3 already consumed the PLXD/kick sole (4a4fa085 / d1910177).
+L-n3-nofab was the host-first FABRIC_DIRECT=0 split. It rebooted
+after named /bin/fpga BEFORE play. Discriminator never ran.
+n4 restore of !rd_act stays blocked on that missing split.
+This worker does not start slot720p24n4.
+
+Parent restamp 04:13Z/04:14Z: exclusive=X-n4 wiring (farm FREE at 04:13Z);
+store claim 36ed39ad !rd_act+PLXD; next=n4 BUILD_OK then isolate play.
+Observed: live store D_IDLE/D_BURST_ISS now gate !rd_act_d2 (text).
+This worker did not land that patch, did not md5 it, did not launch
+the fit. Do not second Quartus. WIRING ≠ BUILD_OK.
+
+================================================================
+DELIVERABLE (required tokens)
+================================================================
+FIT_GO=NO
+EXCLUSIVE_START=NO
+unique24=FAIL
+pfps=NONE
+ISOLATE_FABRIC_DIRECT_0=INCOMPLETE
+N4_RDACT=HOST_FIRST_BLOCKED
+PLEX_CLK_SYS_24=NEVER
+
+================================================================
+1) Exclusive — this worker starts ZERO Quartus
+================================================================
+Spawn parent TICK=2026-08-14T04:12Z:
+  exclusive=FREE  FIT_GO=NO
+  X-n3=BUILD_OK d1910177 unmeasured
+  L-n3-nofab=UNIQUE24_FAIL /bin/fpga named then reboot ~27s PLAY_RAN=NO
+              isolate FABRIC=0 NOT done
+  unique24=FAIL last_honest_pfps=NONE
+  next=do not /bin/fpga n3 again; RCA named-load hang; n4 only after isolate exists
+  do_not=second Quartus; invent pfps; leave d191 as Plex.rbf; thrash n3 fpga; cards
+  spawned includes this worker with goal FIT_GO=NO
+
+This-tick exclusive pin (read-only; started ZERO Quartus / docker / farm):
+  R-glass-g 04:13:14Z local:
+    pgrep quartus_sh / quartus_map / quartus_fit / fit_slot720p24 / misterfpga-dev
+    → none (FREE)
+  /tmp/slot720p24n3-excl-local-post.txt   EMPTY (0 bytes)
+  /tmp/slot720p24n3-excl-remote-post.txt  NO_SLOT_LOCKS
+    farm store snapshot still 4a4fa085  MAGIC_D +0x128  (n3 POST; stale vs live WT)
+    farm QSF: #set PLEX_CLK_SYS_24=1 (commented)
+    farm compile L2126 Full Compilation successful 0e/56w
+  scripts/:
+    fit_slot720p24n3.sh EXISTS
+    fit_slot720p24n4.sh ABSENT
+    fit_slot720p24n2.sh / fit_slot720p24m2.sh historical
+  /tmp/plex_quartus_slot720p24n4.log     ABSENT
+  /tmp/misterplex-agent-X-n4.txt         ABSENT
+  /tmp/misterplex-FIT_GO-slot720p24n4.txt ABSENT
+  remote_out/slot720p24n4                not listed (n3 dir still the last farm out)
+
+Parent restamp TICK=04:13Z: exclusive=launching X-n4
+Parent restamp TICK=04:14Z: exclusive=X-n4 wiring (farm FREE at 04:13Z)
+  next=n4 BUILD_OK then /bin/fpga named + FABRIC_DIRECT=0 play + restore 07f54d9f
+  do_not=second Quartus
+THIS_WORKER did not start X-n4. WIRING without wrapper/log/report is not
+a LIVE sole this worker can consume. If X-n4 later takes farm, that is
+the one exclusive — do not start a second.
+
+Stale FIT_GO=YES files do not authorize n4:
+  /tmp/misterplex-FIT_GO-slot720p24k.txt  freeze sdram e909c667 ≠ live store
+  /tmp/misterplex-FIT_GO-slot720p24i.txt  consumed-i (fabric ports / ebfe4a12)
+
+================================================================
+2) L-n3-nofab — /bin/fpga named rebooted BEFORE play
+================================================================
+Isolate recipe (R-fab-hold / R-reboot-rca / R-rdact-note):
+  ONE /bin/fpga named d191 (not load_core; not run_720p24_live_gate.sh)
+  play MPX_FABRIC_DIRECT=0  → stick DMA + n3 PLXD WE, no m1 fabric copy
+  Discriminator:
+    lives   → fabric copy is a necessary conjunct (do not n4-blind-restore)
+    reboots → PLXD-without-rd_act alone can smash (then n4 may restore !rd_act)
+  Neither outcome is unique-24. Neither is this-worker FIT_GO=YES.
+
+What L-n3-nofab actually did (no /tmp/misterplex-agent-L-n3-nofab.txt):
+  Parent 04:07Z: SSH timeout after /bin/fpga named; SoC reboot uptime~27s;
+                 play never started; Plex.rbf stayed 07f54d9f;
+                 restored FPGA True480 RC=0 daemon 967 (967 NOT_SEEN by R-glass-f)
+  Parent 04:12Z: UNIQUE24_FAIL /bin/fpga named then reboot ~27s PLAY_RAN=NO
+                 isolate FABRIC=0 NOT done
+  R-nofab-hv:    FAIL unique24=FAIL pfps=NONE PLAY_RAN=NO
+                 isolate NOT completed. Do not second n3 fpga.
+  R-glass-f:     SOC_REBOOT_MIDTICK=YES ~04:05:06Z
+                 first post-reboot SSH 04:05:32Z uptime 25.83s
+                 daemon 931 gone; LISTEN_3005=NO; 967 NOT_SEEN
+                 Plex.rbf 07f54d9f all five pins; named d191 sidecar only
+  R-fpga-rca:    L-n3-gate /bin/fpga RC=0 SSH lived; play start ~5s reboot
+                 L-n3-nofab /bin/fpga named then SSH died; play never started
+                 “not /bin/fpga-alone” SUPERSEDED for a SECOND named d191 load
+                 m0 idle PLXD publish after /bin/fpga is a live suspect
+                 Do not /bin/fpga n3 again. Do not exclusive this tick.
+  R-aspect-g:    nofab: no play → sendSourceAspect never ran
+                 250ms ACK retry NOT this class
+  R-glass-g:     04:13Z glass still 07f54d9f; daemon 1098 :3005 parent-restart
+                 ENV_MPX=NONE on product daemon (FLAG_OFF)
+                 leftover run_720p24=NONE; SECOND_N3_FPGA=NO
+
+Therefore:
+  PLAY_RAN=NO on the isolate. No FABRIC_DIRECT=0 play log. No pfps.
+  Discriminator ABSENT. ISOLATE_FABRIC_DIRECT_0=INCOMPLETE.
+  Do not treat nofab reboot as “FLAG_OFF still reboots” (play never started).
+  Do not treat nofab reboot as “FLAG_OFF lives”. Soft-skip ≠ PASS.
+
+Contrast (do not collapse):
+  L-n3-gate  first named /bin/fpga RC=0 SSH lived; play FABRIC=1 ~5s reboot
+  L-n3-nofab second named /bin/fpga; SSH died; play never started ~27s
+  L-n2-gate  same /bin/fpga+FABRIC=1 play; SSH lived; ACK fail
+  j T7b      ddr_frame_store m0 + fabric; 212 frames; no reboot (not stick)
+
+Parent 04:12Z BAN: second_n3_fpga. Isolate cannot be retried this worker.
+Parent 04:14Z defers isolate until after a future n4 BUILD_OK — that is
+PARENT/X-n4, not a reason for this worker to start Quartus.
+
+================================================================
+3) n4 rd_act still host-first blocked
+================================================================
+Ticket bar (04:12Z): n4 only after isolate exists.
+R-rdact-note 04:08Z: FIT_GO=NO until FLAG_OFF play exists.
+  Named n3 delta (freeze 4a4fa085 / R-plxd-store):
+    D_IDLE issued PLXJ+PLXD WITHOUT !rd_act_d2
+    D_BURST_ISS drove those 1-beat WE even while rd_act_d2
+  Class: STICK_FULLFRAME_DMA + FABRIC_COPY + n3_PLXD_WE_INTERLEAVE
+  Restoring !rd_act without the split cannot tell fabric-copy vs PLXD-WE.
+
+ISOLATE still INCOMPLETE → N4_RDACT=HOST_FIRST_BLOCKED from this bar.
+
+Live WT store this tick (READ-ONLY; this worker EDIT=NO):
+  fpga/Plex_MiSTer/rtl/sdram_i420_store.sv
+  D_IDLE L857  if (!rd_act_d2 && source_aspect_mbox_req && !DDRAM_*)
+  D_IDLE L864  else if (!rd_act_d2 && bank_mbox_req && …)
+  D_BURST_ISS L913  if (!rd_act_d2 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE)
+  D_BURST_ISS L936  else if (rd_act_d2) abort to D_IDLE
+  Comment L854–856 names n3 interleave / HPS hang.
+  Parent/R-arm-g claim md5 36ed39ad. This worker did not recompute md5.
+  STORE_RDACT_RESTORED_TEXT=YES. MD5_THIS_WORKER=UNVERIFIED.
+  Do not mid-edit. Do not treat text restore as BUILD_OK / FIT_GO this worker.
+
+n3 BUILD_OK still the last intentional RBF (cited, not invented):
+  X-n3 / M-fitmon-n3 / R-n3-verify
+  RBF d19101778905687efb869fbf3ac8628b
+  FIT_WRAPPER_RC=0 wall=390s DEPLOY=NO LAB_PLEX_RBF_TOUCHED=NO
+  clk_sys asked 20.0 Fmax 89.36 (NOT 24)
+  remote_out/slot720p24n3/Plex.720p24.d1910177.rbf present
+BUILD_OK d191 ≠ unique-24. Refit 4a4fa085 is not a new reason.
+A !rd_act restore would be NEW vs 4a4fa085 only AFTER isolate exists
+AND parent FIT_GO=YES AND exclusive FREE AND a wrapper exists.
+This worker has none of: isolate result, FIT_GO=YES file for n4,
+fit_slot720p24n4.sh, or authorization to start Quartus.
+
+================================================================
+4) Never PLEX_CLK_SYS_24 (L52 / L53)
+================================================================
+Product Plex.qsf this tick (read-only):
+  L82–89  DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480 PLEX_PRESENT_TRUE_480P=1
+  L96–99  720p macros COMMENTED
+  PLEX_CLK_SYS_24 token ABSENT (rg 0 hits on Plex.qsf)
+  clk_sys stays 20 MHz on product glass
+  n3 wrapper trap restored b049c94413d02a1a63dfd03b7234d7e1 (R-qsf-hold)
+
+n3 overlay (not live product):
+  Plex_720p24n2.qsf L123  #set_global_assignment … "PLEX_CLK_SYS_24=1"
+  farm QSF same comment (excl-remote-post)
+  n3 STA clk_sys asked 20.0 not 24
+
+This worker did not enable PLEX_CLK_SYS_24, did not raise product
+clk_sys, did not touch Plex.qsf / Plex_720p24*.qsf.
+
+================================================================
+5) unique24=FAIL  pfps=NONE
+================================================================
+No scored unique-fps on d1910177. Do not invent ≥23.9.
+
+This-run d191 files (all NONE):
+  /tmp/pfps-720p24-live-gate-d1910177.txt
+    PLAY_RC=NONE ACK=NO frames=NONE presented=NONE pfps=NONE
+    GATE=FAIL UNIQUE24=FAIL PLAY_FAIL_CLASS=SOC_REBOOT
+  /tmp/misterplexd.t7gate-d1910177.log
+    worker SUMMARY only; on-box t7gate ABSENT after wipe
+  L-n3-nofab: no pfps file; PLAY_RAN=NO; isolate log ABSENT
+
+Do not quote leftovers as this-run d191:
+  n2 copy 0fc77c10  presented=0 pfps=NONE (PLXD absent — why n3 exists)
+  first L4 n2       PLAY_RC=1 pfps=NONE probe-class
+  j T7b             pfps=14.1 FAIL B_NO_GAIN_15 (other RBF; not last_honest)
+
+Parent 04:12Z / 04:14Z: unique24=FAIL pfps=NONE
+R-nofab-hv / R-glass-g / R-arm-g / R-fpga-rca / R-aspect-g: same FAIL/NONE
+
+unique24=FAIL until a measured pfps ≥ 23.9 on BUILD_OK+DEPLOY named RBF.
+Soft-skip ≠ PASS. BUILD_OK+named-sidecar ≠ unique-24.
+SOC_REBOOT ≠ unique-24. PLAY_RAN=NO ≠ T7 PASS.
+ISOLATE_INCOMPLETE ≠ unique-24.
+
+================================================================
+6) Constraints honored
+================================================================
+- ZERO Quartus / docker fit / farm sole / fit_slot720p24*.sh
+- EXCLUSIVE_START=NO  FIT_GO not flipped
+- Did not write /tmp/misterplex-FIT_GO-slot720p24n4.txt
+- Did not create scripts/fit_slot720p24n4.sh
+- Never PLEX_CLK_SYS_24 (product QSF token ABSENT; n2 overlay L123 commented)
+- Did not overwrite lab Plex.rbf (07f54d9f stays product glass)
+- Did not load_core / /bin/fpga / menu / play / HDMI grab
+- Did not second n3 /bin/fpga (BAN; first+second named loads already rebooted)
+- Did not leave d191 as Plex.rbf
+- Did not invent BUILD_OK / unique-24 / pfps≥23.9 / isolate PASS
+- Did not write cards / PHASE_BACKLOG
+- Did not mid-fit edit store (observed sibling 36ed39ad text; EDIT=NO)
+- Did not start X-n4 / second exclusive
+- Did not kill daemon 1098 / 931
+- HOLD_OK ≠ gate
+
+================================================================
+7) MUST NOT
+================================================================
+- start slot720p24n4 / n3-refit / slot720p24k / slot720p24sdram from this worker
+- second Quartus while parent wires X-n4
+- flip FIT_GO=YES without isolate result + parent FIT_GO=YES
+- treat SOC_REBOOT / incomplete isolate / store-text restore as a sole this worker
+- enable PLEX_CLK_SYS_24 / raise product clk_sys (stay 20 MHz)
+- deploy / promote 4f16350e (or 752fc1e2 / 0bcc6081 / 17dd3b56)
+- leave d1910177 as /media/fat/_Utility/Plex.rbf
+- invent pfps / unique-24 from BUILD_OK or named sidecar
+- /bin/fpga named n3 again / load_core named / run_720p24_live_gate.sh (exports =1)
+- thrash 07f54d9f / d191 / 0fc77c10
+
+================================================================
+EVIDENCE
+================================================================
+/tmp/misterplex-agent-R-fit-g.txt                    this pin
+/tmp/misterplex-loop-status.txt                      TICK=04:12Z FREE; 04:14Z X-n4 wiring
+/tmp/misterplex-agent-bucket.json                    TICK=04:12Z R-fit-g goal FIT_GO=NO
+/tmp/misterplex-agent-R-nofab-hv.txt                 isolate NOT completed; pfps=NONE
+/tmp/misterplex-agent-R-fpga-rca.txt                 second named load reboot; FIT_GO=NO
+/tmp/misterplex-agent-R-fab-hold.txt                 next play FLAG_OFF; isolate not this worker
+/tmp/misterplex-agent-R-rdact-note.txt               n4 blocked until isolate exists
+/tmp/misterplex-agent-R-reboot-rca.txt               PLAY_START_F2SDRAM_HANG (first play)
+/tmp/misterplex-agent-L-n3-gate.txt                  first named: FPGA_RC=0 then play reboot
+/tmp/misterplex-agent-L-n3-nofab.txt                 ABSENT
+/tmp/misterplex-agent-R-glass-f.txt                  reboot ~04:05:06Z uptime 25.83s; 07f54d9f
+/tmp/misterplex-agent-R-glass-g.txt                  04:13Z exclusive FREE; glass 07f54d9f; 1098
+/tmp/misterplex-agent-R-arm-g.txt                    DEPLOY=NO; observe 04:13Z launching X-n4
+/tmp/misterplex-agent-R-aspect-g.txt                 no play → aspect never ran
+/tmp/misterplex-agent-R-fit-e.txt                    prior HOLD_OK FIT_GO=NO
+/tmp/misterplex-agent-R-fit-hold-n3.txt              earlier HOLD_OK same bar
+/tmp/misterplex-agent-X-n3.txt                       BUILD_OK d1910177
+/tmp/misterplex-agent-R-n3-verify.txt                independent BUILD_OK PASS
+/tmp/plex_quartus_slot720p24n3.log                   FIT_WRAPPER_RC=0; qsf restore b049c944
+/tmp/slot720p24n3-excl-local-post.txt                EMPTY
+/tmp/slot720p24n3-excl-remote-post.txt               NO_SLOT_LOCKS + farm MAGIC_D
+/tmp/pfps-720p24-live-gate-d1910177.txt              pfps=NONE GATE=FAIL
+/tmp/misterplex-FIT_GO-slot720p24k.txt               STALE e909c667
+/tmp/misterplex-FIT_GO-slot720p24n4.txt              ABSENT
+/tmp/plex_quartus_slot720p24n4.log                   ABSENT
+/tmp/misterplex-agent-X-n4.txt                       ABSENT
+scripts/fit_slot720p24n4.sh                          ABSENT
+fpga/Plex_MiSTer/rtl/sdram_i420_store.sv             !rd_act restored text L857/L864/L913
+fpga/Plex_MiSTer/Plex.qsf                            TRUE_480P; PLEX_CLK_SYS_24 ABSENT
+fpga/Plex_MiSTer/Plex_720p24n2.qsf                   L123 #set PLEX_CLK_SYS_24
+fpga/Plex_MiSTer/remote_out/slot720p24n3/Plex.720p24.d1910177.rbf
+docs/LESSONS.md                                      L52/L53 clk_sys
+
+================================================================
+BACKLOG STATUS SUGGESTION (not written to PHASE_BACKLOG)
+================================================================
+R-fit-g HOLD_OK. FIT_GO=NO. EXCLUSIVE_START=NO.
+P3-720P24 stays IN_PROGRESS / unique-24 FAIL / pfps=NONE / PLAY_RAN=NO.
+L-n3-nofab isolate FABRIC_DIRECT=0 INCOMPLETE (named /bin/fpga rebooted
+before play). n4 rd_act still host-first blocked from the 04:12Z bar.
+Do not mark unique-24. Do not treat BUILD_OK or store-text restore as T7.
+07f54d9f stays product Plex.rbf. Named d191 sidecar only.
+Do not /bin/fpga n3 again. Do not second Quartus.
+If parent X-n4 takes the sole, this worker stays out.
+Soft-skip ≠ PASS.
+
+================================================================
+BLOCKERS
+================================================================
+None for this hold (this worker starts nothing).
+FIT_GO blocker = isolate FABRIC_DIRECT=0 INCOMPLETE
+                 + no parent FIT_GO=YES for this worker
+                 + fit_slot720p24n4.sh ABSENT
+                 + X-n4 report ABSENT
+n4 rd_act blocker = same isolate (host-first). Store-text restore
+  (parent 36ed39ad) is not a measured split and is not this worker's sole.
+unique-24 blocker = no measured pfps on d191 (PLAY_RAN=NO; pfps=NONE;
+  on-box t7 wiped; nofab play never started). Last honest this-run = NONE.
+Do not invent ≥23.9. Do not second n3 /bin/fpga. Do not second Quartus.
+
+HOLD_OK. FIT_GO=NO. EXCLUSIVE_START=NO. unique24=FAIL. pfps=NONE.
+ISOLATE_FABRIC_DIRECT_0=INCOMPLETE. N4_RDACT=HOST_FIRST_BLOCKED.
+PLEX_CLK_SYS_24=NEVER.
