@@ -1,8 +1,7 @@
 `default_nettype none
 // H.264 CABAC arithmetic decoder. Target: 1 regular/bypass/terminate bin per
 // clk_sys cycle when the bit FIFO has ≥8 bits (renorm is a barrel shift).
-// Context init uses the spec clip formula; m/n tables are a compact default
-// (not the full Table 9-12 dump). Round-trip tests share this formula.
+// Context init uses ITU-T H.264 Tables 9-12..9-24 m/n (ctxIdx 0..459).
 //
 // FAULT_SKIP_RENORM: never shift range/offset. FAULT_BAD_INIT: invert valMPS.
 module h264_cabac (
@@ -20,6 +19,7 @@ module h264_cabac (
 
 	output reg         init_busy,
 	output reg         init_done,
+	output wire        primed,
 
 	input  wire        dec_req,
 	input  wire [8:0]  ctx_idx,          // 0..459
@@ -213,22 +213,37 @@ module h264_cabac (
 		end
 	endfunction
 
-	// Compact m/n: I uses n=64-ctx[5:0] style mid; P offsets by init_idc.
+	// ITU-T H.264 Tables 9-12..9-24. Packed {m,n} ROM: I, P/B init_idc 0/1/2.
+`include "h264_cabac_init_rom.svh"
+	function automatic [10:0] mn_addr;
+		input [8:0] ctx;
+		input [1:0] stype;
+		input [1:0] iidc;
+		reg [8:0] c;
+		reg [10:0] base;
+		begin
+			c = (ctx > 9'd459) ? 9'd459 : ctx;
+			if (stype == 2'd0) base = 11'd0;
+			else if (iidc == 2'd0) base = 11'd460;
+			else if (iidc == 2'd1) base = 11'd920;
+			else base = 11'd1380;
+			mn_addr = base + {2'b00, c};
+		end
+	endfunction
 	function automatic signed [7:0] init_m;
 		input [8:0] ctx;
 		input [1:0] stype;
 		input [1:0] iidc;
 		begin
-			init_m = (stype == 2'd0) ? 8'sd0 :
-			         (iidc == 2'd0) ? 8'sd0 :
-			         (iidc == 2'd1) ? 8'sd1 : 8'sd2;
-			if (ctx[0]) init_m = -init_m;
+			init_m = CABAC_MN_ROM[mn_addr(ctx, stype, iidc)][15:8];
 		end
 	endfunction
 	function automatic signed [7:0] init_n;
 		input [8:0] ctx;
+		input [1:0] stype;
+		input [1:0] iidc;
 		begin
-			init_n = 8'sd64 - $signed({2'b0, ctx[5:0]});
+			init_n = CABAC_MN_ROM[mn_addr(ctx, stype, iidc)][7:0];
 		end
 	endfunction
 
@@ -243,7 +258,7 @@ module h264_cabac (
 		reg [5:0] pstate;
 		begin
 			pre = ($signed({{8{init_m(ctx, stype, iidc)[7]}}, init_m(ctx, stype, iidc)}) * $signed({10'd0, qp})) >>> 4;
-			pre = pre + {{8{init_n(ctx)[7]}}, init_n(ctx)};
+			pre = pre + {{8{init_n(ctx, stype, iidc)[7]}}, init_n(ctx, stype, iidc)};
 			if (pre < 16'sd1) pre = 16'sd1;
 			if (pre > 16'sd126) pre = 16'sd126;
 			preu = pre[6:0];
@@ -285,6 +300,7 @@ module h264_cabac (
 	wire       bypass_bit = fifo_msbs(fifo_pushed, n_pushed, 4'd1)[0];
 
 	assign bit_ready = (fifo_n_r < 5'd16);
+	assign primed = primed_r;
 	assign dbg_range = range_r;
 	assign dbg_offset = offset_r[8:0];
 	assign dbg_fifo_count = fifo_n_r;
@@ -398,6 +414,344 @@ module h264_cabac_ueg0_pref (
 );
 	assign pref_ones = (abs_m1 >= 5'd14) ? 5'd14 : abs_m1;
 	assign pref_zero = (abs_m1 < 5'd14);
+endmodule
+
+// residual_block_cabac for 4x4 (ctxBlockCat 0..4). Drives one h264_cabac engine.
+// FAULT_FORCE_CBF0: treat coded_block_flag as 0 after the bin is consumed.
+module h264_cabac_residual_4x4 (
+	input  wire        clk,
+	input  wire        reset,
+	input  wire        start,
+	input  wire [2:0]  cat,          // 0=I16DC 1=I16AC 2=luma4x4 3=chrDC 4=chrAC
+	input  wire        cbf_nA,
+	input  wire        cbf_nB,
+	input  wire [4:0]  max_coeff,    // 16 / 15 / 4
+	input  wire        skip_cbf,
+
+	output reg         dec_req,
+	output reg  [8:0]  ctx_idx,
+	output reg         bypass,
+	output reg         terminate,
+	input  wire        dec_valid,
+	input  wire        dec_bin,
+	input  wire        primed,
+	input  wire        init_busy,
+
+	output reg         done,
+	output reg         ok,
+	output reg  signed [15:0] coeff [0:15],
+	output reg  [4:0]  total_coeff
+);
+	localparam [3:0]
+		S_IDLE  = 4'd0,
+		S_CBF   = 4'd1,
+		S_SIG   = 4'd2,
+		S_LAST  = 4'd3,
+		S_ABS0  = 4'd4,
+		S_ABSGT = 4'd5,
+		S_UEG1  = 4'd6,
+		S_UEG2  = 4'd7,
+		S_SIGN  = 4'd8,
+		S_NEXT  = 4'd9,
+		S_DONE  = 4'd10;
+
+	function automatic [8:0] cbf_base;
+		input [2:0] c;
+		begin
+			case (c)
+			3'd0: cbf_base = 9'd85;
+			3'd1: cbf_base = 9'd89;
+			3'd2: cbf_base = 9'd93;
+			3'd3: cbf_base = 9'd97;
+			default: cbf_base = 9'd101;
+			endcase
+		end
+	endfunction
+	function automatic [8:0] sig_base;
+		input [2:0] c;
+		begin
+			case (c)
+			3'd0: sig_base = 9'd105;
+			3'd1: sig_base = 9'd120;
+			3'd2: sig_base = 9'd134;
+			3'd3: sig_base = 9'd149;
+			default: sig_base = 9'd152;
+			endcase
+		end
+	endfunction
+	function automatic [8:0] last_base;
+		input [2:0] c;
+		begin
+			case (c)
+			3'd0: last_base = 9'd166;
+			3'd1: last_base = 9'd181;
+			3'd2: last_base = 9'd191;
+			3'd3: last_base = 9'd206;
+			default: last_base = 9'd209;
+			endcase
+		end
+	endfunction
+	function automatic [8:0] abs_base;
+		input [2:0] c;
+		begin
+			case (c)
+			3'd0: abs_base = 9'd227;
+			3'd1: abs_base = 9'd237;
+			3'd2: abs_base = 9'd247;
+			3'd3: abs_base = 9'd257;
+			default: abs_base = 9'd266;
+			endcase
+		end
+	endfunction
+	function automatic [3:0] lvl1_ctx;
+		input [2:0] n;
+		begin
+			case (n)
+			3'd0: lvl1_ctx = 4'd1;
+			3'd1: lvl1_ctx = 4'd2;
+			3'd2: lvl1_ctx = 4'd3;
+			3'd3: lvl1_ctx = 4'd4;
+			default: lvl1_ctx = 4'd0;
+			endcase
+		end
+	endfunction
+	function automatic [3:0] gt1_ctx;
+		input [2:0] n;
+		begin
+			case (n)
+			3'd4: gt1_ctx = 4'd6;
+			3'd5: gt1_ctx = 4'd7;
+			3'd6: gt1_ctx = 4'd8;
+			3'd7: gt1_ctx = 4'd9;
+			default: gt1_ctx = 4'd5;
+			endcase
+		end
+	endfunction
+	function automatic [2:0] trans0;
+		input [2:0] n;
+		begin
+			case (n)
+			3'd0: trans0 = 3'd1;
+			3'd1: trans0 = 3'd2;
+			3'd2: trans0 = 3'd3;
+			3'd3: trans0 = 3'd3;
+			3'd4: trans0 = 3'd4;
+			3'd5: trans0 = 3'd5;
+			3'd6: trans0 = 3'd6;
+			default: trans0 = 3'd7;
+			endcase
+		end
+	endfunction
+	function automatic [2:0] trans1;
+		input [2:0] n;
+		begin
+			case (n)
+			3'd0, 3'd1, 3'd2, 3'd3: trans1 = 3'd4;
+			3'd4: trans1 = 3'd5;
+			3'd5: trans1 = 3'd6;
+			default: trans1 = 3'd7;
+			endcase
+		end
+	endfunction
+
+	reg [3:0]  st;
+	reg [4:0]  scan_i;
+	reg [15:0] sig_m;
+	reg [2:0]  node_ctx;
+	reg [4:0]  abs_acc;
+	reg [4:0]  ueg_j;
+	reg [4:0]  ueg_left;
+	reg [15:0] abs_full;
+	reg [2:0]  cat_r;
+	reg [4:0]  max_r;
+	reg        nA_r, nB_r;
+	reg        want_bin;
+
+	integer ci;
+
+	wire [3:0] scan4 = scan_i[3:0];
+	wire hold_req = want_bin && primed && !init_busy && !reset;
+	// Bubble one cycle after dec_valid so ctx_idx is the registered next
+	// state, not the consume-cycle state (engine has 1-cycle latency).
+
+	always @* begin
+		dec_req = 1'b0;
+		ctx_idx = 9'd0;
+		bypass = 1'b0;
+		terminate = 1'b0;
+		if (hold_req && !dec_valid) begin
+			dec_req = 1'b1;
+			case (st)
+			S_CBF:  ctx_idx = cbf_base(cat_r) + {7'd0, nA_r} + {6'd0, nB_r, 1'b0};
+			S_SIG:  ctx_idx = sig_base(cat_r) + {4'd0, scan_i};
+			S_LAST: ctx_idx = last_base(cat_r) + {4'd0, scan_i};
+			S_ABS0: ctx_idx = abs_base(cat_r) + {5'd0, lvl1_ctx(node_ctx)};
+			S_ABSGT: ctx_idx = abs_base(cat_r) + {5'd0, gt1_ctx(node_ctx)};
+			S_UEG1, S_UEG2, S_SIGN: bypass = 1'b1;
+			default: dec_req = 1'b0;
+			endcase
+		end
+	end
+
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			st <= S_IDLE;
+			ok <= 1'b0;
+			total_coeff <= 5'd0;
+			want_bin <= 1'b0;
+			scan_i <= 5'd0;
+			sig_m <= 16'd0;
+			node_ctx <= 3'd0;
+			abs_acc <= 5'd0;
+			ueg_j <= 5'd0;
+			ueg_left <= 5'd0;
+			abs_full <= 16'd0;
+			cat_r <= 3'd2;
+			max_r <= 5'd16;
+			nA_r <= 1'b0;
+			nB_r <= 1'b0;
+			for (ci = 0; ci < 16; ci = ci + 1)
+				coeff[ci] <= 16'sd0;
+		end else if (start) begin
+			st <= skip_cbf ? S_SIG : S_CBF;
+			ok <= 1'b0;
+			total_coeff <= 5'd0;
+			want_bin <= 1'b1;
+			scan_i <= 5'd0;
+			sig_m <= 16'd0;
+			node_ctx <= 3'd0;
+			abs_acc <= 5'd0;
+			ueg_j <= 5'd0;
+			ueg_left <= 5'd0;
+			abs_full <= 16'd0;
+			cat_r <= cat;
+			max_r <= (max_coeff == 5'd0) ? 5'd16 : max_coeff;
+			nA_r <= cbf_nA;
+			nB_r <= cbf_nB;
+			for (ci = 0; ci < 16; ci = ci + 1)
+				coeff[ci] <= 16'sd0;
+		end else if (st == S_DONE) begin
+			done <= 1'b1;
+			want_bin <= 1'b0;
+			st <= S_IDLE;
+		end else if (st == S_NEXT) begin
+			if (scan_i == 5'd0) begin
+				st <= S_IDLE;
+				done <= 1'b1;
+				ok <= 1'b1;
+				want_bin <= 1'b0;
+			end else begin
+				scan_i <= scan_i - 5'd1;
+				if (sig_m[scan_i[3:0] - 4'd1]) begin
+					st <= S_ABS0;
+					want_bin <= 1'b1;
+				end else
+					want_bin <= 1'b0;
+			end
+		end else if (dec_valid && want_bin) begin
+			case (st)
+			S_CBF: begin
+`ifdef H264_CABAC_RES_FAULT_FORCE_CBF0
+				st <= S_IDLE;
+				done <= 1'b1;
+				ok <= 1'b1;
+				want_bin <= 1'b0;
+`else
+				if (!dec_bin) begin
+					st <= S_IDLE;
+					done <= 1'b1;
+					ok <= 1'b1;
+					want_bin <= 1'b0;
+				end else if (max_r <= 5'd1) begin
+					sig_m[0] <= 1'b1;
+					scan_i <= 5'd0;
+					st <= S_ABS0;
+				end else begin
+					scan_i <= 5'd0;
+					st <= S_SIG;
+				end
+`endif
+			end
+			S_SIG: begin
+				if (dec_bin) begin
+					sig_m[scan4] <= 1'b1;
+					st <= S_LAST;
+				end else if (scan_i >= (max_r - 5'd2)) begin
+					sig_m[max_r[3:0] - 4'd1] <= 1'b1;
+					scan_i <= max_r - 5'd1;
+					st <= S_ABS0;
+				end else
+					scan_i <= scan_i + 5'd1;
+			end
+			S_LAST: begin
+				if (dec_bin) begin
+					st <= S_ABS0;
+				end else if (scan_i >= (max_r - 5'd2)) begin
+					sig_m[max_r[3:0] - 4'd1] <= 1'b1;
+					scan_i <= max_r - 5'd1;
+					st <= S_ABS0;
+				end else begin
+					scan_i <= scan_i + 5'd1;
+					st <= S_SIG;
+				end
+			end
+			S_ABS0: begin
+				if (!dec_bin) begin
+					node_ctx <= trans0(node_ctx);
+					abs_full <= 16'd1;
+					st <= S_SIGN;
+				end else begin
+					node_ctx <= trans1(node_ctx);
+					abs_acc <= 5'd2;
+					st <= S_ABSGT;
+				end
+			end
+			S_ABSGT: begin
+				if (!dec_bin) begin
+					abs_full <= {11'd0, abs_acc};
+					st <= S_SIGN;
+				end else if (abs_acc >= 5'd14) begin
+					ueg_j <= 5'd0;
+					st <= S_UEG1;
+				end else
+					abs_acc <= abs_acc + 5'd1;
+			end
+			S_UEG1: begin
+				if (dec_bin && (ueg_j < 5'd23))
+					ueg_j <= ueg_j + 5'd1;
+				else if (ueg_j == 5'd0) begin
+					abs_full <= 16'd15;
+					st <= S_SIGN;
+				end else begin
+					abs_full <= 16'd1;
+					ueg_left <= ueg_j;
+					st <= S_UEG2;
+				end
+			end
+			S_UEG2: begin
+				if (ueg_left <= 5'd1) begin
+					abs_full <= ({abs_full[14:0], 1'b0} + {15'd0, dec_bin}) + 16'd14;
+					st <= S_SIGN;
+				end else begin
+					abs_full <= {abs_full[14:0], 1'b0} + {15'd0, dec_bin};
+					ueg_left <= ueg_left - 5'd1;
+				end
+			end
+			S_SIGN: begin
+				if (dec_bin)
+					coeff[scan4] <= -$signed(abs_full);
+				else
+					coeff[scan4] <= $signed(abs_full);
+				total_coeff <= total_coeff + 5'd1;
+				st <= S_NEXT;
+				want_bin <= 1'b0;
+			end
+			default: begin
+			end
+			endcase
+		end
+	end
 endmodule
 
 `default_nettype wire

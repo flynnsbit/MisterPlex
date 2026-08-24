@@ -22,6 +22,7 @@ module decode_stub_recon_tb #(
 );
 	wire signed [15:0] coeff16 [0:15];
 	wire signed [15:0] luma4x4_zero [0:15][0:15];
+	wire signed [15:0] chroma4x4_zero [0:7][0:15];
 	genvar i;
 	genvar j;
 	generate
@@ -29,6 +30,11 @@ module decode_stub_recon_tb #(
 			assign coeff16[i] = FAULT_PRED_ONLY ? 16'sd0 : coeff[i];
 			for (j = 0; j < 16; j = j + 1) begin : g_luma4
 				assign luma4x4_zero[i][j] = 16'sd0;
+			end
+		end
+		for (i = 0; i < 8; i = i + 1) begin : g_chr4
+			for (j = 0; j < 16; j = j + 1) begin : g_c
+				assign chroma4x4_zero[i][j] = 16'sd0;
 			end
 		end
 	endgenerate
@@ -71,6 +77,8 @@ module decode_stub_recon_tb #(
 		.residual_coeff(coeff16),
 		.luma4x4_present(1'b0),
 		.luma4x4_coeff(luma4x4_zero),
+		.chroma4x4_present(1'b0),
+		.chroma4x4_coeff(chroma4x4_zero),
 		.recon_sig(recon_sig),
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),

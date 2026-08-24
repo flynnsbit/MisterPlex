@@ -298,6 +298,8 @@ module stream_path #(
 	wire sl_luma4x4_blocks_valid;
 	wire sl_luma4x4_blocks_present;
 	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
+	wire sl_chroma4x4_present;
+	wire signed [15:0] sl_chroma4x4_coeff [0:7][0:15];
 	wire [3:0] sl_first_mb_cbp_luma;
 	wire [1:0] sl_first_mb_cbp_chroma;
 	wire [15:0] sl_first_mb_residual_bit_offset;
@@ -353,6 +355,8 @@ module stream_path #(
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
 		.first_luma4x4_coeff(sl_luma4x4_coeff),
+		.first_chroma4x4_present(sl_chroma4x4_present),
+		.first_chroma4x4_coeff(sl_chroma4x4_coeff),
 		.first_mb_cbp_luma(sl_first_mb_cbp_luma),
 		.first_mb_cbp_chroma(sl_first_mb_cbp_chroma),
 		.first_mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
@@ -1062,6 +1066,8 @@ module stream_path #(
 			.residual_coeff(sl_place_coeff),
 			.luma4x4_present(sl_luma4x4_blocks_present),
 			.luma4x4_coeff(sl_luma4x4_coeff),
+			.chroma4x4_present(sl_chroma4x4_present),
+			.chroma4x4_coeff(sl_chroma4x4_coeff),
 			.recon_sig(recon_sig),
 			.recon_dbg(recon_dbg),
 			.recon_dbg_valid(recon_dbg_valid),

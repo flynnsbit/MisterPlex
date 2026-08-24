@@ -1,5 +1,6 @@
 #include "Vh264_cabac_tb.h"
 #include "verilated.h"
+#include "h264_cabac_init_tables.h"
 
 #include <array>
 #include <cstdint>
@@ -48,15 +49,15 @@ int transLps(int s) {
 }
 
 int8_t initM(int ctx, int stype, int iidc) {
-    int8_t m = (stype == 0) ? 0 : (iidc == 0 ? 0 : (iidc == 1 ? 1 : 2));
-    if (ctx & 1) m = static_cast<int8_t>(-m);
-    return m;
+    return h264_cabac_init::m(ctx, stype, iidc);
 }
-int8_t initN(int ctx) { return static_cast<int8_t>(64 - (ctx & 63)); }
+int8_t initN(int ctx, int stype, int iidc) {
+    return h264_cabac_init::n(ctx, stype, iidc);
+}
 
 Ctx initCtx(int ctx, int qp, int stype, int iidc, bool badInit) {
     int pre = (static_cast<int>(initM(ctx, stype, iidc)) * qp) >> 4;
-    pre += initN(ctx);
+    pre += initN(ctx, stype, iidc);
     if (pre < 1) pre = 1;
     if (pre > 126) pre = 126;
     Ctx c;

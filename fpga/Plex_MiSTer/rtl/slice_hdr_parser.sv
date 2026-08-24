@@ -65,6 +65,8 @@ module slice_hdr_parser (
 	output reg         first_luma4x4_blocks_valid,
 	output reg         first_luma4x4_blocks_present,
 	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
+	output reg         first_chroma4x4_present,
+	output reg signed [15:0] first_chroma4x4_coeff [0:7][0:15],
 	output wire [3:0]  first_mb_cbp_luma,
 	output wire [1:0]  first_mb_cbp_chroma,
 	// Absolute RBSP bit offset where first-MB residual/skip syntax begins.
@@ -152,9 +154,10 @@ module slice_hdr_parser (
 		FULL_FAIL  = 3'd4;
 	reg [2:0] full_st;
 	reg full_res_start;
-	reg [3:0] full_block_idx;
+	reg [4:0] full_block_idx;
 	reg [9:0] full_bit_off;
 	reg [4:0] full_tc [0:15];
+	reg [4:0] full_chr_tc [0:7];
 	wire full_res_busy;
 	wire full_res_done;
 	wire full_res_ok;
@@ -430,18 +433,49 @@ module slice_hdr_parser (
 	endfunction
 
 	function automatic full_block_coded;
-		input [3:0] idx;
+		input [4:0] idx;
 		begin
-			full_block_coded = full_luma_cbp[idx[3:2]];
+			if (idx < 5'd16)
+				full_block_coded = full_luma_cbp[idx[3:2]];
+			else
+				full_block_coded = (first_mb_cbp_chroma == 2'd2);
 		end
 	endfunction
+	function automatic [2:0] full_chr_token_table;
+		input [2:0] cidx;
+		reg [1:0] bx;
+		reg [1:0] by;
+		reg left_avail;
+		reg top_avail;
+		reg [4:0] left_tc;
+		reg [4:0] top_tc;
+		reg [4:0] nc;
+		begin
+			bx = {1'b0, cidx[0]};
+			by = {1'b0, cidx[1]};
+			left_avail = (bx != 2'd0);
+			top_avail = (by != 2'd0);
+			left_tc = left_avail ? full_chr_tc[{cidx[2], cidx[1], 1'b0}] : 5'd0;
+			top_tc = top_avail ? full_chr_tc[{cidx[2], 1'b0, cidx[0]}] : 5'd0;
+			nc = (left_avail && top_avail) ? ((left_tc + top_tc + 5'd1) >> 1) :
+			     left_avail ? left_tc :
+			     top_avail ? top_tc : 5'd0;
+			full_chr_token_table = (nc < 5'd2) ? 3'd0 :
+			                       (nc < 5'd4) ? 3'd1 :
+			                       (nc < 5'd8) ? 3'd2 : 3'd3;
+		end
+	endfunction
+	wire [2:0] full_tok_sel = (full_block_idx < 5'd16) ?
+		full_coeff_token_table(full_block_idx[3:0]) :
+		full_chr_token_table(full_block_idx[2:0]);
+	wire [4:0] full_max_sel = (full_block_idx < 5'd16) ? 5'd16 : 5'd15;
 
 	h264_cavlc_residual_block #(.MAX_BYTES(MAXB)) full_luma_residual (
 		.clk(clk),
 		.reset(reset || cap_clear),
 		.start(full_res_start),
-		.coeff_token_table(full_coeff_token_table(full_block_idx)),
-		.max_coeff(5'd16),
+		.coeff_token_table(full_tok_sel),
+		.max_coeff(full_max_sel),
 		.bit_offset_start(full_bit_off),
 		.bit_len({3'd0, len} << 3),
 		.rbsp(mem),
@@ -585,41 +619,64 @@ module slice_hdr_parser (
 		first_luma4x4_blocks_valid <= 1'b0;
 		if (reset || cap_clear) begin
 			full_st <= FULL_IDLE;
-			full_block_idx <= 4'd0;
+			full_block_idx <= 5'd0;
 			full_bit_off <= 10'd0;
 			first_luma4x4_blocks_present <= 1'b0;
+			first_chroma4x4_present <= 1'b0;
 			for (bi = 0; bi < 16; bi = bi + 1) begin
 				full_tc[bi] <= 5'd0;
 				for (ci = 0; ci < 16; ci = ci + 1)
 					first_luma4x4_coeff[bi][ci] <= 16'sd0;
 			end
+			for (bi = 0; bi < 8; bi = bi + 1) begin
+				full_chr_tc[bi] <= 5'd0;
+				for (ci = 0; ci < 16; ci = ci + 1)
+					first_chroma4x4_coeff[bi][ci] <= 16'sd0;
+			end
 		end else begin
 			case (full_st)
 			FULL_IDLE: begin
 				if (full_start_req) begin
-					full_block_idx <= 4'd0;
+					full_block_idx <= 5'd0;
 					full_bit_off <= full_start_bit;
 					first_luma4x4_blocks_present <= 1'b0;
+					first_chroma4x4_present <= 1'b0;
 					for (bi = 0; bi < 16; bi = bi + 1) begin
 						full_tc[bi] <= 5'd0;
 						for (ci = 0; ci < 16; ci = ci + 1)
 							first_luma4x4_coeff[bi][ci] <= 16'sd0;
+					end
+					for (bi = 0; bi < 8; bi = bi + 1) begin
+						full_chr_tc[bi] <= 5'd0;
+						for (ci = 0; ci < 16; ci = ci + 1)
+							first_chroma4x4_coeff[bi][ci] <= 16'sd0;
 					end
 					full_st <= FULL_START;
 				end
 			end
 			FULL_START: begin
 				if (!full_block_coded(full_block_idx)) begin
-					full_tc[full_block_idx] <= 5'd0;
-					for (ci = 0; ci < 16; ci = ci + 1)
-						first_luma4x4_coeff[full_block_idx][ci] <= 16'sd0;
-					if (full_block_idx == 4'd15) begin
+					if (full_block_idx < 5'd16) begin
+						full_tc[full_block_idx[3:0]] <= 5'd0;
+						for (ci = 0; ci < 16; ci = ci + 1)
+							first_luma4x4_coeff[full_block_idx[3:0]][ci] <= 16'sd0;
+					end else begin
+						full_chr_tc[full_block_idx[2:0]] <= 5'd0;
+						for (ci = 0; ci < 16; ci = ci + 1)
+							first_chroma4x4_coeff[full_block_idx[2:0]][ci] <= 16'sd0;
+					end
+					if (full_block_idx == 5'd15) begin
 						first_luma4x4_blocks_present <= 1'b1;
 						first_luma4x4_blocks_valid <= 1'b1;
+						if (first_mb_cbp_chroma == 2'd2)
+							full_block_idx <= 5'd16;
+						else
+							full_st <= FULL_DONE;
+					end else if (full_block_idx == 5'd23) begin
+						first_chroma4x4_present <= 1'b1;
 						full_st <= FULL_DONE;
-					end else begin
-						full_block_idx <= full_block_idx + 4'd1;
-					end
+					end else
+						full_block_idx <= full_block_idx + 5'd1;
 				end else begin
 					full_res_start <= 1'b1;
 					full_st <= FULL_WAIT;
@@ -628,19 +685,37 @@ module slice_hdr_parser (
 			FULL_WAIT: begin
 				if (full_res_done) begin
 					if (!full_res_ok) begin
-						first_luma4x4_blocks_present <= 1'b0;
-						full_st <= FULL_FAIL;
+						if (full_block_idx < 5'd16) begin
+							first_luma4x4_blocks_present <= 1'b0;
+							full_st <= FULL_FAIL;
+						end else begin
+							first_chroma4x4_present <= 1'b0;
+							full_st <= FULL_DONE;
+						end
 					end else begin
-						full_tc[full_block_idx] <= full_res_tc;
 						full_bit_off <= full_res_bit_end;
-						for (ci = 0; ci < 16; ci = ci + 1)
-							first_luma4x4_coeff[full_block_idx][ci] <= full_res_coeff[ci];
-						if (full_block_idx == 4'd15) begin
+						if (full_block_idx < 5'd16) begin
+							full_tc[full_block_idx[3:0]] <= full_res_tc;
+							for (ci = 0; ci < 16; ci = ci + 1)
+								first_luma4x4_coeff[full_block_idx[3:0]][ci] <= full_res_coeff[ci];
+						end else begin
+							full_chr_tc[full_block_idx[2:0]] <= full_res_tc;
+							for (ci = 0; ci < 16; ci = ci + 1)
+								first_chroma4x4_coeff[full_block_idx[2:0]][ci] <= full_res_coeff[ci];
+						end
+						if (full_block_idx == 5'd15) begin
 							first_luma4x4_blocks_present <= 1'b1;
 							first_luma4x4_blocks_valid <= 1'b1;
+							if (first_mb_cbp_chroma == 2'd2) begin
+								full_block_idx <= 5'd16;
+								full_st <= FULL_START;
+							end else
+								full_st <= FULL_DONE;
+						end else if (full_block_idx == 5'd23) begin
+							first_chroma4x4_present <= 1'b1;
 							full_st <= FULL_DONE;
 						end else begin
-							full_block_idx <= full_block_idx + 4'd1;
+							full_block_idx <= full_block_idx + 5'd1;
 							full_st <= FULL_START;
 						end
 					end

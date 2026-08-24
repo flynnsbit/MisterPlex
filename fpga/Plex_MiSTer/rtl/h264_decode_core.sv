@@ -373,6 +373,7 @@ module h264_decode_core #(
     reg [4:0]  p16_res_block_idx;
     reg        p16_rbsp_ready_r;
     reg        cavlc_start_r;
+    reg        cabac_res_start_r;
     reg        p16_iq_start_r;
     // Latched CBP: uncoded 8x8 groups must not consume CAVLC bits.
     reg [3:0]  p16_cbp_l_r;
@@ -1095,37 +1096,51 @@ module h264_decode_core #(
     wire signed [15:0] cavlc_level_dbg [0:15];
     wire [3:0]  cavlc_run_dbg [0:15];
     wire signed [15:0] cavlc_dequant_coeff [0:15];
+    wire signed [15:0] p16_entropy_coeff [0:15];
+    wire cabac_res_done, cabac_res_ok;
+    wire [4:0] cabac_res_tc;
+    wire signed [15:0] cabac_res_coeff [0:15];
+    wire use_cabac_res = ENABLE_CABAC && pps_entropy_cabac;
+    wire p16_entropy_done = use_cabac_res ? cabac_res_done : cavlc_done;
+    wire p16_entropy_ok = use_cabac_res ? cabac_res_ok : cavlc_ok;
+    wire [4:0] p16_entropy_tc = use_cabac_res ? cabac_res_tc : cavlc_total_coeff;
     genvar cavlc_coeff_i;
     generate
         for (cavlc_coeff_i = 0; cavlc_coeff_i < 16; cavlc_coeff_i = cavlc_coeff_i + 1) begin : g_cavlc_dequant_coeff
+            assign p16_entropy_coeff[cavlc_coeff_i] =
+                use_cabac_res ? cabac_res_coeff[cavlc_coeff_i] : cavlc_coeff[cavlc_coeff_i];
 `ifdef H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF
             if (cavlc_coeff_i == 0)
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[1];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = p16_entropy_coeff[1];
             else if (cavlc_coeff_i == 1)
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[0];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = p16_entropy_coeff[0];
             else
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = p16_entropy_coeff[cavlc_coeff_i];
 `elsif H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF
             if (cavlc_coeff_i == 0)
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? cavlc_coeff[1] : cavlc_coeff[0];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? p16_entropy_coeff[1] : p16_entropy_coeff[0];
             else if (cavlc_coeff_i == 1)
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? cavlc_coeff[0] : cavlc_coeff[1];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? p16_entropy_coeff[0] : p16_entropy_coeff[1];
             else
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = p16_entropy_coeff[cavlc_coeff_i];
 `else
-            assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
+            assign cavlc_dequant_coeff[cavlc_coeff_i] = p16_entropy_coeff[cavlc_coeff_i];
 `endif
         end
     endgenerate
     wire cabac_init_busy, cabac_init_done, cabac_bit_ready, cabac_dec_valid, cabac_dec_bin, cabac_dec_stall;
+    wire cabac_primed;
     wire [8:0] cabac_dbg_range, cabac_dbg_offset;
     wire [4:0] cabac_dbg_fifo;
     wire [4:0] cabac_ueg0_ones;
     wire cabac_ueg0_zero;
+    wire cabac_res_dec_req;
+    wire [8:0] cabac_res_ctx;
+    wire cabac_res_bypass, cabac_res_term;
     generate
     if (ENABLE_CABAC) begin : g_cabac
         // Serial RBSP feed into the 16-bit CABAC bit FIFO (MSB first per byte).
-        // Syntax walker (dec_req) is still tied off; init + prime is the product hook.
+        // residual_block_cabac drives dec_req when pps_entropy_cabac=1.
         reg [9:0] cabac_bitn;
         wire cabac_slice = slice_start && pps_entropy_cabac;
         wire cabac_feed = pps_entropy_cabac && rbsp_window_valid && cabac_bit_ready &&
@@ -1133,6 +1148,12 @@ module h264_decode_core #(
         wire [5:0] cabac_byte_i = cabac_bitn[8:3];
         wire [2:0] cabac_bit_i = cabac_bitn[2:0];
         wire cabac_bit_in = rbsp_byte[cabac_byte_i][3'd7 - cabac_bit_i];
+        wire cabac_engine_req;
+`ifdef H264_CABAC_FAULT_TIE_DEC_REQ
+        assign cabac_engine_req = 1'b0;
+`else
+        assign cabac_engine_req = cabac_res_dec_req && pps_entropy_cabac;
+`endif
         always @(posedge clk) begin
             if (reset)
                 cabac_bitn <= 10'd0;
@@ -1153,16 +1174,39 @@ module h264_decode_core #(
             .bit_ready(cabac_bit_ready),
             .init_busy(cabac_init_busy),
             .init_done(cabac_init_done),
-            .dec_req(1'b0),
-            .ctx_idx(9'd0),
-            .bypass(1'b0),
-            .terminate(1'b0),
+            .primed(cabac_primed),
+            .dec_req(cabac_engine_req),
+            .ctx_idx(cabac_res_ctx),
+            .bypass(cabac_res_bypass),
+            .terminate(cabac_res_term),
             .dec_valid(cabac_dec_valid),
             .dec_bin(cabac_dec_bin),
             .dec_stall(cabac_dec_stall),
             .dbg_range(cabac_dbg_range),
             .dbg_offset(cabac_dbg_offset),
             .dbg_fifo_count(cabac_dbg_fifo)
+        );
+        h264_cabac_residual_4x4 u_cabac_res (
+            .clk(clk),
+            .reset(reset || slice_start),
+            .start(cabac_res_start_r),
+            .cat(p16_res_is_luma ? 3'd2 : (p16_res_is_chr_u || p16_res_is_chr_v) ? 3'd4 : 3'd2),
+            .cbf_nA(p16_nc_left_avail && (p16_nc_left_tc != 5'd0)),
+            .cbf_nB(p16_nc_above_avail && (p16_nc_above_tc != 5'd0)),
+            .max_coeff(p16_res_is_luma ? 5'd16 : 5'd15),
+            .skip_cbf(1'b0),
+            .dec_req(cabac_res_dec_req),
+            .ctx_idx(cabac_res_ctx),
+            .bypass(cabac_res_bypass),
+            .terminate(cabac_res_term),
+            .dec_valid(cabac_dec_valid),
+            .dec_bin(cabac_dec_bin),
+            .primed(cabac_primed),
+            .init_busy(cabac_init_busy),
+            .done(cabac_res_done),
+            .ok(cabac_res_ok),
+            .coeff(cabac_res_coeff),
+            .total_coeff(cabac_res_tc)
         );
         h264_cabac_ueg0_pref u_cabac_ueg0 (
             .abs_m1(cabac_dbg_fifo),
@@ -1173,6 +1217,7 @@ module h264_decode_core #(
         assign cabac_bit_ready = 1'b0;
         assign cabac_init_busy = 1'b0;
         assign cabac_init_done = 1'b0;
+        assign cabac_primed = 1'b0;
         assign cabac_dec_valid = 1'b0;
         assign cabac_dec_bin = 1'b0;
         assign cabac_dec_stall = 1'b0;
@@ -1181,6 +1226,17 @@ module h264_decode_core #(
         assign cabac_dbg_fifo = 5'd0;
         assign cabac_ueg0_ones = 5'd0;
         assign cabac_ueg0_zero = 1'b0;
+        assign cabac_res_done = 1'b0;
+        assign cabac_res_ok = 1'b0;
+        assign cabac_res_tc = 5'd0;
+        assign cabac_res_dec_req = 1'b0;
+        assign cabac_res_ctx = 9'd0;
+        assign cabac_res_bypass = 1'b0;
+        assign cabac_res_term = 1'b0;
+        genvar cri;
+        for (cri = 0; cri < 16; cri = cri + 1) begin : g_cabac_z
+            assign cabac_res_coeff[cri] = 16'sd0;
+        end
     end
     endgenerate
     // P16 residual CAVLC/IDCT only when ENABLE_INTER=1 (~2k+0.9k ALM).
@@ -1672,6 +1728,7 @@ module h264_decode_core #(
         p16_wr_en_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
+        cabac_res_start_r <= 1'b0;
         i16_nb_start_r <= 1'b0;
         intra_chroma_start_r <= 1'b0;
         i16_commit_r <= 1'b0;
@@ -1705,6 +1762,7 @@ module h264_decode_core #(
             p16_cbp_c_r <= 2'd0;
             p16_rbsp_ready_r <= 1'b0;
             cavlc_start_r <= 1'b0;
+            cabac_res_start_r <= 1'b0;
             p16_iq_start_r <= 1'b0;
             p16_tc_above_valid <= 1'b0;
             p16_tc_left_valid <= 1'b0;
@@ -2056,6 +2114,11 @@ module h264_decode_core #(
                             wb_state <= ST_P16_TAP_REQ;
                         end else
                             p16_res_block_idx <= p16_res_block_idx + 5'd1;
+                    end else if (use_cabac_res) begin
+                        if (cabac_primed && !cabac_init_busy) begin
+                            cabac_res_start_r <= 1'b1;
+                            wb_state <= ST_P16_RES_WAIT;
+                        end
                     end else begin
                         cavlc_start_r <= 1'b1;
                         wb_state <= ST_P16_RES_WAIT;
@@ -2063,7 +2126,7 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_WAIT: begin
-                if (cavlc_done) begin
+                if (p16_entropy_done) begin
                     p16_iq_start_r <= 1'b1;
                     wb_state <= ST_P16_IQ_WAIT;
                 end
@@ -2071,7 +2134,7 @@ module h264_decode_core #(
             ST_P16_IQ_WAIT: begin
                 if (p16_iq_done) begin
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                    if (cavlc_ok) begin
+                    if (p16_entropy_ok) begin
                         for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1) begin
                             if (p16_res_block_idx < P16_LUMA_RES_BLOCKS) begin
                                 if (!p16_drop_this_luma_residual)
@@ -2098,13 +2161,13 @@ module h264_decode_core #(
                     // Scan order guarantees left/above of later blocks already stored.
                     if (p16_res_is_luma) begin
                         p16_tc_cache[p16_res_block_idx[3:0]] <=
-                            cavlc_ok ? cavlc_total_coeff : 5'd0;
+                            p16_entropy_ok ? p16_entropy_tc : 5'd0;
                     end else if (p16_res_is_chr_u) begin
                         p16_tc_chr_u[p16_chr_blk] <=
-                            cavlc_ok ? cavlc_total_coeff : 5'd0;
+                            p16_entropy_ok ? p16_entropy_tc : 5'd0;
                     end else begin
                         p16_tc_chr_v[p16_chr_blk] <=
-                            cavlc_ok ? cavlc_total_coeff : 5'd0;
+                            p16_entropy_ok ? p16_entropy_tc : 5'd0;
                     end
 
                     if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
@@ -2129,16 +2192,17 @@ module h264_decode_core #(
                         p16_tc_chr_u_left[1]  <= p16_tc_chr_u[2'd3]; // (1,1)
                         p16_tc_chr_v_above[0] <= p16_tc_chr_v[2'd2]; // (0,1)
                         // V[3] is this block — use live total_coeff (not stale cache)
-                        p16_tc_chr_v_above[1] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
+                        p16_tc_chr_v_above[1] <= p16_entropy_ok ? p16_entropy_tc : 5'd0;
                         p16_tc_chr_v_left[0]  <= p16_tc_chr_v[2'd1]; // (1,0)
-                        p16_tc_chr_v_left[1]  <= cavlc_ok ? cavlc_total_coeff : 5'd0;
+                        p16_tc_chr_v_left[1]  <= p16_entropy_ok ? p16_entropy_tc : 5'd0;
                         p16_tc_chr_above_valid <= 1'b1;
                         p16_tc_chr_left_valid  <= 1'b1;
 
                         wb_state <= ST_P16_TAP_REQ;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
-                        p16_res_bit_offset_r <= cavlc_bit_offset_end;
+                        if (!use_cabac_res)
+                            p16_res_bit_offset_r <= cavlc_bit_offset_end;
                         wb_state <= ST_P16_RES_START;
                     end
                 end
@@ -2279,6 +2343,7 @@ module h264_decode_core #(
         |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         pps_entropy_cabac | cabac_init_busy | cabac_init_done | cabac_bit_ready |
+        cabac_primed | cabac_res_done | cabac_res_ok | |cabac_res_tc |
         cabac_dec_valid | cabac_dec_bin | cabac_dec_stall |
         |cabac_dbg_range | |cabac_dbg_offset | |cabac_dbg_fifo |
         |cabac_ueg0_ones | cabac_ueg0_zero |

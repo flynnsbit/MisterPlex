@@ -41,6 +41,8 @@ module decode_stub #(
 	// First-MB luma 4x4 CAVLC coeffs (scan order) for inter residual-add.
 	input  wire        luma4x4_present,
 	input  wire signed [15:0] luma4x4_coeff [0:15][0:15],
+	input  wire        chroma4x4_present,
+	input  wire signed [15:0] chroma4x4_coeff [0:7][0:15],
 
 	output reg  [7:0]  recon_sig,
 	output reg  [7:0]  recon_dbg,
@@ -111,11 +113,15 @@ module decode_stub #(
 	reg            pending_p_uses_sub_mb;
 	reg            pending_p_intra;
 	reg            luma4x4_present_r;
+	reg            chroma4x4_present_r;
 	reg signed [15:0] lat_luma4x4 [0:15][0:15];
+	reg signed [15:0] lat_chroma4x4 [0:7][0:15];
 	reg [15:0]     lat_slice_first_mb;
-	reg [3:0]      res_blk_r;
+	reg [4:0]      res_blk_r;
 	reg            inter_iq_start_r;
 	reg signed [15:0] lat_inter_res_y [0:255];
+	reg signed [15:0] lat_inter_res_u [0:63];
+	reg signed [15:0] lat_inter_res_v [0:63];
 	reg [7:0]      inter_recon_y [0:255];
 	reg [7:0]      inter_recon_u [0:63];
 	reg [7:0]      inter_recon_v [0:63];
@@ -557,6 +563,13 @@ module decode_stub #(
 			luma4x4_index_stub = {block[3:2], sample[3:2], block[1:0], sample[1:0]};
 		end
 	endfunction
+	function automatic [5:0] chroma4x4_index_stub;
+		input [1:0] block;
+		input [3:0] sample;
+		begin
+			chroma4x4_index_stub = {block[1], sample[3:2], block[0], sample[1:0]};
+		end
+	endfunction
 	function automatic signed [15:0] sat16_res;
 		input signed [28:0] v;
 		begin
@@ -571,7 +584,9 @@ module decode_stub #(
 	genvar iq_gi;
 	generate
 		for (iq_gi = 0; iq_gi < 16; iq_gi = iq_gi + 1) begin : gen_inter_iq_c
-			assign inter_iq_coeff[iq_gi] = lat_luma4x4[res_blk_r][iq_gi];
+			assign inter_iq_coeff[iq_gi] = (res_blk_r < 5'd16) ?
+				lat_luma4x4[res_blk_r[3:0]][iq_gi] :
+				lat_chroma4x4[res_blk_r[2:0]][iq_gi];
 		end
 	endgenerate
 	generate
@@ -611,8 +626,21 @@ module decode_stub #(
 				);
 			end
 			for (iq_gi = 0; iq_gi < 64; iq_gi = iq_gi + 1) begin : g_c
+`ifdef H264_INTER_RECON_FAULT_DROP_CHROMA
 				assign inter_recon_u_comb[iq_gi] = dpb_pred_u[iq_gi];
 				assign inter_recon_v_comb[iq_gi] = dpb_pred_v[iq_gi];
+`else
+				h264_inter_recon_add u_u (
+					.pred(dpb_pred_u[iq_gi]),
+					.residual(lat_inter_res_u[iq_gi]),
+					.recon(inter_recon_u_comb[iq_gi])
+				);
+				h264_inter_recon_add u_v (
+					.pred(dpb_pred_v[iq_gi]),
+					.residual(lat_inter_res_v[iq_gi]),
+					.recon(inter_recon_v_comb[iq_gi])
+				);
+`endif
 			end
 		end else begin : gen_inter_recon_pred
 			for (iq_gi = 0; iq_gi < 256; iq_gi = iq_gi + 1) begin : g_y
@@ -727,17 +755,23 @@ module decode_stub #(
 			pending_p_uses_sub_mb <= 0;
 			pending_p_intra <= 0;
 			luma4x4_present_r <= 0;
+			chroma4x4_present_r <= 0;
 			lat_slice_first_mb <= 0;
 			res_blk_r <= 0;
 			inter_iq_start_r <= 0;
 			for (luma4_i = 0; luma4_i < 16; luma4_i = luma4_i + 1)
 				for (luma4_j = 0; luma4_j < 16; luma4_j = luma4_j + 1)
 					lat_luma4x4[luma4_i][luma4_j] <= 16'sd0;
+			for (luma4_i = 0; luma4_i < 8; luma4_i = luma4_i + 1)
+				for (luma4_j = 0; luma4_j < 16; luma4_j = luma4_j + 1)
+					lat_chroma4x4[luma4_i][luma4_j] <= 16'sd0;
 			for (luma4_i = 0; luma4_i < 256; luma4_i = luma4_i + 1) begin
 				lat_inter_res_y[luma4_i] <= 16'sd0;
 				inter_recon_y[luma4_i] <= 8'd0;
 			end
 			for (luma4_i = 0; luma4_i < 64; luma4_i = luma4_i + 1) begin
+				lat_inter_res_u[luma4_i] <= 16'sd0;
+				lat_inter_res_v[luma4_i] <= 16'sd0;
 				inter_recon_u[luma4_i] <= 8'd0;
 				inter_recon_v[luma4_i] <= 8'd0;
 			end
@@ -843,9 +877,13 @@ module decode_stub #(
 				lat_p_intra  <= first_mb_intra;
 				lat_slice_first_mb <= first_mb_addr;
 				luma4x4_present_r <= luma4x4_present;
+				chroma4x4_present_r <= chroma4x4_present;
 				for (luma4_i = 0; luma4_i < 16; luma4_i = luma4_i + 1)
 					for (luma4_j = 0; luma4_j < 16; luma4_j = luma4_j + 1)
 						lat_luma4x4[luma4_i][luma4_j] <= luma4x4_coeff[luma4_i][luma4_j];
+				for (luma4_i = 0; luma4_i < 8; luma4_i = luma4_i + 1)
+					for (luma4_j = 0; luma4_j < 16; luma4_j = luma4_j + 1)
+						lat_chroma4x4[luma4_i][luma4_j] <= chroma4x4_coeff[luma4_i][luma4_j];
 				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM) begin
 					dpb_fill_mb_addr <= '0;
 					dpb_fill_sample_idx <= 9'd0;
@@ -875,7 +913,11 @@ module decode_stub #(
 				if (apply_inter_residual) begin
 					for (luma4_i = 0; luma4_i < 256; luma4_i = luma4_i + 1)
 						lat_inter_res_y[luma4_i] <= 16'sd0;
-					res_blk_r <= 4'd0;
+					for (luma4_i = 0; luma4_i < 64; luma4_i = luma4_i + 1) begin
+						lat_inter_res_u[luma4_i] <= 16'sd0;
+						lat_inter_res_v[luma4_i] <= 16'sd0;
+					end
+					res_blk_r <= 5'd0;
 					phase <= PH_RES_START;
 				end else begin
 					for (luma4_i = 0; luma4_i < 256; luma4_i = luma4_i + 1)
@@ -902,13 +944,21 @@ module decode_stub #(
 				phase <= PH_RES_WAIT;
 			end else if (phase == PH_RES_WAIT) begin
 				if (inter_iq_done) begin
-					for (luma4_i = 0; luma4_i < 16; luma4_i = luma4_i + 1)
-						lat_inter_res_y[luma4x4_index_stub(res_blk_r, luma4_i[3:0])] <=
-							sat16_res(inter_iq_residual[luma4_i]);
-					if (res_blk_r == 4'd15)
+					for (luma4_i = 0; luma4_i < 16; luma4_i = luma4_i + 1) begin
+						if (res_blk_r < 5'd16)
+							lat_inter_res_y[luma4x4_index_stub(res_blk_r[3:0], luma4_i[3:0])] <=
+								sat16_res(inter_iq_residual[luma4_i]);
+						else if (res_blk_r < 5'd20)
+							lat_inter_res_u[chroma4x4_index_stub(res_blk_r[1:0], luma4_i[3:0])] <=
+								sat16_res(inter_iq_residual[luma4_i]);
+						else
+							lat_inter_res_v[chroma4x4_index_stub(res_blk_r[1:0], luma4_i[3:0])] <=
+								sat16_res(inter_iq_residual[luma4_i]);
+					end
+					if ((res_blk_r == 5'd15 && !chroma4x4_present_r) || (res_blk_r == 5'd23))
 						phase <= PH_RES_COMMIT;
 					else begin
-						res_blk_r <= res_blk_r + 4'd1;
+						res_blk_r <= res_blk_r + 5'd1;
 						phase <= PH_RES_START;
 					end
 				end

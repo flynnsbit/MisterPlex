@@ -39,19 +39,23 @@ if ! grep -q 'rtl/h264_cabac.sv' "$ROOT/fpga/Plex_MiSTer/files.qip"; then
 fi
 
 mkdir -p "$BUILD" "$BUILD_RENORM" "$BUILD_INIT"
+INCDIR="$ROOT/fpga/Plex_MiSTer/rtl"
+INCFLAGS="-std=c++17 -O2 -I$ROOT/tests/rtl"
 echo "RTL SIM: using $VERILATOR_VERSION (h264_cabac)" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module h264_cabac_tb -Wno-fatal \
-  -CFLAGS "-std=c++17 -O2" \
+  +incdir+"$INCDIR" \
+  -CFLAGS "$INCFLAGS" \
   "$TOP" "$RTL" "$TB"
 "$BUILD/Vh264_cabac_tb"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_RENORM" \
   --top-module h264_cabac_tb -Wno-fatal \
+  +incdir+"$INCDIR" \
   +define+H264_CABAC_FAULT_SKIP_RENORM \
-  -CFLAGS "-std=c++17 -O2 -DH264_CABAC_FAULT_SKIP_RENORM" \
+  -CFLAGS "$INCFLAGS -DH264_CABAC_FAULT_SKIP_RENORM" \
   "$TOP" "$RTL" "$TB"
 set +e
 RENORM_OUT="$($BUILD_RENORM/Vh264_cabac_tb 2>&1)"
@@ -67,8 +71,9 @@ printf '%s\n' "$RED_CHECK"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_INIT" \
   --top-module h264_cabac_tb -Wno-fatal \
+  +incdir+"$INCDIR" \
   +define+H264_CABAC_FAULT_BAD_INIT \
-  -CFLAGS "-std=c++17 -O2 -DH264_CABAC_FAULT_BAD_INIT" \
+  -CFLAGS "$INCFLAGS -DH264_CABAC_FAULT_BAD_INIT" \
   "$TOP" "$RTL" "$TB"
 set +e
 INIT_OUT="$($BUILD_INIT/Vh264_cabac_tb 2>&1)"

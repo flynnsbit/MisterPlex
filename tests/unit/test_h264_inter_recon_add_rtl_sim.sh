@@ -26,12 +26,17 @@ TB="$ROOT/tests/rtl/h264_inter_recon_add_tb.cpp"
 RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_recon_add.sv"
 BUILD="$ROOT/build/verilator/h264_inter_recon_add"
 BUILD_DROP="$ROOT/build/verilator/h264_inter_recon_add_drop_residual"
-for f in "$TOP" "$TB" "$RTL"; do
+STUB="$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
+for f in "$TOP" "$TB" "$RTL" "$STUB"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
   fi
 done
+if ! grep -q 'h264_inter_recon_add u_u' "$STUB" || ! grep -q 'h264_inter_recon_add u_v' "$STUB"; then
+  echo "RTL SIM ERROR: decode_stub does not residual-add chroma U/V" >&2
+  exit 2
+fi
 
 mkdir -p "$BUILD" "$BUILD_DROP"
 echo "RTL SIM: using $VERILATOR_VERSION (h264_inter_recon_add)" >&2

@@ -64,14 +64,14 @@ mkdir -p "$BUILD" "$BUILD_DROP_PRED" "$BUILD_DROP_RES" "$BUILD_PERTURB_MV" "$BUI
 echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core P16x16 real-P)" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 "$BUILD/Vh264_decode_core_p16z_tb"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DROP_PRED" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_PRED \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_DROP_PRED \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -88,7 +88,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: dropped prediction fault fail
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DROP_RES" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_RESIDUAL \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_DROP_RESIDUAL \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -105,7 +105,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: dropped residual fault failed
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_PERTURB_MV" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_PERTURB_MV \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_PERTURB_MV \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -122,7 +122,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: perturbed MV fault failed exa
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_BAD_RBSP" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_BAD_RBSP_REQ \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_BAD_RBSP_REQ \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -139,7 +139,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: bad RBSP request fault failed
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DROP_MV_NB" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -156,7 +156,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: dropped MV neighbor fault fai
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DROP_SCHED_RES" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -173,7 +173,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: dropped scheduled residual fa
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DROP_LAST_LUMA_RES" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -190,7 +190,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: dropped last luma residual fa
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DROP_LAST_CHROMA_RES" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_LAST_CHROMA_RESIDUAL \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_DROP_LAST_CHROMA_RESIDUAL \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -207,7 +207,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: dropped last chroma residual 
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_SWAP_SCHED_COEFF" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -224,7 +224,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: swapped scheduled coefficient
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_SWAP_CHROMA_COEFF" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -241,7 +241,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: swapped chroma coefficient fa
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_SWAP_CHROMA_READ" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e
@@ -258,7 +258,7 @@ echo "OK h264_decode_core p16x16 real-P red-check: swapped chroma read fault fai
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_SWAP_CHROMA_RES" \
-  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_RESIDUAL \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +incdir+"$RTL_DIR" +define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_RESIDUAL \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL[@]}" "$TB"
 set +e

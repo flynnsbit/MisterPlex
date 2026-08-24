@@ -82,6 +82,14 @@
       ]
     },
     {
+      "id": "h264_cabac_residual_force_cbf0",
+      "owner": "tests/unit/test_h264_cabac_residual_rtl_sim.sh",
+      "why": "Forcing coded_block_flag=0 must drop a coded 4x4 so zero residual cannot score as CABAC residual-block decode.",
+      "required_substrings": [
+        "FAIL h264_cabac_residual force-cbf0: residual stayed zero"
+      ]
+    },
+    {
       "id": "h264_inter_recon_add_drop_residual",
       "owner": "tests/unit/test_h264_inter_recon_add_rtl_sim.sh",
       "why": "Dropping residual-add after MC must fail clip(pred+res) so pred-only cannot score as reconstruction.",
