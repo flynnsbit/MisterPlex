@@ -564,6 +564,16 @@ module ddr_frame_store #(
 	reg [11:0] plxj_x, plxj_y;
 	reg [7:0]  plxj_token;
 	reg        rd_act_s1, rd_act_s2; // CDC rd_active → clk_ddr (blank-only PLXJ WE)
+	// Hold cut: mux4 STA Hold Slack : -0.093 on clk_ddr general[2] (TNS -0.093).
+	// PLXJ-first S_IDLE made DDRAM_WE a 1-LUT path from plxj_req/rd_act_s2.
+	// Register + nomerge-duplicate the qualify; fire uses the replicas only
+	// (combo blank/req still parks other S_IDLE arms so fills cannot starve).
+	// clk_sys/clk_ddr stay related-edge. Do not false_path this path. Do not
+	// create_generated_clock on analog ce_pix. Do not retune clk_sys.
+	wire plxj_blank_ok = !rd_act_s2 || !has_frame_d2;
+	wire plxj_we_c = plxj_req && plxj_blank_ok && (state_ddr == S_IDLE);
+	reg plxj_we_r /* synthesis nomerge */;
+	reg plxj_we_dup /* synthesis nomerge */;
 	async_fifo #(.WIDTH(8), .AW(2)) input_fifo (
 		.wr_clk(clk), .wr_reset(reset),
 		.wr_en(input_cmd_valid && (input_cmd != 8'd0)), .wr_data(input_cmd),
@@ -841,6 +851,20 @@ module ddr_frame_store #(
 
 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
 
+	// Separate always so the qualify FFs do not pack into the DDRAM_WE ALM.
+	always @(posedge clk_ddr) begin
+		if (reset_ddr)
+			plxj_we_r <= 1'b0;
+		else
+			plxj_we_r <= plxj_we_c;
+	end
+	always @(posedge clk_ddr) begin
+		if (reset_ddr)
+			plxj_we_dup <= 1'b0;
+		else
+			plxj_we_dup <= plxj_we_c;
+	end
+
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			state_ddr <= S_IDLE;
@@ -1115,13 +1139,17 @@ module ddr_frame_store #(
 					// S_IDLE beat (ca4ca655 still token 4 vs leftover 3). Gold
 					// 5f1c8614 waits 250 ms. Pre-play / idle has_frame=0: ACK even
 					// mid-scan (nothing to tear). Once a frame is up, blank-only.
-					if (plxj_req && (!rd_act_s2 || !has_frame_d2) && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					// WE D-pin from registered duplicates (not combo plxj_req).
+					if (plxj_we_r && plxj_we_dup && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= ASPECT_ACK_W;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {plxj_token, plxj_y, plxj_x, MAGIC_J};
 						DDRAM_WE <= 1'b1;
 						plxj_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
+					end else if (plxj_req && (!rd_act_s2 || !has_frame_d2)) begin
+						// Park 1 clk_ddr while plxj_we_r/dup catch the qualify.
+						state_ddr <= S_IDLE;
 					end else if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
