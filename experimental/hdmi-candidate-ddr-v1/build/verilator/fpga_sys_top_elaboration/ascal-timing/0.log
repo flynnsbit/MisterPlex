@@ -1,0 +1,30 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:429:55:warning: declaration of "freeze" hides port "freeze" [-Whide]
+        FUNCTION buf_next(a,b : natural RANGE 0 TO 2; freeze : std_logic := '0') RETURN natural IS
+                                                      ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:565:97:warning: declaration of "format" hides port "format" [-Whide]
+                                                                                                format : unsigned(1 DOWNTO 0)) RETURN unsigned IS
+                                                                                                ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:579:30:warning: declaration of "i_dw" hides signal "i_dw" [-Whide]
+        FUNCTION shift_ipack(i_dw   : unsigned(N_DW-1 DOWNTO 0);
+                             ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:583:30:warning: declaration of "format" hides port "format" [-Whide]
+                             format : unsigned(1 DOWNTO 0)) RETURN unsigned IS
+                             ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:614:66:warning: declaration of "format" hides port "format" [-Whide]
+                                                                 format : unsigned(1 DOWNTO 0)) RETURN boolean IS
+                                                                 ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:632:65:warning: declaration of "format" hides port "format" [-Whide]
+                                                                format : unsigned(5 DOWNTO 0)) RETURN unsigned IS
+                                                                ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:683:66:warning: declaration of "format" hides port "format" [-Whide]
+                                                                 format : unsigned(5 DOWNTO 0)) RETURN boolean IS
+                                                                 ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:702:90:warning: declaration of "format" hides port "format" [-Whide]
+                                                                                         format : unsigned(5 DOWNTO 0)) RETURN type_pix IS
+                                                                                         ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:723:82:warning: declaration of "format" hides port "format" [-Whide]
+                                                                                 format : unsigned (5 DOWNTO 0)) RETURN natural IS
+                                                                                 ^
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/fpga/Plex_MiSTer/sys/ascal.vhd:1145:26:warning: declaration of "frac" hides generic "FRAC" [-Whide]
+        FUNCTION poly_nn(frac : unsigned(FRAC-1 DOWNTO 0)) RETURN poly_phase_t IS
+                         ^

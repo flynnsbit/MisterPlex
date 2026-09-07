@@ -1,0 +1,3 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/build/verilator/ascal-sweep/ascal_sweep_tb.vhd:238:3:@0ms:(report note): PASS sweep arithmetic: 16777216 counter/total pairs
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/build/verilator/ascal-sweep/ascal_sweep_tb.vhd:305:3:@131072ns:(report note): PASS sweep pipeline: 65536 cycles, geometry/reset/CE/VRR/DE/sync
+simulation stopped @131072ns

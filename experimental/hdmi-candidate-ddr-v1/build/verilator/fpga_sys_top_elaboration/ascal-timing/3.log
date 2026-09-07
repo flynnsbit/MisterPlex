@@ -1,0 +1,4 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/build/verilator/fpga_sys_top_elaboration/ascal-timing/ascal_timing_tb.vhd:333:3:@1703944ns:(report note): PASS adaptive pipeline: 851972 cycles
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/build/verilator/fpga_sys_top_elaboration/ascal-timing/ascal_timing_tb.vhd:366:3:@1724424ns:(report note): PASS pixel mux: 8192 cycles, all 64 format codes, four blank states
+/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/build/verilator/fpga_sys_top_elaboration/ascal-timing/ascal_timing_tb.vhd:385:3:@1953804ns:(report note): PASS vertical edge: 114690 cycles, boundaries/phase/geometry changes/CE holds
+simulation stopped @1953804ns

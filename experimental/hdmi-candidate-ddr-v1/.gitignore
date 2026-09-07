@@ -1,0 +1,18 @@
+# Allow build text evidence from HDMI timing candidate harness.
+# The root .gitignore excludes build/ globally; this negates that for
+# the specific text members (logs, testbenches, inputs.json) that 548
+# (54884ac8) confirmed as authoritative reproducibility evidence.
+# Compiled GHDL objects, executables, and compiler-scratch remain excluded.
+!build/
+!build/verilator/
+!build/verilator/ascal-sweep/
+!build/verilator/ascal-sweep/*.log
+!build/verilator/ascal-sweep/*.vhd
+!build/verilator/ascal-sweep/inputs.json
+!build/verilator/fpga_sys_top_elaboration/
+!build/verilator/fpga_sys_top_elaboration/ascal-timing/
+!build/verilator/fpga_sys_top_elaboration/ascal-timing/*.log
+!build/verilator/fpga_sys_top_elaboration/ascal-timing/*.vhd
+!build/verilator/fpga_sys_top_elaboration/ascal-timing/inputs.json
+build/verilator/**/ghdl/
+build/verilator/**/compiler-scratch
