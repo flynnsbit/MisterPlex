@@ -1,0 +1,19 @@
+test_ascal_sweep_pipeline (test_fpga_sys_top_elaboration.SysTopElaborationTests.test_ascal_sweep_pipeline) ... ERROR
+test_ascal_timing_pipeline (test_fpga_sys_top_elaboration.SysTopElaborationTests.test_ascal_timing_pipeline) ... ok
+
+======================================================================
+ERROR: test_ascal_sweep_pipeline (test_fpga_sys_top_elaboration.SysTopElaborationTests.test_ascal_sweep_pipeline)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/tests/unit/test_fpga_sys_top_elaboration.py", line 93, in test_ascal_sweep_pipeline
+    helpers.write_ascal_sweep_tb(reference, source, bench)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/ddr-hdmi-timing-candidate/tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py", line 309, in write_ascal_sweep_tb
+    left, kind = declaration.split(":", 1)
+    ^^^^^^^^^^
+ValueError: not enough values to unpack (expected 2, got 1)
+
+----------------------------------------------------------------------
+Ran 2 tests in 41.696s
+
+FAILED (errors=1)

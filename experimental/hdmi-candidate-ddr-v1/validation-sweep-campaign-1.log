@@ -1,0 +1,6 @@
+test_ascal_sweep_pipeline (test_fpga_sys_top_elaboration.SysTopElaborationTests.test_ascal_sweep_pipeline) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 1.830s
+
+OK

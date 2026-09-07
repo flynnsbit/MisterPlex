@@ -1,0 +1,11 @@
+{
+  "status": "Historical pre-validation input snapshot. Current repaired harness and PASS trace hashes are in validation-final-results.json; production leaf remains identical.",
+  "sha256": {
+    "fpga/Plex_MiSTer/sys/ascal.vhd": "2cfb74522b5d046066bcf54bd99f865687445092cd79b8af6c9ed6c5912ed409",
+    "reference/sys/ascal.vhd": "c789b2fe9ba9c6954e9005d5f79296248029101eaf24d69378cad7dfd29bd826",
+    "reference/rtl/ddr_frame_store.sv": "fd11ebcf5b0851db4093a583366c4cc4dc4903a7aa5fc324e264fff33f6cbd58",
+    "hdmi-terminal-count.patch": "12b7c8a9b7ed7c353f521180b42fa0f881bd2b3ad6474b78f4a5d30da028703f",
+    "tests/unit/test_fpga_sys_top_elaboration.py": "645a42eb4ef6b8c82c944dc7d286341009c0edc01a6ae5a44da93dd97e9e9bd4",
+    "tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py": "f9acfdedaac6f0e2b600ed045771ec478c5aa2ed8d29fa31dc9b6247702fc1a5"
+  }
+}

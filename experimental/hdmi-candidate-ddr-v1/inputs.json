@@ -1,0 +1,42 @@
+{
+  "v11_owner_result": {
+    "path": ".worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/headroom-v11/fit-inputs/sys120/project/local_out/coherent-a11-sys120-v11-a01/owner-result.json",
+    "sha256": "ca580bf415e2f80be157d809e177d716d2bde0bcad348d93d6e494a922595f70"
+  },
+  "v11_source_archive": {
+    "path": ".worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/headroom-v11/release-v11/source.tar",
+    "sha256": "4ac9c10bad37b11b4f595e96f3149155464a1b196327c606ce869a788c79f1b1"
+  },
+  "v12_source_archive": {
+    "path": ".worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/cavlc-timing-v12/release-v12/source.tar",
+    "sha256": "07ff4fa432630508d9af40c1756ce8842cb55a19bee9722f79b51050f123f00b"
+  },
+  "v11_v12_leaf_identity": {
+    "sys/ascal.vhd": "c789b2fe9ba9c6954e9005d5f79296248029101eaf24d69378cad7dfd29bd826",
+    "rtl/ddr_frame_store.sv": "fd11ebcf5b0851db4093a583366c4cc4dc4903a7aa5fc324e264fff33f6cbd58"
+  },
+  "retained_report_sha256": {
+    "timing/index.tsv": "92c85d00d59897152cec0bd215ee10b8cccabe95d1d1d6d4f0dcb60fb1939cad",
+    "timing/Plex.corner-00.clock-06.setup.rpt": "abc2beeb3e4fa4cacc3828ceba9dc1a35b76e350954ff4497077e69e1ad50d6e",
+    "timing/Plex.corner-00.clock-06.hold.rpt": "122547421aeba414cb598b448b7fff486f1853f61fdd17444ae5a2c218fafa3f",
+    "timing/Plex.corner-00.clock-10.setup.rpt": "cd6368969cf02306fa4ceb477414ef735f0f512b0b4c093ef2b6cb1c00142b86",
+    "timing/Plex.corner-00.clock-10.hold.rpt": "d57fbd1ea8779eb614a81c49191ef8745868a42876aec55975f75aa244fe7af3",
+    "timing/Plex.corner-01.clock-06.setup.rpt": "5bb7c6ae8632373164e0e0b900922a39d7fc4af18128556e9c9ae21325c70cd6",
+    "timing/Plex.corner-01.clock-06.hold.rpt": "e4dd7b4303f9f4b958764fe4364c449940f9343c0768d6e1474b4731fa9e9c4d",
+    "timing/Plex.corner-01.clock-10.setup.rpt": "21203ff4e4cdb06262d9a36f4910be4d8a5dfed3f05e81ad63760b628342f82a",
+    "timing/Plex.corner-01.clock-10.hold.rpt": "7943571e6a2e74c28d9b7e6005a53d7c8f1192bb13edf9ff74a4a55284544000",
+    "timing/Plex.corner-02.clock-06.setup.rpt": "159aa7e8c24b3fa4ebd4de2d66d78d8b6777b5e2e22a244dd858abe404951161",
+    "timing/Plex.corner-02.clock-06.hold.rpt": "807d5d4158039966a49c79d9b32570091f8a2bddb720e4161f3bcb162d712da7",
+    "timing/Plex.corner-02.clock-10.setup.rpt": "7265d83b2813bcce2f14ff795ef3924c14e6b26223b809c03d5116a6b752f282",
+    "timing/Plex.corner-02.clock-10.hold.rpt": "9af4d06aebf0b418818b2372da99e0120a77b0b01e270345060fea1ad18fa2d8",
+    "timing/Plex.corner-03.clock-06.setup.rpt": "e65a7229c8ee0a33a73842ad89a22644d1eb75de786f0b54410f71a54945f6df",
+    "timing/Plex.corner-03.clock-06.hold.rpt": "bea49301964e230c45047cfae11c33ffb59968a3ed987dccb574cb87660ae389",
+    "timing/Plex.corner-03.clock-10.setup.rpt": "4b90fe3af99f66ab4caae8eefc60b9e0648442b5abf618d2b8bab2fe471baf4c",
+    "timing/Plex.corner-03.clock-10.hold.rpt": "be6d69bf8fb4aedeeaa22c5b16e607f7ae88b1887d2466ebc14dcbbff652d761"
+  },
+  "copied_harness_sha256": {
+    "tests/unit/test_fpga_sys_top_elaboration.py": "666d8859fbc9440ec13917b25ff67e0c0da4031ea6d532b0de7d81de0d8256e2",
+    "tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py": "1a3663ceaa7ac9f52c7404803dcc74350dcbc1cd6e4f89b0eb5833185ba9a88c"
+  },
+  "status": "Historical input binding; optional HDMI candidate now passes focused source equivalence. See validation-final-results.json for current test hashes/results. DDR diagnosis only; no Quartus/STA/physical qualification."
+}

@@ -1,0 +1,97 @@
+{
+  "status": "FOCUSED_SOURCE_EQUIVALENCE_PASS; optional isolated candidate, await V12 physical comparison",
+  "candidate_sha256": "2cfb74522b5d046066bcf54bd99f865687445092cd79b8af6c9ed6c5912ed409",
+  "reference_sha256": "c789b2fe9ba9c6954e9005d5f79296248029101eaf24d69378cad7dfd29bd826",
+  "patch_sha256": "12b7c8a9b7ed7c353f521180b42fa0f881bd2b3ad6474b78f4a5d30da028703f",
+  "source_scope_check": "Only original sole-use horizontal-total register encoding, its existing capture expression and line-end comparison changed; all remaining bytes identical.",
+  "correctness": "For all c,T in0..4095: c+1<T iff c<max(T-1,0). T=0/1 both false. Limit sampled at original configuration clock/reset guard; CE and all sweep/output stages unchanged. Register width/count unchanged. Counter increment still exists for counter D, no longer feeds vertical CE.",
+  "configuration_path_risk": "Predecrement/saturation is moved before existing config register. htotal input is WIDTH+HFP+HBP+HS in sys_top.v:775; its capture timing also requires new physical validation.",
+  "ddr": {
+    "domains": "SYS120 general[0] to DDR90 general[2], related clocks from same emu PLL",
+    "edge_budget_ns": 2.778,
+    "worst": {
+      "from": "emu|present|fstore|has_frame",
+      "to": "emu|present|fstore|has_frame_d1",
+      "hot_slack_ns": -0.725,
+      "cold_slack_ns": -0.616,
+      "hot_data_ns": 2.361,
+      "hot_route_ns": 1.624,
+      "logic_levels": 1,
+      "hot_skew_ns": -1.022,
+      "fanout": 21,
+      "source_location": "FF_X34_Y50_N35",
+      "destination_location": "FF_X35_Y56_N1"
+    },
+    "other_actual_hot_paths": [
+      {
+        "from": "status_osd_hold[13]",
+        "to": "status_osd_safe[13]",
+        "slack_ns": -0.679,
+        "logic_levels": 0,
+        "route_ns": 1.733,
+        "register_cell_ns": 0.593,
+        "locations": [
+          "FF_X31_Y52_N17",
+          "FF_X34_Y53_N34"
+        ]
+      },
+      {
+        "from": "pending_crop_top[4]",
+        "to": "pending_top_d1[4]",
+        "slack_ns": -0.633,
+        "logic_levels": 0,
+        "route_ns": 1.671
+      },
+      {
+        "from": "want_y_gray[0]",
+        "to": "want_y_gray_s1[0]",
+        "slack_ns": -0.585,
+        "logic_levels": 0,
+        "route_ns": 1.697
+      },
+      {
+        "from": "underrun_gray[11]",
+        "to": "underrun_gray_s1[11]",
+        "slack_ns": -0.642,
+        "logic_levels": 2,
+        "route_ns": 1.884,
+        "hold_pad_cell_ns": 0.156
+      }
+    ],
+    "additional_cold_paths": "hps_io.cfg[1] via emu.reset~1 (fanout2710) to arbiter.reset_d1 -.465 and fstore.reset_ddr_s1 -.448",
+    "decision": "No DDR RTL change: predominant zero-logic/required-hold-pad crossings have no grounded arithmetic decomposition. Reset/latency or pad removal would need independent semantics and exact setup+hold evidence.",
+    "physical_followup": "Compare V12 routed witnesses before changing placement. If persistent, inspect exact source/LUT/first-capture locations and setup/hold for these named endpoints. At fixed V11 skew/cells, has_frame requires route <=.899ns versus1.624; status[13] <=1.054ns versus1.733. These are necessary route-only targets, not promised achievable placements or permission to alter constraints.",
+    "hold_limitation": "V11 global clock10 fast-cold hold top10 is RAM/terminator paths, not these exact cross-clock endpoints. DB deleted; no new STA performed."
+  },
+  "hdmi": {
+    "from": "ascal|o_hcpt[1]",
+    "to": [
+      "ascal|o_vcpt_pre3[9]",
+      "ascal|o_vcpt_pre3[7]"
+    ],
+    "hot_slack_ns": 0.027,
+    "cold_slack_ns": -0.077,
+    "cold_data_ns": 6.144,
+    "cold_route_ns": 2.468,
+    "cold_cell_ns": 3.676,
+    "cold_skew_ns": -0.465,
+    "logic_levels": 3,
+    "fanout": 48,
+    "path": "Add180 increment carry -> LessThan38 compare -> o_vcpt[11]~0 -> CE",
+    "decision": "Optional source candidate removes a real serialized arithmetic stage, but77ps is placement-sensitive. Prefer unmodified V12 evidence first; not a demonstrated physical fix."
+  },
+  "validation": {
+    "performed": "Archived hash/source-scope checks; full-leaf GHDL analysis/elaboration; sweep16777216 arithmetic pairs and65536 actual-HDL cycles PASS; earlier coefficient851972/pixel8192/all64formats/fourblankstates/vertical114690 PASS. Exact records in validation-final-results.json.",
+    "prepared": "Copied existing GHDL harness with16777216 counter/total combinations and65536 paired actual-OSWEEP traces covering dynamicgeometry/CE/reset/VRR/DE/sync. Existing coefficient/vertical-edge/all-format regression retained.",
+    "executed": true,
+    "window": "Coordinator outcome-based campaign; fresh no-fit check1022. Sweep-only handle ddr-hdmi-sweep-campaign-1 completed exit0 in1.830s; no automatic timeout. Campaign complete, no owned jobs.",
+    "running_commands": []
+  },
+  "prohibitions_observed": [
+    "No frozen/live owner input edits",
+    "No Quartus/STA/netlist/fit",
+    "No hardware/ARM/capture",
+    "No clock/PLL/seed/constraint changes",
+    "No RTL simulation during a physical flow; no extra agents"
+  ]
+}

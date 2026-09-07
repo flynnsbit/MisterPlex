@@ -1,0 +1,15 @@
+{
+  "command_handle": "ddr-hdmi-sweep-retry",
+  "exit_code": 1,
+  "elapsed_seconds": 0.003,
+  "running_commands": [],
+  "fresh_no_fit_check_handle": "1009",
+  "candidate_sha256": "2cfb74522b5d046066bcf54bd99f865687445092cd79b8af6c9ed6c5912ed409",
+  "outcome": "Same Python declaration-split exception before GHDL; previous repair hit the old coefficient helper, not the sweep helper. No candidate HDL mismatch observed because sweep HDL did not run.",
+  "repair": "Restored original coefficient helper; anchored the declaration regex specifically inside write_ascal_sweep_tb.",
+  "preparation_only": "Generator now produced prepared/ascal_sweep_tb.vhd successfully. No GHDL analysis/elaboration/simulation retry performed. All16777216 arithmetic pairs and65536 trace cycles including0/1/4095/wrap/edge-time changes retained.",
+  "runner_log_sha256": "b7fe7d3073f022397a0c9cd2077583308c29954a643b5765f69cfef5a4c66202",
+  "prepared_vhdl_sha256": "6698927240d90d4b6ec8e9101271ecb80e1b9ca46f213abd04f16dcd45d82534",
+  "repaired_helper_sha256": "4dd251299cc528d8e424a5945f94286db0921729f2b09cd4c45f0515938f4fab",
+  "no_timeout_unit_sha256": "bb36df74b303d562114c5ac43825190129edda7167ee3e3f6ccdd904e1bcc0e7"
+}

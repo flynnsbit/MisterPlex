@@ -1,0 +1,25 @@
+{
+  "command_handle": "ddr-hdmi-ghdl-window",
+  "exit_code": 1,
+  "elapsed_seconds": 41.696,
+  "running_commands": [],
+  "candidate_sha256": "2cfb74522b5d046066bcf54bd99f865687445092cd79b8af6c9ed6c5912ed409",
+  "test_results": {
+    "test_ascal_timing_pipeline": {
+      "status": "PASS",
+      "adaptive_cycles": 851972,
+      "pixel_cycles": 8192,
+      "formats": 64,
+      "blank_states": 4,
+      "vertical_cycles": 114690,
+      "trace_sha256": "2e64c6e5d4bd4c982d15a83d94e18727e2951edc70fef57e61a23561c7e3e050"
+    },
+    "test_ascal_sweep_pipeline": {
+      "status": "GENERATOR_ERROR_NO_GHDL_OR_SWEEP_SIMULATION_STARTED",
+      "exception": "ValueError declaration.split(:): attribute keyword signal incorrectly matched as declaration",
+      "repair": "Isolated helper declaration regex now anchored to declaration line start. Retry not run; another bounded window requested."
+    }
+  },
+  "runner_log_sha256": "41735d754a17decf22a2422f2c6eaa611927e31886a93ec891337fef2cb69820",
+  "repaired_helper_sha256": "ea2943d75f6923ccd756e30616a8b7e3cd4cd81ef779922df55744d1d13d6dfc"
+}

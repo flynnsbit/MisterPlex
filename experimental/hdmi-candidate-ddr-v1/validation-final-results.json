@@ -1,0 +1,63 @@
+{
+  "status": "PASS_FOCUSED_SOURCE_EQUIVALENCE_ONLY_NOT_PHYSICAL_TIMING_OR_GLASS",
+  "command_handle": "ddr-hdmi-sweep-campaign-1",
+  "exit_code": 0,
+  "elapsed_seconds": 1.83,
+  "worker_count": 1,
+  "automatic_timeout": false,
+  "running_commands": [],
+  "fresh_no_fit_check_handle": "1022",
+  "scope": "Only test_ascal_sweep_pipeline in this campaign; previously passed test_ascal_timing_pipeline was NOT rerun. No negative or extra test suite, tools, Quartus/STA/netlist/hardware, V12 input or constraint changes.",
+  "current_sweep": {
+    "arithmetic_pairs": 16777216,
+    "all_totals": "0..4095 inclusive",
+    "all_counters": "0..4095 inclusive",
+    "actual_hdl_trace_cycles": 65536,
+    "directed_max_count": 4094,
+    "directed_max_wrap": 0,
+    "coverage": [
+      "zero/one/max totals",
+      "maximum-total count/wrap",
+      "configuration holds/reset",
+      "geometry",
+      "CE holds",
+      "VRR",
+      "DE",
+      "sync",
+      "timing-input changes in capture-edge delta"
+    ],
+    "source_scope": "Only three intended production edits; source unchanged through validation"
+  },
+  "earlier_passing_regression": {
+    "command_handle": "ddr-hdmi-ghdl-window",
+    "adaptive_cycles": 851972,
+    "pixel_cycles": 8192,
+    "formats": 64,
+    "blank_states": 4,
+    "first_pixel": true,
+    "vertical_edge_cycles": 114690
+  },
+  "limitations": [
+    "DDR RTL unchanged: wait for V12 related-edge placement/setup+hold comparison",
+    "HDMI77ps V11 violation may disappear in unchanged V12 placement",
+    "New config-input subtraction capture path requires physical timing validation",
+    "Simulation-edge equality is not analog CDC/metastability characterization",
+    "Candidate optional and isolated; not integrated, fitted or deployed"
+  ],
+  "sha256": {
+    "fpga/Plex_MiSTer/sys/ascal.vhd": "2cfb74522b5d046066bcf54bd99f865687445092cd79b8af6c9ed6c5912ed409",
+    "reference/sys/ascal.vhd": "c789b2fe9ba9c6954e9005d5f79296248029101eaf24d69378cad7dfd29bd826",
+    "reference/rtl/ddr_frame_store.sv": "fd11ebcf5b0851db4093a583366c4cc4dc4903a7aa5fc324e264fff33f6cbd58",
+    "hdmi-terminal-count.patch": "12b7c8a9b7ed7c353f521180b42fa0f881bd2b3ad6474b78f4a5d30da028703f",
+    "tests/unit/test_fpga_sys_top_elaboration.py": "bb36df74b303d562114c5ac43825190129edda7167ee3e3f6ccdd904e1bcc0e7",
+    "tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py": "4dd251299cc528d8e424a5945f94286db0921729f2b09cd4c45f0515938f4fab",
+    "build/verilator/ascal-sweep/ascal_sweep_tb.vhd": "6698927240d90d4b6ec8e9101271ecb80e1b9ca46f213abd04f16dcd45d82534",
+    "build/verilator/ascal-sweep/3.log": "d53ca79ce32878e855d295b6f326f6d535638d769b3292355409c952a211cdc7",
+    "build/verilator/fpga_sys_top_elaboration/ascal-timing/3.log": "2e64c6e5d4bd4c982d15a83d94e18727e2951edc70fef57e61a23561c7e3e050",
+    "validation-sweep-campaign-1.log": "e1b8577c0885cea6642623d2c9461be09e866c052bd0f4c45461547af69daf90",
+    "validation.log": "41735d754a17decf22a2422f2c6eaa611927e31886a93ec891337fef2cb69820",
+    "validation-sweep-retry.log": "b7fe7d3073f022397a0c9cd2077583308c29954a643b5765f69cfef5a4c66202",
+    "validation-results.json": "adc29fef3bb32b39a315ce9b6257aa7878334a255a7d375b42031bc468ca2b24",
+    "validation-sweep-retry-results.json": "fa9262f324d126b42bbbf789abc5e882140ca41062cf91f16e93a03fde8693c3"
+  }
+}
