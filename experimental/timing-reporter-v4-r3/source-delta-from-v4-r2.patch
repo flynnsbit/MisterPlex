@@ -1,0 +1,316 @@
+diff --git a/docs/rtl-simulation.md b/docs/rtl-simulation.md
+--- a/docs/rtl-simulation.md
++++ b/docs/rtl-simulation.md
+@@ -195,6 +195,12 @@
+ Inventory I/O or identity failure is explicit and never deletes the retained
+ tree. Unresolved ownership keeps the existing leases and project intact; its
+ record is `ownership-unresolved`, with no racing inventory of an active project.
++Inventory traversal uses descriptor-relative directory enumeration, stat and
++no-follow opens; nested enumeration/stat/read errors propagate rather than
++silently omitting a subtree. Only verified initial absence is `missing`.
++An inventory failure sets `inventory-incomplete` and fails an otherwise
++successful transaction. If the build was already failing, that original error
++retains precedence and the additional retention failure is reported separately.
+ 
+ This flag is local-only. The remote wrapper still forwards arguments, but the
+ driver rejects `--retain-project` for a remote backend before dispatch; remote
+diff --git a/scripts/rbf_build.py b/scripts/rbf_build.py
+--- a/scripts/rbf_build.py
++++ b/scripts/rbf_build.py
+@@ -213,12 +213,20 @@
+         return record
+     failure = None
+ 
+-    def file_identity(path, text_limit=None):
+-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
++    def optional_stat(path):
++        try:
++            return os.stat(path, follow_symlinks=False)
++        except FileNotFoundError:
++            return None
++
++    def file_identity(path, text_limit=None, parent=None, expected=None):
++        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+         with os.fdopen(descriptor, "rb") as stream:
+             before = os.fstat(stream.fileno())
+             if not stat.S_ISREG(before.st_mode):
+                 raise RuntimeError("REFUSED: nonregular retained project dependency")
++            if expected is not None and (before.st_dev, before.st_ino) != (expected.st_dev, expected.st_ino):
++                raise RuntimeError("REFUSED: retained project dependency changed before opening")
+             if text_limit is not None and before.st_size > text_limit:
+                 raise RuntimeError("REFUSED: oversized retained project metadata")
+             value = hashlib.sha256()
+@@ -239,12 +247,39 @@
+                     "mode": format(stat.S_IMODE(after.st_mode), "04o")}
+         return identity if text_limit is None else (identity, b"".join(chunks))
+ 
++    @contextlib.contextmanager
++    def directory(name, expected, parent=None):
++        descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
++        try:
++            actual = os.fstat(descriptor)
++            if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
++                raise RuntimeError("REFUSED: retained project directory changed before opening")
++            yield descriptor
++        finally:
++            os.close(descriptor)
++
++    def inventory(parent, relative=PurePosixPath()):
++        # Unlike Path.rglob/is_dir, these APIs propagate enumeration and stat errors.
++        with os.scandir(parent) as entries:
++            names = sorted(entry.name for entry in entries)
++        for name in names:
++            info = os.stat(name, dir_fd=parent, follow_symlinks=False)
++            path = relative / name
++            if stat.S_ISDIR(info.st_mode):
++                with directory(name, info, parent) as child:
++                    inventory(child, path)
++            elif stat.S_ISREG(info.st_mode):
++                record["files"][str(path)] = file_identity(name, parent=parent, expected=info)
++            else:
++                raise RuntimeError("REFUSED: linked or nonregular retained project dependency")
++
+     try:
+         inputs = None
+         for name in ("inputs.json", "tool.json", "reporter/provenance.json"):
+             path = work / name
+-            if path.exists() or path.is_symlink():
+-                record["metadata"][name], content = file_identity(path, 4 * 1024**2)
++            info = optional_stat(path)
++            if info is not None:
++                record["metadata"][name], content = file_identity(path, 4 * 1024**2, expected=info)
+                 if name == "inputs.json":
+                     inputs = json.loads(content)
+                     if digest(json.dumps(inputs["input_files"], sort_keys=True).encode()) != inputs["input_sha256"]:
+@@ -261,22 +296,21 @@
+         for key, name in (("compile_exit", "compile.exit"), ("reporter_exit", "reporter.exit"),
+                           ("sdk_catalog_exit", "sdk-catalog.exit")):
+             path = work / "timing" / name
+-            if path.exists() or path.is_symlink():
+-                record["metadata"]["timing/" + name], content = file_identity(path, 16)
++            info = optional_stat(path)
++            if info is not None:
++                record["metadata"]["timing/" + name], content = file_identity(path, 16, expected=info)
+                 text = content.decode()
+                 if not re.fullmatch(r"[0-9]{1,3}\n", text) or int(text) > 255:
+                     raise RuntimeError("REFUSED: malformed retained stage exit")
+                 record[key] = int(text)
+-        if project.is_symlink():
++        project_info = optional_stat(project)
++        if project_info is not None and stat.S_ISLNK(project_info.st_mode):
+             raise RuntimeError("REFUSED: linked retained project")
+-        if project.exists() and not project.is_dir():
++        if project_info is not None and not stat.S_ISDIR(project_info.st_mode):
+             raise RuntimeError("REFUSED: non-directory retained project")
+-        if project.is_dir():
+-            for path in sorted(project.rglob("*")):
+-                if path.is_symlink():
+-                    raise RuntimeError("REFUSED: linked retained project dependency")
+-                if not path.is_dir():
+-                    record["files"][str(path.relative_to(project))] = file_identity(path)
++        if project_info is not None:
++            with directory(project, project_info) as project_fd:
++                inventory(project_fd)
+             record["input_files_match"] = inputs is not None and all(
+                 record["files"].get(name, {}).get("sha256") == expected
+                 for name, expected in inputs["input_files"].items())
+@@ -1211,9 +1245,17 @@
+                 repository.retain(f"execution unresolved; preserve {out}")
+             safe = controller.safe and repository.safe
+             if args.retain_project:
+-                exc_type = sys.exc_info()[0]
+-                retain_analysis_project(out, stage, exc_type.__name__ if exc_type else None,
+-                                        inventory_safe=safe, cohort_metadata=meta)
++                original_error = sys.exc_info()[1]
++                try:
++                    retain_analysis_project(out, stage, type(original_error).__name__ if original_error is not None else None,
++                                            inventory_safe=safe, cohort_metadata=meta)
++                except (OSError, RuntimeError, ValueError) as retention_error:
++                    if original_error is None:
++                        raise
++                    try:
++                        print(f"Retention failed; preserving original build failure: {retention_error}", file=sys.stderr)
++                    except OSError:
++                        pass  # A secondary diagnostic sink cannot replace the original failure.
+             if safe:
+                 if not args.retain_project:
+                     shutil.rmtree(out / "project", ignore_errors=True)
+diff --git a/tests/unit/test_rbf_build.py b/tests/unit/test_rbf_build.py
+--- a/tests/unit/test_rbf_build.py
++++ b/tests/unit/test_rbf_build.py
+@@ -852,6 +852,56 @@
+                 with build.host_lock(key):
+                     pass
+         self.assertTrue((self.project / ".git/misterplex-build/single-fit.lock.owner").is_file())
++
++    def test_retention_enumeration_failure_preserves_original_build_error_precedence(self):
++        for variant in ("otherwise-successful", "original-validation-failure", "failed-secondary-diagnostic"):
++            with self.subTest(variant=variant):
++                daemon = self.work / ("inventory-" + variant)
++                docker = self.fake_docker(daemon)
++                environment = {"MISTERPLEX_ALLOW_LOCAL_FIT": "1", "MISTERPLEX_BUILD_ALLOW_UNVERIFIED": "1",
++                               "PATH": str(docker.parent) + os.pathsep + os.environ["PATH"]}
++                original = None if variant == "otherwise-successful" else subprocess.CalledProcessError(
++                    23, ["controlled-host-validation-only"])
++                out = self.project / "local_out" / variant
++                nested = out / "project/db/generated/nested"
++                native_scan = os.scandir
++
++                def validate(root, work, reference):
++                    nested.mkdir(parents=True)
++                    (nested / "fixture.cdb").write_text("synthetic database preserved after failure")
++                    if original is not None:
++                        raise original
++
++                def scan(path):
++                    target = Path(os.readlink(f"/proc/self/fd/{path}")) if isinstance(path, int) else Path(path)
++                    if target == nested:
++                        raise PermissionError("controlled nested enumeration failure")
++                    return native_scan(path)
++
++                class FailedDiagnostic:
++                    def write(self, value):
++                        raise OSError("controlled secondary diagnostic failure")
++
++                stderr = FailedDiagnostic() if variant == "failed-secondary-diagnostic" else io.StringIO()
++                with mock.patch.dict(os.environ, environment), mock.patch.object(build, "ROOT", self.project), \
++                        mock.patch.object(build, "validate", side_effect=validate), \
++                        mock.patch.object(build.os, "scandir", side_effect=scan), \
++                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
++                    with self.assertRaises(type(original) if original is not None else RuntimeError) as raised:
++                        build.main(["local-container", variant, str(self.project), "--retain-project"])
++                if original is not None:
++                    self.assertIs(raised.exception, original)
++                    self.assertEqual(raised.exception.returncode, 23)
++                else:
++                    self.assertIn("inventory is incomplete", str(raised.exception))
++                if variant == "original-validation-failure":
++                    self.assertIn("preserving original build failure", stderr.getvalue())
++                record = json.loads((out / "analysis-project.json").read_text())
++                self.assertEqual(record["database_status"], "inventory-incomplete")
++                self.assertFalse(record["inventory_complete"])
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertEqual(record["exception_type"], type(original).__name__ if original is not None else None)
++                self.assertEqual((nested / "fixture.cdb").read_text(), "synthetic database preserved after failure")
+ 
+     def fake_docker(self, state):
+         state.mkdir(parents=True, exist_ok=True)
+diff --git a/tests/unit/test_timing_observer.py b/tests/unit/test_timing_observer.py
+--- a/tests/unit/test_timing_observer.py
++++ b/tests/unit/test_timing_observer.py
+@@ -12,6 +12,8 @@
+ from unittest import mock
+ import uuid
+ import copy
++import contextlib
++import errno
+ 
+ from test_rbf_build import BuildPolicy, ROOT, build, write_fake_sdk
+ 
+@@ -272,6 +274,106 @@
+                     self.assertFalse(record["inventory_complete"])
+                 if variant != "missing-project":
+                     self.assertTrue((work / "project").is_dir())
++
++    def test_nested_retention_enumeration_stat_open_and_read_errors_fail_closed(self):
++        for variant in ("scan-permission", "scan-oserror", "scan-iteration", "entry-stat-permission",
++                        "entry-stat-vanished", "directory-open-permission", "read-error",
++                        "root-stat-permission", "metadata-stat-permission"):
++            with self.subTest(variant=variant):
++                work, _ = self.prepare_case()
++                nested = work / "project/db/generated/nested"
++                nested.mkdir(parents=True)
++                leaf = nested / "fixture.cdb"
++                leaf.write_bytes(b"synthetic nested database must remain intact")
++                native_scan, native_stat = os.scandir, os.stat
++                native_open, native_fdopen = os.open, os.fdopen
++
++                def coordinate(path, parent=None):
++                    if isinstance(path, int):
++                        return Path(os.readlink(f"/proc/self/fd/{path}"))
++                    return Path(os.readlink(f"/proc/self/fd/{parent}")) / path if parent is not None else Path(path)
++
++                @contextlib.contextmanager
++                def failed_iteration(path):
++                    with native_scan(path) as entries:
++                        def rows():
++                            yield next(entries)
++                            raise OSError(errno.EIO, "controlled nested iterator failure")
++                        yield rows()
++
++                def scan(path):
++                    if coordinate(path) == nested:
++                        if variant == "scan-permission":
++                            raise PermissionError(errno.EACCES, "controlled nested enumeration failure")
++                        if variant == "scan-oserror":
++                            raise OSError(errno.EIO, "controlled nested enumeration failure")
++                        if variant == "scan-iteration":
++                            return failed_iteration(path)
++                    return native_scan(path)
++
++                def get_stat(path, *args, **kwargs):
++                    target = coordinate(path, kwargs.get("dir_fd"))
++                    if variant == "entry-stat-permission" and target == leaf or \
++                            variant == "root-stat-permission" and target == work / "project" or \
++                            variant == "metadata-stat-permission" and target == work / "inputs.json":
++                        raise PermissionError(errno.EACCES, "controlled stat failure")
++                    if variant == "entry-stat-vanished" and target == leaf:
++                        raise FileNotFoundError(errno.ENOENT, "controlled post-enumeration disappearance")
++                    return native_stat(path, *args, **kwargs)
++
++                def open_file(path, *args, **kwargs):
++                    if variant == "directory-open-permission" and coordinate(path, kwargs.get("dir_fd")) == nested:
++                        raise PermissionError(errno.EACCES, "controlled directory open failure")
++                    return native_open(path, *args, **kwargs)
++
++                @contextlib.contextmanager
++                def fdopen(descriptor, *args, **kwargs):
++                    target = coordinate(descriptor)
++                    with native_fdopen(descriptor, *args, **kwargs) as stream:
++                        class FailedReader:
++                            def fileno(self):
++                                return stream.fileno()
++
++                            def read(self, size):
++                                raise OSError(errno.EIO, "controlled nested data read failure")
++                        yield FailedReader() if variant == "read-error" and target == leaf else stream
++
++                with mock.patch.object(build.os, "scandir", side_effect=scan), \
++                        mock.patch.object(build.os, "stat", side_effect=get_stat), \
++                        mock.patch.object(build.os, "open", side_effect=open_file), \
++                        mock.patch.object(build.os, "fdopen", side_effect=fdopen):
++                    with self.assertRaisesRegex(RuntimeError, "inventory is incomplete") as failure:
++                        build.retain_analysis_project(work, "complete")
++                record = json.loads((work / "analysis-project.json").read_text())
++                self.assertEqual(record["database_status"], "inventory-incomplete")
++                self.assertFalse(record["inventory_complete"])
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertEqual(record["inventory_error_type"], type(failure.exception.__cause__).__name__)
++                self.assertEqual(leaf.read_bytes(), b"synthetic nested database must remain intact")
++                self.assertTrue((work / "project").is_dir())
++
++    def test_nested_inventory_is_complete_and_verified_missing_is_distinct(self):
++        for variant in ("no-database", "empty-database-directories", "nested-database"):
++            with self.subTest(variant=variant):
++                work, _ = self.prepare_case()
++                expected = {}
++                if variant != "no-database":
++                    (work / "project/db/generated/nested").mkdir(parents=True)
++                    (work / "project/incremental_db/partition").mkdir(parents=True)
++                if variant == "nested-database":
++                    for name in ("db/generated/nested/a.cdb", "incremental_db/partition/b.qdb"):
++                        data = ("synthetic complete enumeration " + name).encode()
++                        path = work / "project" / name
++                        path.write_bytes(data)
++                        expected[name] = build.digest(data)
++                record = build.retain_analysis_project(work, "complete")
++                self.assertTrue(record["inventory_complete"])
++                self.assertTrue(record["input_files_match"])
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertEqual(set(record["database_files"]), set(expected))
++                for name, digest in expected.items():
++                    self.assertEqual(record["files"][name]["sha256"], digest)
++                self.assertEqual(record["database_status"], "retained-unvalidated" if expected else "missing")
+ 
+     @unittest.skipUnless(os.environ.get("MISTERPLEX_SDK_CATALOG") and os.environ.get("MISTERPLEX_SDK_NATIVE_MAP"),
+                          "requires actual pinned SDK-derived catalog and retained V12 native map")

@@ -1,0 +1,31 @@
+{
+  "schema": "misterplex.sanitized-hdl-observer-failure.v1",
+  "provenance": {
+    "source": "V12 reporter-first-failure.json, selected non-sensitive diagnostic fields only",
+    "sha256": "1c14ec7703b14c45d07945f5c078e6d146b169c473aea2621072218ead2daff5",
+    "reporter_tcl_sha256": "2de803b77901e9dbe9e4e9d9064f9e1510e2a460c9e001907de19af7c0497540",
+    "historical_compile_exit": 0,
+    "historical_reporter_exit": 0,
+    "historical_exclusion_gate_exit": 0,
+    "historical_file_only_commands": 50
+  },
+  "entity": "altera_std_synchronizer",
+  "statement": "set_false_path -to [get_keepers {*altera_std_synchronizer:*|din_s1}]",
+  "callback_error": "Timing exception has no attributable SDC source",
+  "native_context": [
+    "Info (332164): Evaluating HDL-embedded SDC commands",
+    "    Info (332165): Entity altera_std_synchronizer",
+    "        Info (332166): set_false_path -to [get_keepers {*altera_std_synchronizer:*|din_s1}]"
+  ],
+  "swallowed_diagnostics": [
+    "Error (332000): Timing exception has no attributable SDC source",
+    "Critical Warning (332008): Read_sdc failed due to errors in the SDC file"
+  ],
+  "compiler_source_format_provenance": {
+    "compile_log_sha256": "dbc23ec8b31a1937fc973d7b13d066034c70443437d8b5c93cd026ca9441fca5",
+    "definition_codes": [12021, 12023],
+    "elaboration_code": 12128,
+    "scope": "Formats checked against preserved V12 lines47-78 and755. The synchronizer elaboration File: identifies its instantiator, not its SDK definition. No SDK-source attribution is claimed."
+  },
+  "limits": "Synthetic host mocks use these original diagnostics. No actual netlist or timing qualification is implied."
+}
