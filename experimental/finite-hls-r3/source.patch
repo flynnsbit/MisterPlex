@@ -1,0 +1,2216 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -499,6 +499,7 @@
+ MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
+ # Host recon headers (Phase 3.3i STREAM path)
+ MPLEX_HDR := \
++	$(ROOT)/arm/misterplexd/finite_hls_io.hpp \
+ 	$(ROOT)/arm/misterplexd/natural_eof.hpp \
+ 	$(ROOT)/arm/misterplexd/playback_controls.hpp \
+ 	$(ROOT)/host/libmisterplex/video_backend.hpp \
+@@ -577,7 +578,7 @@
+ # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
+ # whole-archive pthread required for std::thread under -static.
+ # Static iconv can load incompatible device gconv DSOs even without an ELF interpreter.
+-ARM_FFMPEG_PREFIX ?= $(ROOT)/build/deps/ffmpeg-arm-static-safe
++ARM_FFMPEG_PREFIX ?= $(ROOT)/build/deps/ffmpeg-arm-static-safe-hls
+ ARM_NM ?= $(patsubst %g++,%nm,$(ARM_CXX))
+ ARM_PLEXD_OUTPUT ?= $(ROOT)/build/arm/misterplexd
+ ARM_PLEXD_AV_TRACE ?= 0
+diff --git a/arm/misterplexd/av_inproc_decode.cpp b/arm/misterplexd/av_inproc_decode.cpp
+--- a/arm/misterplexd/av_inproc_decode.cpp
++++ b/arm/misterplexd/av_inproc_decode.cpp
+@@ -5,6 +5,7 @@
+ #include "libmisterplex/av_inproc_decode.hpp"
+ #include "libmisterplex/h264_sps.hpp"
+ #include "libmisterplex/fpga_terminal.hpp"
++#include "finite_hls_io.hpp"
+ #include "log_redact.hpp"
+ 
+ #include <algorithm>
+@@ -60,6 +61,12 @@
+     if (pos == std::string::npos)
+         return false;
+     return path.compare(0, 5, "file:") != 0;
++}
++
++bool looksHlsPlaylist(const std::string& url) {
++    const auto end = url.find_first_of("?#");
++    const auto path = url.substr(0, end);
++    return path.size() >= 5 && path.compare(path.size() - 5, 5, ".m3u8") == 0;
+ }
+ 
+ int64_t monotonicMs() {
+@@ -384,6 +391,7 @@
+ 
+ struct AvInprocDecoder::Impl {
+     AVFormatContext* fmt = nullptr;
++    FiniteHlsIo hls;
+     AVCodecContext* codec = nullptr;
+     AVCodecContext* acodec = nullptr;
+     AVFrame* frame = nullptr;
+@@ -420,6 +428,7 @@
+     bool inputReadCancelled = false;
+     uint64_t inputVideoPackets = 0;
+     int64_t lastInputPts = AV_NOPTS_VALUE, lastInputDuration = 0, lastAuDuration = 0;
++    int64_t hlsOriginPts = AV_NOPTS_VALUE;
+     AVRational inputTimebase{0, 0};
+     int64_t seekTargetPts = AV_NOPTS_VALUE;
+     bool seekChecked = false;
+@@ -572,13 +581,45 @@
+ 
+     AVRational fmtTimebase() const { return fmt->streams[aidx]->time_base; }
+ 
++    std::string inputError(const char* context, int result) const {
++        std::string error = std::string(context) + ": " + avErr(result);
++        if (hls.enabled() && hls.error())
++            error += std::string(" (finite HLS ") + hls.reason() + ")";
++        return error;
++    }
++
+     int readInput(const std::atomic<int>& abort) {
+-        const int result = av_read_frame(fmt, pkt);
++        int result = av_read_frame(fmt, pkt);
++        if (hls.enabled()) {
++            if (result >= 0 && (pkt->flags & AV_PKT_FLAG_CORRUPT))
++                hls.fail(AVERROR_INVALIDDATA, "corrupt-packet");
++            if (hls.error())
++                result = hls.error();
++            else if (result == AVERROR_EOF) {
++                const AVRational micros{1, 1000000};
++                const bool spanSafe = hlsOriginPts != AV_NOPTS_VALUE &&
++                    lastInputPts >= hlsOriginPts &&
++                    (hlsOriginPts >= 0 || lastInputPts <= INT64_MAX + hlsOriginPts);
++                const int64_t span = spanSafe ? lastInputPts - hlsOriginPts : 0;
++                const bool timed = spanSafe && lastInputDuration > 0 &&
++                    span <= INT64_MAX - lastInputDuration &&
++                    inputTimebase.num > 0 && inputTimebase.den > 0;
++                const auto duration = timed ? av_rescale_q(
++                    span + lastInputDuration, inputTimebase, micros) : 0;
++                const auto frame = timed ? av_rescale_q(lastInputDuration, inputTimebase, micros) : 0;
++                const auto tick = timed ? av_rescale_q_rnd(1, inputTimebase, micros, AV_ROUND_UP) : 0;
++                if (hls.verifyEof(duration, frame, tick) < 0)
++                    result = hls.error();
++            }
++            if (result < 0) av_packet_unref(pkt);
++        }
+         inputReadCancelled = abort.load() || (options.cancelled && options.cancelled->load());
+         inputReadResult = result;
+         if (result >= 0 &&
+             fmt->streams[pkt->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+             ++inputVideoPackets;
++            if (hls.enabled() && hlsOriginPts == AV_NOPTS_VALUE)
++                hlsOriginPts = pkt->pts;
+             lastInputPts = pkt->pts;
+             lastInputDuration = pkt->duration;
+             inputTimebase = fmt->streams[pkt->stream_index]->time_base;
+@@ -674,15 +715,24 @@
+ 
+ int AvInprocDecoder::interruptThunk(void* p) {
+     auto* d = static_cast<AvInprocDecoder*>(p);
++    const bool timedOut = d && d->ioDeadlineMs_.load() > 0 &&
++                          monotonicMs() > d->ioDeadlineMs_.load();
++    if (timedOut && d->impl_ && d->impl_->hls.enabled())
++        d->impl_->hls.fail(AVERROR(ETIMEDOUT), "deadline");
++    if (d && d->impl_ && d->impl_->hls.enabled() &&
++        (d->abort_.load(std::memory_order_relaxed) ||
++         (d->cancelled_ && d->cancelled_->load())))
++        d->impl_->hls.noteAbandon();
+     return d && (d->abort_.load(std::memory_order_relaxed) ||
+                  (d->cancelled_ && d->cancelled_->load()) ||
+-                 (d->ioDeadlineMs_.load() > 0 && monotonicMs() > d->ioDeadlineMs_.load()));
++                 timedOut || (d->impl_ && d->impl_->hls.error()));
+ }
+ 
+ void AvInprocDecoder::requestStop() {
+     abort_.store(1, std::memory_order_relaxed);
+     if (!impl_)
+         return;
++    if (impl_->hls.enabled()) impl_->hls.noteAbandon();
+     std::lock_guard<std::mutex> lk(impl_->pcmMu);
+     impl_->stopping = true;
+     impl_->blocked.store(AvDemuxBlocked::Cancelled);
+@@ -778,10 +828,44 @@
+         av_dict_set(&options, "headers", opts.headers.c_str(), 0);
+     av_dict_set(&options, "rw_timeout", "5000000", 0);
+     av_dict_set(&options, "probesize", "262144", 0);
++    const bool finiteHls = opts.finiteHls || looksHlsPlaylist(url);
++    const AVInputFormat* inputFormat = nullptr;
++    if (finiteHls) {
++        inputFormat = av_find_input_format("hls");
++        if (!inputFormat) {
++            av_dict_free(&options);
++            err = "finite HLS requires the reviewed static-safe libav HLS demuxer";
++            return false;
++        }
++        if (impl_->hls.attach(impl_->fmt, url) < 0) {
++            av_dict_free(&options);
++            err = "finite HLS requires a fixed LAN HTTP origin or local files";
++            return false;
++        }
++        av_dict_set(&options, "protocol_whitelist", "file,http,tcp", 0);
++        av_dict_set(&options, "format_whitelist", "hls,mpegts", 0);
++        av_dict_set(&options, "live_start_index", "0", 0);
++        av_dict_set(&options, "http_persistent", "0", 0);
++        av_dict_set(&options, "http_multiple", "0", 0);
++        av_dict_set(&options, "seg_max_retry", "0", 0);
++        // Nested HLS probing may inspect audio; video remains parser-only.
++        av_dict_set(&options, "codec_whitelist",
++            "aac,aac_latm,ac3,eac3,mp3,mp3float,flac,alac,opus,vorbis,"
++            "pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le", 0);
++    } else {
++        // Refuse unguarded HLS before its demuxer can open nested resources.
++        av_dict_set(&options, "format_whitelist",
++                    "mov,mp4,m4a,3gp,3g2,mj2,mpegts,h264,matroska,webm,mpeg,flv", 0);
++    }
+     ioDeadlineMs_.store(monotonicMs() + 5000);
+-    const int opened = avformat_open_input(&impl_->fmt, url.c_str(), nullptr, &options);
++    int opened = avformat_open_input(&impl_->fmt, url.c_str(), inputFormat, &options);
++    if (impl_->hls.error()) opened = impl_->hls.error();
+     av_dict_free(&options);
+-    if (opened < 0) { err = "compressed input open: " + avErr(opened); return false; }
++    if (opened < 0) { err = impl_->inputError("compressed input open", opened); return false; }
++    if (!finiteHls && std::string(impl_->fmt->iformat->name) == "hls") {
++        err = "extensionless HLS requires an explicit finite transport contract";
++        return false;
++    }
+     impl_->pkt = av_packet_alloc();
+     if (!impl_->pkt) { err = "packet allocation failed"; return false; }
+     auto findStreams = [&] {
+@@ -797,7 +881,7 @@
+     size_t probeBytes = 0;
+     while (impl_->vidx < 0) {
+         const int read = impl_->readInput(abort_);
+-        if (read < 0) { err = "no compressed video stream: " + avErr(read); return false; }
++        if (read < 0) { err = impl_->inputError("no compressed video stream", read); return false; }
+         probeBytes += static_cast<size_t>(impl_->pkt->size);
+         if (probeBytes > kCompressedPacketByteLimit ||
+             impl_->queuedPackets.size() >= kCompressedPacketCountLimit) {
+@@ -832,7 +916,7 @@
+         size_t discovered = 0;
+         while (origin == AV_NOPTS_VALUE) {
+             ret = impl_->readInput(abort_);
+-            if (ret < 0) { err = "seek origin unavailable: " + avErr(ret); return false; }
++            if (ret < 0) { err = impl_->inputError("seek origin unavailable", ret); return false; }
+             discovered += static_cast<size_t>(impl_->pkt->size);
+             if (impl_->pkt->stream_index == impl_->vidx)
+                 origin = impl_->pkt->pts;
+@@ -848,7 +932,10 @@
+             return false;
+         }
+         const int64_t ts = origin + offset;
++        if (finiteHls) impl_->hlsOriginPts = origin;
++        if (finiteHls) impl_->hls.beginSeek();
+         ret = av_seek_frame(impl_->fmt, impl_->vidx, ts, AVSEEK_FLAG_BACKWARD);
++        if (finiteHls) impl_->hls.endSeek();
+         if (ret < 0) { err = "compressed seek: " + avErr(ret); return false; }
+         impl_->seekTargetPts = ts;
+         for (auto* packet : impl_->queuedPackets) av_packet_free(&packet);
+@@ -904,6 +991,14 @@
+                 result.ioEof = impl_->fmt->pb->eof_reached != 0;
+                 result.ioBytesRead = impl_->fmt->pb->bytes_read;
+             }
++        }
++        if (impl_->hls.enabled()) {
++            result.ioError = impl_->hls.transportError();
++            result.ioEof = impl_->hls.transportEof();
++            result.ioBytesRead = impl_->hls.mediaBytes();
++            result.finiteHlsError = impl_->hls.error();
++            result.finiteHlsVerified = impl_->hls.verified();
++            result.finiteHlsErrorKind = impl_->hls.reason();
+         }
+         result.inputVideoPackets = impl_->inputVideoPackets;
+         result.returnedAccessUnits = impl_->accessUnits;
+@@ -973,6 +1068,11 @@
+     field("demux_error_present", !state.error.empty(), known);
+     out << " demux_error=" << (known ? fpgaTerminalText(redactSensitive(state.error)) :
+                                        "unavailable");
++    if (state.finiteHlsError) {
++        field("finite_hls_error", *state.finiteHlsError, known);
++        field("finite_hls_verified", state.finiteHlsVerified.value_or(false), known);
++        out << " finite_hls_error_kind=" << state.finiteHlsErrorKind;
++    }
+     return out.str();
+ }
+ 
+@@ -1055,7 +1155,7 @@
+         impl_->blocked.store(AvDemuxBlocked::Eof);
+         return pcmState();
+     }
+-    if (read < 0) return fail("compressed audio demux: " + avErr(read));
++    if (read < 0) return fail(impl_->inputError("compressed audio demux", read));
+     if (impl_->pkt->stream_index == impl_->vidx) {
+         if (impl_->pkt->size <= 0 ||
+             size_t(impl_->pkt->size) > impl_->options.maxAccessUnitBytes)
+@@ -1221,7 +1321,7 @@
+             if (ret < 0) return fail("Annex-B EOF drain: " + avErr(ret));
+             continue;
+         }
+-        if (ret < 0) return fail("compressed demux: " + avErr(ret));
++        if (ret < 0) return fail(impl_->inputError("compressed demux", ret));
+         if (impl_->pkt->stream_index == impl_->vidx) {
+             ret = av_bsf_send_packet(impl_->bsf, impl_->pkt);
+             if (ret < 0) return fail("Annex-B packet rejected: " + avErr(ret));
+diff --git a/arm/misterplexd/finite_hls_io.hpp b/arm/misterplexd/finite_hls_io.hpp
+new file mode 100644
+--- /dev/null
++++ b/arm/misterplexd/finite_hls_io.hpp
+@@ -0,0 +1,456 @@
++#pragma once
++
++#include <atomic>
++#include <algorithm>
++#include <cerrno>
++#include <cctype>
++#include <cstdint>
++#include <cstring>
++#include <limits>
++#include <map>
++#include <new>
++#include <string>
++
++extern "C" {
++#include <libavformat/avformat.h>
++#include <libavutil/avutil.h>
++#include <libavutil/error.h>
++#include <libavutil/mem.h>
++#include <libavutil/opt.h>
++#include <libavutil/parseutils.h>
++}
++
++namespace misterplex {
++
++// libav owns HLS parsing, segment selection, reloads and timestamps. Its HLS
++// demuxer can otherwise skip failed segments or report EOF on a stalled list.
++// Observe the public I/O boundary so neither can become a successful finite EOF.
++class FiniteHlsIo {
++    struct Manifest {
++        uint64_t sequence = 0, discontinuitySequence = 0, segments = 0;
++        int64_t durationUs = 0, precisionUs = 0;
++        bool target = false;
++        bool master = false, media = false, terminal = false;
++        bool pending = false, pendingVariant = false;
++    };
++
++    struct Origin {
++        std::string host;
++        int port = -1;
++        bool file = false;
++
++        bool parse(const char* url) {
++            char protocol[16]{}, auth[1024]{}, hostname[1024]{};
++            av_url_split(protocol, sizeof(protocol), auth, sizeof(auth),
++                         hostname, sizeof(hostname), &port, nullptr, 0, url);
++            if (*auth || std::strlen(hostname) >= sizeof(hostname) - 1) return false;
++            file = !*protocol || std::strcmp(protocol, "file") == 0;
++            if (file) return !*hostname;
++            if (std::strcmp(protocol, "http") || !*hostname) return false;
++            if (port < 0) port = 80;
++            host = hostname;
++            std::transform(host.begin(), host.end(), host.begin(),
++                           [](unsigned char c) { return char(std::tolower(c)); });
++            return true;
++        }
++
++        bool same(const Origin& other) const {
++            return file == other.file && (file || (port == other.port && host == other.host));
++        }
++    };
++
++    struct Input {
++        FiniteHlsIo* owner = nullptr;
++        AVIOContext* upstream = nullptr;
++        AVIOContext* wrapper = nullptr;
++        std::string identity, line;
++        Manifest manifest;
++        uint64_t bytes = 0;
++        int64_t expectedBytes = 0;
++        bool classified = false, playlist = false, eof = false, finished = false;
++
++        bool unsignedNumber(size_t start, uint64_t& value) const {
++            value = 0;
++            if (start >= line.size()) return false;
++            for (size_t i = start; i < line.size(); ++i) {
++                const char digit = line[i];
++                if (digit < '0' || digit > '9' ||
++                    value > (uint64_t(INT64_MAX) - unsigned(digit - '0')) / 10)
++                    return false;
++                value = value * 10 + unsigned(digit - '0');
++            }
++            return true;
++        }
++
++        int lineComplete() {
++            if (!line.empty() && line.back() == '\r') line.pop_back();
++            if (!classified) {
++                playlist = line == "#EXTM3U";
++                classified = true;
++                line.clear();
++                return 0;
++            }
++            const bool blank = line.find_first_not_of(" \t") == std::string::npos;
++            const bool ordinaryComment =
++                !line.empty() && line[0] == '#' && line.rfind("#EXT", 0) != 0;
++            if (manifest.pendingVariant && (blank || ordinaryComment)) {
++                line.clear();
++                return 0;
++            }
++            if (line.rfind("#EXTINF:", 0) == 0) {
++                if (manifest.pending || manifest.pendingVariant || manifest.terminal ||
++                    manifest.master)
++                    return owner->fail(AVERROR_INVALIDDATA);
++                const auto comma = line.find(',', 8);
++                const auto duration = line.substr(8, comma == std::string::npos
++                                                       ? comma : comma - 8);
++                int64_t micros = 0, precision = 1000000;
++                bool decimal = false;
++                for (char c : duration) {
++                    if (c == '.' && !decimal) decimal = true;
++                    else if (c < '0' || c > '9')
++                        return owner->fail(AVERROR_INVALIDDATA);
++                    else if (decimal && precision > 1) precision /= 10;
++                }
++                if (av_parse_time(&micros, duration.c_str(), 1) < 0 || micros <= 0 ||
++                    micros > INT64_MAX - manifest.durationUs ||
++                    precision > INT64_MAX - manifest.precisionUs)
++                    return owner->fail(AVERROR_INVALIDDATA);
++                manifest.durationUs += micros;
++                manifest.precisionUs += precision;
++                manifest.media = manifest.pending = true;
++            } else if (line.rfind("#EXT-X-STREAM-INF:", 0) == 0) {
++                if (manifest.pending || manifest.pendingVariant || manifest.terminal ||
++                    manifest.media)
++                    return owner->fail(AVERROR_INVALIDDATA);
++                manifest.master = manifest.pendingVariant = true;
++            } else if (line.rfind("#EXT-X-TARGETDURATION:", 0) == 0) {
++                uint64_t value = 0;
++                if (manifest.master || manifest.pendingVariant ||
++                    !unsignedNumber(22, value) || !value)
++                    return owner->fail(AVERROR_INVALIDDATA);
++                manifest.target = true;
++                manifest.media = true;
++            } else if (line.rfind("#EXT-X-MEDIA-SEQUENCE:", 0) == 0) {
++                uint64_t value = 0;
++                if (manifest.master || manifest.pendingVariant || !unsignedNumber(22, value))
++                    return owner->fail(AVERROR_INVALIDDATA);
++                manifest.sequence = value;
++            } else if (line.rfind("#EXT-X-DISCONTINUITY-SEQUENCE:", 0) == 0) {
++                uint64_t value = 0;
++                if (manifest.master || manifest.pendingVariant ||
++                    !unsignedNumber(sizeof("#EXT-X-DISCONTINUITY-SEQUENCE:") - 1, value))
++                    return owner->fail(AVERROR_INVALIDDATA);
++                manifest.discontinuitySequence = value;
++            } else if (line == "#EXT-X-ENDLIST") {
++                if (manifest.pending || manifest.pendingVariant || manifest.master)
++                    return owner->fail(AVERROR_INVALIDDATA);
++                manifest.terminal = true;
++            } else if (line.rfind("#EXT-X-MAP:", 0) == 0) {
++                return owner->fail(AVERROR_INVALIDDATA);
++            } else if (line.rfind("#EXT-X-GAP", 0) == 0 ||
++                       line.rfind("#EXT-X-SKIP", 0) == 0 ||
++                       line.rfind("#EXT-X-BYTERANGE", 0) == 0 ||
++                       line.rfind("#EXT-X-DISCONTINUITY", 0) == 0) {
++                return owner->fail(AVERROR_INVALIDDATA);
++            } else if (!line.empty() && line[0] != '#') {
++                if (manifest.pending) {
++                    ++manifest.segments;
++                    manifest.pending = false;
++                } else if (manifest.pendingVariant) {
++                    manifest.pendingVariant = false;
++                } else {
++                    return owner->fail(AVERROR_INVALIDDATA);
++                }
++            }
++            line.clear();
++            return 0;
++        }
++
++        int observe(const uint8_t* data, int size) {
++            bytes += unsigned(size);
++            // TS/media bytes are forwarded unchanged; only a manifest's bounded
++            // metadata lines are retained. No segment URI is interpreted here.
++            if (!classified && line.empty() && data[0] != '#') {
++                classified = true;
++                playlist = false;
++            }
++            if (classified && !playlist) return 0;
++            if (bytes > 1024 * 1024) return owner->fail(AVERROR(EFBIG));
++            for (int i = 0; i < size; ++i) {
++                if (data[i] == '\n') {
++                    if (lineComplete() < 0) return owner->error();
++                    if (!playlist) return 0;
++                } else {
++                    if (line.size() >= 4095) return owner->fail(AVERROR(EFBIG));
++                    line.push_back(char(data[i]));
++                }
++            }
++            return 0;
++        }
++
++        int finish(bool sawEof, bool allowAbandon = false) {
++            if (finished) return owner->error();
++            finished = true;
++            eof = sawEof;
++            if (!bytes || bytes != uint64_t(expectedBytes)) {
++                if (allowAbandon) return owner->error();
++                return owner->fail(AVERROR(EIO), "resource-length");
++            }
++            if (!classified || playlist) {
++                if (!line.empty() && lineComplete() < 0) return owner->error();
++                if (!playlist || manifest.pending || manifest.pendingVariant)
++                    return owner->fail(AVERROR_INVALIDDATA);
++                if (manifest.media) {
++                    if (!manifest.target) return owner->fail(AVERROR_INVALIDDATA);
++                    auto& previous = owner->manifests_[identity];
++                    if ((previous.media &&
++                         (previous.sequence != manifest.sequence ||
++                          previous.discontinuitySequence != manifest.discontinuitySequence ||
++                          previous.segments > manifest.segments ||
++                          previous.durationUs > manifest.durationUs ||
++                          (previous.terminal && !manifest.terminal))) ||
++                        (manifest.terminal && !manifest.segments))
++                        return owner->fail(AVERROR_INVALIDDATA);
++                    previous = manifest;
++                }
++            }
++            return owner->error();
++        }
++    };
++
++    using Open = int (*)(AVFormatContext*, AVIOContext**, const char*, int, AVDictionary**);
++    using Close = int (*)(AVFormatContext*, AVIOContext*);
++    Open originalOpen_ = nullptr;
++    Close originalClose_ = nullptr;
++    Origin origin_;
++    std::atomic<int> error_{0};
++    std::atomic<int> transportError_{0};
++    std::atomic<const char*> reason_{"none"};
++    std::atomic<bool> abandoning_{false};
++    std::atomic<bool> seeking_{false};
++    std::map<std::string, Manifest> manifests_;
++    std::map<AVIOContext*, Input*> inputs_;
++    int64_t mediaBytes_ = 0;
++    bool enabled_ = false, verified_ = false, transportEof_ = false;
++
++    static void* child(void* object, void* previous) {
++        if (previous) return nullptr;
++        return static_cast<Input*>(static_cast<AVIOContext*>(object)->opaque)->upstream;
++    }
++
++    static const AVClass* ioClass() {
++        static const AVOption options[1] = {};
++        static const AVClass value = [] {
++            AVClass result{};
++            result.class_name = "MiSTerPlex finite HLS I/O";
++            result.item_name = av_default_item_name;
++            result.option = options;
++            result.version = LIBAVUTIL_VERSION_INT;
++            // Preserve libav's redirect location, headers and protocol options.
++            result.child_next = child;
++            return result;
++        }();
++        return &value;
++    }
++
++    static int read(void* opaque, uint8_t* data, int size) noexcept {
++        auto& input = *static_cast<Input*>(opaque);
++        if (input.owner->error()) return input.owner->error();
++        const int result = avio_read_partial(input.upstream, data, size);
++        try {
++            if (result > 0) {
++                if (input.observe(data, result) < 0) return input.owner->error();
++                if (input.classified && !input.playlist)
++                    input.owner->mediaBytes_ += result;
++                return result;
++            }
++            if (result != AVERROR_EOF && result != 0)
++                return input.owner->transportFail(result);
++            if (input.upstream->error < 0 && input.upstream->error != AVERROR_EOF)
++                return input.owner->transportFail(input.upstream->error);
++            input.owner->transportEof_ = true;
++            if (input.finish(true) < 0) return input.owner->error();
++            return AVERROR_EOF;
++        } catch (...) {
++            return input.owner->fail(AVERROR(ENOMEM));
++        }
++    }
++
++    static int64_t seek(void* opaque, int64_t offset, int whence) {
++        auto& input = *static_cast<Input*>(opaque);
++        if (whence == AVSEEK_SIZE) return avio_size(input.upstream);
++        // HLS owns time/segment seeks. A manifest must be observed in order;
++        // libav's own AVIO buffer still handles its short probe rewinds.
++        if (input.playlist) return AVERROR(ENOSYS);
++        return avio_seek(input.upstream, offset, whence);
++    }
++
++    static int open(AVFormatContext* format, AVIOContext** output, const char* url,
++                    int flags, AVDictionary** options) noexcept {
++        auto& owner = *static_cast<FiniteHlsIo*>(format->opaque);
++        if (owner.error()) return owner.error();
++        if (flags != AVIO_FLAG_READ || !url)
++            return owner.fail(AVERROR(EINVAL));
++        Input* input = nullptr;
++        uint8_t* buffer = nullptr;
++        AVIOContext* upstream = nullptr;
++        try {
++            Origin requested;
++            if (!requested.parse(url) || !owner.origin_.same(requested))
++                return owner.fail(AVERROR(EACCES), "origin");
++            if (owner.inputs_.size() >= 8 || owner.manifests_.size() >= 8)
++                return owner.fail(AVERROR(EFBIG));
++            // libav forwards custom headers on redirects. The fixed PMS origin
++            // is authoritative; do not send a session/token to another endpoint.
++            AVDictionary* local = nullptr;
++            AVDictionary** protocolOptions = options ? options : &local;
++            if (av_dict_set(protocolOptions, "max_redirects", "0", 0) < 0)
++                return owner.fail(AVERROR(ENOMEM));
++            owner.transportEof_ = false;
++            const int result = owner.originalOpen_(format, &upstream, url, flags, protocolOptions);
++            av_dict_free(&local);
++            if (result < 0) return owner.transportFail(result);
++            input = new Input;
++            input->owner = &owner;
++            input->upstream = upstream;
++            input->identity = url;
++            input->expectedBytes = avio_size(upstream);
++            // Public libav I/O does not distinguish a truncated chunked body
++            // from EOF on all supported versions. Require a verifiable length
++            // instead of guessing that an unknown-length response completed.
++            if (input->expectedBytes <= 0) {
++                const int error = input->expectedBytes < 0 ? AVERROR(ENOSYS) : AVERROR_INVALIDDATA;
++                owner.originalClose_(format, upstream);
++                delete input;
++                return owner.fail(error, "resource-length");
++            }
++            uint8_t* location = nullptr;
++            if (av_opt_get(upstream, "location", AV_OPT_SEARCH_CHILDREN, &location) >= 0) {
++                try {
++                    if (location && *location)
++                        input->identity = reinterpret_cast<const char*>(location);
++                } catch (...) {
++                    av_free(location);
++                    throw;
++                }
++                av_free(location);
++            }
++            if (input->identity.size() > 4095) {
++                owner.originalClose_(format, upstream);
++                delete input;
++                return owner.fail(AVERROR(EFBIG));
++            }
++            buffer = static_cast<uint8_t*>(av_malloc(32768));
++            if (!buffer) throw std::bad_alloc();
++            input->wrapper = avio_alloc_context(buffer, 32768, 0, input, read, nullptr, seek);
++            if (!input->wrapper) throw std::bad_alloc();
++            buffer = nullptr;
++            input->wrapper->av_class = ioClass();
++            input->wrapper->seekable = upstream->seekable;
++            owner.inputs_.emplace(input->wrapper, input);
++            *output = input->wrapper;
++            return 0;
++        } catch (...) {
++            av_free(buffer);
++            if (input && input->wrapper) {
++                av_freep(&input->wrapper->buffer);
++                avio_context_free(&input->wrapper);
++            }
++            if (upstream) owner.originalClose_(format, upstream);
++            delete input;
++            return owner.fail(AVERROR(ENOMEM));
++        }
++    }
++
++    static int close(AVFormatContext* format, AVIOContext* io) noexcept {
++        auto& owner = *static_cast<FiniteHlsIo*>(format->opaque);
++        const auto found = owner.inputs_.find(io);
++        if (found == owner.inputs_.end())
++            return owner.originalClose_(format, io);
++        Input* input = found->second;
++        const bool abandoning = owner.abandoning();
++        const int transportError = input->upstream->error;
++        if (transportError < 0 && transportError != AVERROR_EOF &&
++            !(abandoning && transportError == AVERROR_EXIT))
++            owner.transportFail(transportError);
++        if (input->finish(false, abandoning) < 0 && !abandoning) {
++            // Preserve the first explicit finite-contract error across close.
++        }
++        const int result = owner.originalClose_(format, input->upstream);
++        if (result < 0 && !(abandoning && result == AVERROR_EXIT))
++            owner.transportFail(result);
++        owner.inputs_.erase(found);
++        av_freep(&io->buffer);
++        avio_context_free(&io);
++        delete input;
++        return result;
++    }
++
++public:
++    int attach(AVFormatContext* format, const std::string& url) {
++        if (url.size() > 4095 || !origin_.parse(url.c_str()))
++            return fail(AVERROR(EINVAL));
++        enabled_ = true;
++        originalOpen_ = format->io_open;
++        originalClose_ = format->io_close2;
++        format->opaque = this;
++        format->io_open = open;
++        format->io_close2 = close;
++        return 0;
++    }
++
++    bool enabled() const { return enabled_; }
++    int error() const { return error_.load(std::memory_order_relaxed); }
++    int fail(int result, const char* reason = "manifest") {
++        if (result >= 0) result = AVERROR_INVALIDDATA;
++        int empty = 0;
++        if (error_.compare_exchange_strong(empty, result, std::memory_order_relaxed))
++            reason_.store(reason, std::memory_order_relaxed);
++        return error();
++    }
++    int transportFail(int result) {
++        int empty = 0;
++        transportError_.compare_exchange_strong(empty, result, std::memory_order_relaxed);
++        return fail(result, "transport");
++    }
++    int transportError() const { return transportError_.load(std::memory_order_relaxed); }
++    bool transportEof() const { return transportEof_; }
++    const char* reason() const { return reason_.load(std::memory_order_relaxed); }
++    int64_t mediaBytes() const { return mediaBytes_; }
++    bool verified() const { return verified_; }
++    void noteAbandon() { abandoning_.store(true, std::memory_order_relaxed); }
++    void beginSeek() { seeking_.store(true, std::memory_order_relaxed); }
++    void endSeek() { seeking_.store(false, std::memory_order_relaxed); }
++    bool abandoning() const {
++        return abandoning_.load(std::memory_order_relaxed) ||
++               seeking_.load(std::memory_order_relaxed);
++    }
++
++    int verifyEof(int64_t videoDurationUs, int64_t frameDurationUs, int64_t tickUs) {
++        if (error()) return error();
++        if (!mediaBytes_ || manifests_.size() != 1 || videoDurationUs <= 0 ||
++            frameDurationUs <= 0)
++            return fail(AVERROR_INVALIDDATA, "completion");
++        for (const auto& entry : manifests_)
++            if (!entry.second.terminal || !entry.second.segments)
++                return fail(AVERROR_INVALIDDATA, "completion");
++        const auto& media = manifests_.begin()->second;
++        // This is a completion check, not a replacement clock: retain every
++        // original PTS and reject a terminal list whose video extent is short.
++        // Decimal EXTINF rounding is bounded to less than half a source frame.
++        const int64_t halfFrame = (frameDurationUs - 1) / 2;
++        const uint64_t boundaries = 2 * (media.segments + 1);
++        const int64_t clockRounding = tickUs > 0 && boundaries > uint64_t(halfFrame / tickUs)
++            ? halfFrame : int64_t(boundaries) * tickUs;
++        const int64_t tolerance = std::min(halfFrame,
++            std::min(media.precisionUs, halfFrame) + clockRounding);
++        const int64_t difference = videoDurationUs > media.durationUs
++            ? videoDurationUs - media.durationUs : media.durationUs - videoDurationUs;
++        if (difference > tolerance) return fail(AVERROR_INVALIDDATA, "video-extent");
++        verified_ = true;
++        return 0;
++    }
++};
++
++} // namespace misterplex
+diff --git a/arm/misterplexd/plex_resolve.cpp b/arm/misterplexd/plex_resolve.cpp
+--- a/arm/misterplexd/plex_resolve.cpp
++++ b/arm/misterplexd/plex_resolve.cpp
+@@ -462,11 +462,12 @@
+     if (isFpgaPlexProfile(weak) && !validateWeakLadder(weak))
+         return {};
+     std::ostringstream q;
+-    q << base << "/video/:/transcode/universal/start.mp4"
++    q << base << "/video/:/transcode/universal/"
++      << (isFpgaPlexProfile(weak) ? "start.m3u8" : "start.mp4")
+       << "?hasMDE=1"
+       << "&path=" << urlEncodeQuery(metadataKey)
+       << "&mediaIndex=0&partIndex=0"
+-      << "&protocol=http&fastSeek=0"
++      << "&protocol=" << (isFpgaPlexProfile(weak) ? "hls" : "http") << "&fastSeek=0"
+       << "&directPlay=0&directStream=0"
+       << "&subtitleSize=100&audioBoost=100&location=lan&copyts=1"
+       << "&autoAdjustQuality=0"
+@@ -685,9 +686,17 @@
+     if (vlevel.empty())
+         vlevel = std::to_string(weak.h264Level);
+ 
++    static constexpr char hlsStart[] = "/video/:/transcode/universal/start.m3u8?";
++    if (isFpgaPlexProfile(weak) &&
++        (startUrl.compare(pathPos, sizeof(hlsStart) - 1, hlsStart) != 0 ||
++         qparam("protocol") != "hls"))
++        return {};
++
+     std::ostringstream decisionUrl;
+     decisionUrl << base << "/video/:/transcode/universal/decision?hasMDE=1&path=" << path
+-                << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=0&directPlay=0&directStream=0"
++                << "&mediaIndex=0&partIndex=0&protocol="
++                << (isFpgaPlexProfile(weak) ? "hls" : "http")
++                << "&fastSeek=0&directPlay=0&directStream=0"
+                 << "&location=lan&session=" << urlEncodeQuery(sessionId)
+                 << "&videoQuality=" << vq << "&videoResolution=" << vres
+                 << "&maxVideoBitrate=" << br
+@@ -699,6 +708,8 @@
+         decisionUrl << "&container=mpegts&audioChannels=2&videoFrameRate="
+                     << urlEncodeQuery(weak.fpgaFpsDen == 1 ? std::to_string(weak.fpgaFpsNum)
+                         : std::to_string(weak.fpgaFpsNum) + "/" + std::to_string(weak.fpgaFpsDen));
++        const auto offset = qparam("offset");
++        if (!offset.empty()) decisionUrl << "&offset=" << offset;
+     }
+     if (!token.empty() && !isFpgaPlexProfile(weak))
+         decisionUrl << "&X-Plex-Token=" << urlEncodeQuery(token);
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-off.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-off.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-off.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-off.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IDR-240p-23976-filter-off">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-on.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-on.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-on.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-on.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IDR-240p-23976-filter-on">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-off.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-off.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-off.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-off.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IDR-240p-24-filter-off">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-on.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-on.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-on.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-on.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IDR-240p-24-filter-on">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=1:min-keyint=1:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-off.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-off.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-off.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-off.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IP-240p-23976-filter-off">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-on.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-on.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-on.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-on.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IP-240p-23976-filter-on">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24000/1001 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-off.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-off.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-off.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-off.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IP-240p-24-filter-off">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=1" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-on.xml b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-on.xml
+--- a/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-on.xml
++++ b/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-on.xml
+@@ -2,6 +2,10 @@
+ <Client name="MiSTerPlex-FPGA-IP-240p-24-filter-on">
+   <TranscodeTargets>
+     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
++      <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
++      <Setting name="SubtitleSize" value="100" />
++    </VideoProfile>
++    <VideoProfile protocol="hls" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
+       <Setting name="VideoEncodeFlags" value="-c:v libx264 -profile:v baseline -level 3.0 -r 24 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=24:min-keyint=24:scenecut=0:open-gop=0:intra-refresh=0:threads=1:sliced-threads=0:slices=1:vbv-maxrate=4000:vbv-bufsize=1000:qpmin=10:qpmax=40:no-deblock=0" />
+       <Setting name="SubtitleSize" value="100" />
+     </VideoProfile>
+@@ -43,5 +47,19 @@
+         </Limitations>
+       </VideoAudioCodec>
+     </VideoTranscodeTarget>
++    <VideoTranscodeTarget protocol="hls" context="streaming">
++      <VideoCodec name="h264">
++        <Limitations>
++          <Match name="video.profile" list="baseline" isRequired="true" />
++          <UpperBound name="video.level" value="30" isRequired="true" />
++          <UpperBound name="video.refFrames" value="1" isRequired="true" />
++        </Limitations>
++      </VideoCodec>
++      <VideoAudioCodec name="aac">
++        <Limitations>
++          <UpperBound name="audio.channels" value="2" isRequired="true" />
++        </Limitations>
++      </VideoAudioCodec>
++    </VideoTranscodeTarget>
+   </TranscodeTargetProfiles>
+ </Client>
+diff --git a/docs/fpga-hls-transport.md b/docs/fpga-hls-transport.md
+new file mode 100644
+--- /dev/null
++++ b/docs/fpga-hls-transport.md
+@@ -0,0 +1,108 @@
++# Finite FPGA Plex transport
++
++FPGA profiles request `universal/start.m3u8` and `protocol=hls`, including the
++matching decision request. Software profiles retain `start.mp4`/HTTP.
++The selected FPGA XML profile remains authoritative: no client ladder override
++is sent, and the token stays in headers. Each of the eight FPGA profiles adds
++an HLS target with exactly its existing HTTP encoding flags and constraints.
++The HTTP targets remain available for the previous companion.
++
++## Completion contract
++
++Libav owns HLS parsing, variant selection, URI resolution, reloading, MPEG-TS
++demuxing and timestamps. The companion's public `io_open`/`io_close2` wrapper
++only forwards bytes and observes bounded manifest/completion metadata. It does
++not implement a playlist downloader or segment scheduler.
++
++The supported input is one finite muxed MPEG-TS media playlist, optionally
++reached through a master, or an append-only event playlist that becomes finite.
++Playback starts at the beginning, not libav's default near-live-tail position.
++Natural EOF requires:
++
++* An advertised, nonempty `EXT-X-ENDLIST`, a positive target duration and
++  complete `EXTINF`/URI pairs.
++* Successful underlying resource reads with a verifiable length. Missing
++  resources, HTTP errors and short responses are fatal, not skipped.
++* Original video timestamp extent matching the advertised segment durations.
++  Decimal and segment-boundary clock rounding is bounded below half a frame;
++  no timestamps, frames, delay or padding are generated. A missing final frame
++  cannot become successful natural EOF merely because HTTP completed.
++
++**Compatibility limits are intentional and require PMS qualification.**
++Unknown-length/chunked resources are rejected: supported libav versions can
++report ordinary EOF for an interrupted chunked response, and the public AVIO
++interface does not expose sufficient framing state to prove completion.
++Redirects and cross-origin child requests are rejected rather than forwarding
++Plex session/token headers elsewhere. Direct HTTP must stay on the initially
++selected host/port; local-file HLS is also supported. HTTPS, byteranges,
++multiple media renditions, discontinuities, skipped/gap segments and changing
++media-sequence windows are not this FPGA transport contract. These cases fail
++closed, not through a progressive/software fallback.
++
++Libav HTTP persistence and parallel HTTP input are disabled so nested reads
++cannot bypass the public I/O guard. The existing five-second input deadlines
++and cancellation callbacks remain in force; no EOF reconnect loop is added.
++The wrapper adds at most eight 32-KiB AVIO buffers, retains no media bodies,
++and bounds a manifest to 1 MiB and a metadata line/identity to 4095 bytes.
++The existing AU/VCL limits, CAVLC/profile/signed-16 feature checks, PCM/video
++queue bounds, audio decoder and native DAR/scaler path are unchanged.
++Nested decoder probing is restricted to the existing audio decoder family;
++FPGA video is still parser/bitstream-filter only.
++
++PMS seeks still start a new offset transcode/session; the decision request
++mirrors that offset. Native HLS seeks at segment boundaries preserve original
++PTS. Existing direct-seek preroll rejection remains in force for unaligned
++targets; this change does not discard pictures to conceal required preroll.
++
++Diagnostics keep underlying `io_error` and the last underlying `io_eof`
++observation separate from `finite_hls_error`, `finite_hls_error_kind` and
++`finite_hls_verified`. For HLS, `io_bytes_read` counts forwarded media-resource
++bytes, not the root manifest. Clean I/O alone is not finite-source completion.
++All new error kinds are fixed strings; URL-bearing libav logging stays disabled.
++Even verified HLS only proves the advertised representation, not that PMS
++advertised every original library frame.
++
++## Static ARM dependency
++
++The reproducible FFmpeg 8.1.2 recipe enables the existing `hls` demuxer in
++addition to the previous set. FFmpeg selects its AAC/AC3/EAC3 demuxers,
++AC3 parser and ADTS-header support; MOV/MPEG-TS support was already enabled.
++No new video codec, cryptographic/HTTPS protocol, shared library, iconv/module
++loader or software scaling capability is enabled. The legacy H.264 decoder
++remains compiled for the non-FPGA software path; the FPGA path never opens it.
++
++The new defaults are:
++
++* Build: `build/deps/ffmpeg-8.1.2-static-safe-hls-build`
++* Install: `build/deps/ffmpeg-arm-static-safe-hls`
++
++Existing directories/archives are never overwritten. The static capability
++guard now requires `ff_hls_demuxer`; the old HTTP-only archive set is not a
++valid dependency for an HLS-qualified companion. A later authorized ARM build
++must retain the exact source/config/toolchain provenance, pass the archive
++guard, link with `MPX_HAVE_LIBAV`, and retain the previous pair for rollback.
++Host tests or a headers-only compatibility check do not validate ARM linking.
++
++## Validation and qualification
++
++The existing host runner includes generated finite HLS, negative transport/
++manifest/last-segment cases, rational PTS and byte-exact AU/stereo PCM/DAR
++comparison, decoder-open interposition, cancellation/reopen, pressure, pause,
++seek and profile regressions. It only uses generated media and a loopback
++HTTP server.
++
++```sh
++bash tests/unit/test_fpga_compressed_runtime.sh
++MPX_COMPRESSED_TEST_SCOPE=hls bash tests/unit/test_fpga_compressed_runtime.sh
++MPX_COMPRESSED_TEST_SCOPE=hls MPX_HLS_SANITIZE=1 \
++  bash tests/unit/test_fpga_compressed_runtime.sh
++```
++
++`MPX_KEEP_TEST_WORK=1` retains generated fixtures and case logs on failure.
++Before deployment, independently review this source and dependency change,
++verify that the actual PMS serves the finite/length/origin contract with the
++matching eight XML profiles, and use a separately authorized matched ARM
++build/activation. Acceptance still requires genuine LAN Plex Web cast
++selection, a real library play and continuous HDMI/stereo observation through
++EOF and tail. This transport does not fix the separate backend throughput,
++audio-gap or tail problems; no host regression is playback acceptance.
+diff --git a/host/libmisterplex/av_inproc_decode.hpp b/host/libmisterplex/av_inproc_decode.hpp
+--- a/host/libmisterplex/av_inproc_decode.hpp
++++ b/host/libmisterplex/av_inproc_decode.hpp
+@@ -355,6 +355,8 @@
+     int expectedFpsDen = 0;
+     const std::atomic<bool>* cancelled = nullptr;
+     const std::atomic<bool>* paused = nullptr;
++    // Required for extensionless HLS inputs; .m3u8 compressed inputs select it automatically.
++    bool finiteHls = false;
+ };
+ 
+ struct AvCompressedVideoGeometry {
+@@ -430,6 +432,10 @@
+     size_t queuedVideoPackets = 0;
+     bool reservedVideo = false;
+     std::string error;
++    // HLS contract rejection is distinct from the underlying protocol's I/O result.
++    std::optional<int> finiteHlsError;
++    std::optional<bool> finiteHlsVerified;
++    std::string finiteHlsErrorKind;
+ };
+ 
+ std::string formatCompressedDiagnostics(const AvCompressedDiagnostics& state);
+diff --git a/scripts/build_arm_ffmpeg.sh b/scripts/build_arm_ffmpeg.sh
+--- a/scripts/build_arm_ffmpeg.sh
++++ b/scripts/build_arm_ffmpeg.sh
+@@ -1,11 +1,11 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
+ 
+-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ cd "$root"
+ source="${FFMPEG_SOURCE:-build/deps/ffmpeg-8.1.2}"
+-build="$(realpath -m --relative-to="$root" "${FFMPEG_BUILD_DIR:-build/deps/ffmpeg-8.1.2-static-safe-build}")"
+-prefix="$(realpath -m --relative-to="$root" "${ARM_FFMPEG_PREFIX:-build/deps/ffmpeg-arm-static-safe}")"
++build="$(realpath -m --relative-to="$root" "${FFMPEG_BUILD_DIR:-build/deps/ffmpeg-8.1.2-static-safe-hls-build}")"
++prefix="$(realpath -m --relative-to="$root" "${ARM_FFMPEG_PREFIX:-build/deps/ffmpeg-arm-static-safe-hls}")"
+ for output in "$build" "$prefix"; do
+     case "$output" in
+         .|..|../*|/*) echo "FFmpeg outputs must stay inside this project" >&2; exit 1;;
+@@ -57,7 +57,7 @@
+     --disable-everything --disable-iconv \
+     --enable-avcodec --enable-avformat --enable-avutil --enable-swresample --enable-network \
+     --enable-protocol=file,http,tcp,pipe \
+-    --enable-demuxer=mov,mpegts,h264,matroska,mpegps,flv \
++    --enable-demuxer=mov,mpegts,h264,matroska,mpegps,flv,hls \
+     --enable-parser=h264,aac,aac_latm,ac3,mpegaudio,flac,opus,vorbis \
+     --enable-decoder=h264,aac,aac_latm,ac3,eac3,mp3,mp3float,flac,alac,opus,vorbis,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le \
+     --enable-bsf=h264_mp4toannexb,extract_extradata
+diff --git a/scripts/check_arm_ffmpeg_static.py b/scripts/check_arm_ffmpeg_static.py
+--- a/scripts/check_arm_ffmpeg_static.py
++++ b/scripts/check_arm_ffmpeg_static.py
+@@ -9,7 +9,7 @@
+ ARCHIVES = ("libavformat.a", "libavcodec.a", "libavutil.a", "libswresample.a")
+ REQUIRED = {
+     "ff_file_protocol", "ff_http_protocol", "ff_tcp_protocol",
+-    "ff_mpegts_demuxer", "ff_aac_decoder", "ff_h264_parser",
++    "ff_mpegts_demuxer", "ff_hls_demuxer", "ff_aac_decoder", "ff_h264_parser",
+     "ff_h264_mp4toannexb_bsf", "swr_init",
+ }
+ MODULE_LOADERS = {
+@@ -42,7 +42,7 @@
+         if kind not in ("U", "w", "v"):
+             defined.add(symbol)
+     if not REQUIRED <= defined:
+-        raise Refused("ARM libav lacks required HTTP/MPEGTS/H.264/AAC/PCM support")
++        raise Refused("ARM libav lacks required HTTP/HLS/MPEGTS/H.264/AAC/PCM support")
+ 
+ 
+ def main():
+@@ -55,7 +55,7 @@
+     except (OSError, Refused) as error:
+         print("ARM_FFMPEG_REFUSED " + str(error), file=sys.stderr)
+         return 1
+-    print("ARM_FFMPEG_STATIC_SAFE HTTP/MPEGTS/H264/AAC/PCM; no iconv/module-loader symbols")
++    print("ARM_FFMPEG_STATIC_SAFE HTTP/HLS/MPEGTS/H264/AAC/PCM; no iconv/module-loader symbols")
+     return 0
+ 
+ 
+diff --git a/tests/unit/test_arm_ffmpeg_static.py b/tests/unit/test_arm_ffmpeg_static.py
+--- a/tests/unit/test_arm_ffmpeg_static.py
++++ b/tests/unit/test_arm_ffmpeg_static.py
+@@ -32,6 +32,24 @@
+ 
+     def test_safe_complete_archives(self):
+         self.check("         U av_malloc\n")
++
++    def test_legacy_http_only_archives_are_refused(self):
++        self.assertIn("ff_hls_demuxer", guard.REQUIRED)
++        self.symbols = self.symbols.replace("00000000 T ff_hls_demuxer\n", "")
++        with self.assertRaisesRegex(guard.Refused, "required HTTP/HLS"):
++            self.check()
++
++    def test_hls_recipe_retains_static_safety_and_separate_outputs(self):
++        recipe = (ROOT / "scripts/build_arm_ffmpeg.sh").read_text()
++        self.assertIn("ffmpeg-8.1.2-static-safe-hls-build", recipe)
++        self.assertIn("ffmpeg-arm-static-safe-hls", recipe)
++        self.assertIn("--enable-demuxer=mov,mpegts,h264,matroska,mpegps,flv,hls", recipe)
++        self.assertIn("--enable-protocol=file,http,tcp,pipe", recipe)
++        for option in ("--disable-iconv", "--disable-autodetect", "--enable-static",
++                       "--disable-shared", "--disable-swscale"):
++            self.assertIn(option, recipe)
++        self.assertIn("build/deps/ffmpeg-arm-static-safe-hls",
++                      (ROOT / "Makefile").read_text())
+ 
+     def test_iconv_and_other_module_loaders_are_refused(self):
+         for symbol in guard.MODULE_LOADERS:
+diff --git a/tests/unit/test_finite_hls.cpp b/tests/unit/test_finite_hls.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/test_finite_hls.cpp
+@@ -0,0 +1,437 @@
++#include "libmisterplex/av_inproc_decode.hpp"
++#include "../../arm/misterplexd/finite_hls_io.hpp"
++
++#include <chrono>
++#include <cstdio>
++#include <cstring>
++#include <dlfcn.h>
++#include <filesystem>
++#include <map>
++#include <memory>
++#include <stdexcept>
++#include <thread>
++
++extern "C" {
++#include <libavcodec/avcodec.h>
++#include <libavutil/error.h>
++}
++
++using namespace misterplex;
++
++static unsigned videoDecoderOpens = 0;
++
++// Interposition covers calls made inside the shared libavformat as well as
++// calls from our source. Fixture encoding runs in a separate ffmpeg process.
++extern "C" int avcodec_open2(AVCodecContext* context, const AVCodec* codec,
++                            AVDictionary** options) {
++    if (context->codec_type == AVMEDIA_TYPE_VIDEO ||
++        (codec && codec->type == AVMEDIA_TYPE_VIDEO)) {
++        ++videoDecoderOpens;
++        return AVERROR(ENOSYS);
++    }
++    using Open = int (*)(AVCodecContext*, const AVCodec*, AVDictionary**);
++    static auto original = reinterpret_cast<Open>(dlsym(RTLD_NEXT, "avcodec_open2"));
++    return original ? original(context, codec, options) : AVERROR(ENOSYS);
++}
++
++static void require(bool value, const char* message) {
++    if (!value) throw std::runtime_error(message);
++}
++
++static size_t descriptors() {
++    size_t count = 0;
++    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
++        (void)entry;
++        ++count;
++    }
++    return count;
++}
++
++struct Result {
++    std::vector<AvCompressedAccessUnit> units;
++    std::vector<uint8_t> pcm;
++    AvCompressedDiagnostics diagnostics;
++    int64_t firstAudio = ddr_bitstream_ring::kNoTimestamp;
++    bool failed = false;
++    std::string error;
++};
++
++static Result collect(AvInprocDecoder& source) {
++    Result result;
++    std::string error;
++    bool videoEof = false;
++    for (unsigned turn = 0; turn < 8192; ++turn) {
++        if (!videoEof) {
++            AvCompressedAccessUnit unit;
++            const int read = source.readAccessUnit(unit, error);
++            if (read < 0) { result.failed = true; result.error = error; break; }
++            if (!read) videoEof = true;
++            else result.units.push_back(std::move(unit));
++        } else if (!source.audioEof()) {
++            const auto progress = source.advanceCompressedAudio(error);
++            if (progress == AvAudioProgress::Error || progress == AvAudioProgress::Cancelled) {
++                result.failed = true;
++                result.error = error;
++                break;
++            }
++        }
++        uint8_t bytes[8192];
++        for (;;) {
++            const int count = source.drainPcm(bytes, sizeof(bytes), false);
++            if (!count) break;
++            result.pcm.insert(result.pcm.end(), bytes, bytes + count);
++        }
++        const auto state = source.compressedDiagnostics();
++        require(state.queuedPackets <= kCompressedPacketCountLimit &&
++                state.queuedBytes <= kCompressedPacketByteLimit &&
++                state.pcmBytes <= kCompressedPcmByteLimit, "bounded queues exceeded");
++        if (videoEof && source.audioEof()) break;
++        require(turn != 8191, "finite fixture iteration bound exceeded");
++    }
++    result.firstAudio = source.firstAudioPtsUs();
++    result.diagnostics = source.compressedDiagnostics();
++    return result;
++}
++
++struct DirectFixture {
++    struct Resource {
++        std::string body;
++        bool closed = false;
++    };
++
++    struct Handle {
++        Resource* resource = nullptr;
++        AVIOContext* io = nullptr;
++        size_t position = 0;
++    };
++
++    static DirectFixture* active;
++    std::map<std::string, Resource> resources;
++    std::vector<std::unique_ptr<Handle>> handles;
++
++    ~DirectFixture() {
++        for (auto& handle : handles) {
++            if (!handle->io) continue;
++            av_freep(&handle->io->buffer);
++            avio_context_free(&handle->io);
++        }
++    }
++
++    static int read(void* opaque, uint8_t* data, int size) {
++        auto& handle = *static_cast<Handle*>(opaque);
++        if (handle.position >= handle.resource->body.size()) return AVERROR_EOF;
++        const size_t remaining = handle.resource->body.size() - handle.position;
++        const size_t count = std::min(remaining, static_cast<size_t>(size));
++        std::memcpy(data, handle.resource->body.data() + handle.position, count);
++        handle.position += count;
++        return static_cast<int>(count);
++    }
++
++    static int64_t seek(void* opaque, int64_t offset, int whence) {
++        auto& handle = *static_cast<Handle*>(opaque);
++        const auto size = static_cast<int64_t>(handle.resource->body.size());
++        if (whence == AVSEEK_SIZE) return size;
++        int64_t next = 0;
++        if (whence == SEEK_SET) next = offset;
++        else if (whence == SEEK_CUR) next = static_cast<int64_t>(handle.position) + offset;
++        else if (whence == SEEK_END) next = size + offset;
++        else return AVERROR(EINVAL);
++        if (next < 0 || next > size) return AVERROR(EINVAL);
++        handle.position = static_cast<size_t>(next);
++        return next;
++    }
++
++    static int open(AVFormatContext*, AVIOContext** output, const char* url, int flags,
++                    AVDictionary**) {
++        if (!active || flags != AVIO_FLAG_READ || !url) return AVERROR(EINVAL);
++        const auto found = active->resources.find(url);
++        if (found == active->resources.end()) return AVERROR(ENOENT);
++        auto handle = std::make_unique<Handle>();
++        handle->resource = &found->second;
++        uint8_t* buffer = static_cast<uint8_t*>(av_malloc(4096));
++        if (!buffer) return AVERROR(ENOMEM);
++        handle->io = avio_alloc_context(buffer, 4096, 0, handle.get(), read, nullptr, seek);
++        if (!handle->io) {
++            av_free(buffer);
++            return AVERROR(ENOMEM);
++        }
++        handle->io->seekable = AVIO_SEEKABLE_NORMAL;
++        *output = handle->io;
++        active->handles.push_back(std::move(handle));
++        return 0;
++    }
++
++    static int close(AVFormatContext*, AVIOContext* io) {
++        if (!active || !io) return AVERROR(EINVAL);
++        const auto found = std::find_if(active->handles.begin(), active->handles.end(),
++            [&](const std::unique_ptr<Handle>& handle) { return handle->io == io; });
++        if (found == active->handles.end()) return AVERROR(EINVAL);
++        (*found)->resource->closed = true;
++        av_freep(&io->buffer);
++        avio_context_free(&io);
++        active->handles.erase(found);
++        return 0;
++    }
++};
++
++DirectFixture* DirectFixture::active = nullptr;
++
++struct DirectFixtureScope {
++    explicit DirectFixtureScope(DirectFixture& fixture) : previous(DirectFixture::active) {
++        DirectFixture::active = &fixture;
++    }
++    ~DirectFixtureScope() { DirectFixture::active = previous; }
++
++    DirectFixture* previous = nullptr;
++};
++
++struct DirectOutcome {
++    std::string scenario;
++    int finiteHlsError = 0;
++    int transportError = 0;
++    bool verified = false;
++    bool transportEof = false;
++    int64_t mediaBytes = 0;
++    std::string reason = "none";
++};
++
++static AVIOContext* openWrapped(AVFormatContext& format, const std::string& url) {
++    AVIOContext* io = nullptr;
++    require(format.io_open(&format, &io, url.c_str(), AVIO_FLAG_READ, nullptr) == 0,
++            "direct finite-HLS open failed");
++    return io;
++}
++
++static void closeWrapped(AVFormatContext& format, AVIOContext* io) {
++    require(format.io_close2(&format, io) == 0, "direct finite-HLS close failed");
++}
++
++static void readExact(AVIOContext* io, size_t bytes) {
++    uint8_t block[64];
++    size_t seen = 0;
++    while (seen < bytes) {
++        const size_t want = std::min(bytes - seen, sizeof(block));
++        const int read = avio_read_partial(io, block, static_cast<int>(want));
++        require(read > 0, "direct finite-HLS read truncated");
++        seen += static_cast<size_t>(read);
++    }
++}
++
++static DirectOutcome runDirectFiniteHlsScenario(const std::string& scenario) {
++    DirectFixture fixture;
++    DirectFixtureScope scope(fixture);
++    AVFormatContext format{};
++    format.io_open = DirectFixture::open;
++    format.io_close2 = DirectFixture::close;
++    FiniteHlsIo hls;
++    require(hls.attach(&format, "http://example.com/root.m3u8") == 0,
++            "direct finite-HLS attach failed");
++    const std::string playlistUrl = "http://example.com/media/index.m3u8";
++    const std::string segmentUrl = "http://example.com/media/seg000.ts";
++    const std::string segment(188, 'A');
++    const std::string largeSegment(65536, 'B');
++    if (scenario == "close-complete") {
++        fixture.resources.emplace(segmentUrl, DirectFixture::Resource{segment});
++        fixture.resources.emplace(playlistUrl, DirectFixture::Resource{
++            "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1.0,\nseg000.ts\n#EXT-X-ENDLIST\n"});
++        auto* segmentIo = openWrapped(format, segmentUrl);
++        readExact(segmentIo, segment.size());
++        closeWrapped(format, segmentIo);
++        auto* playlistIo = openWrapped(format, playlistUrl);
++        readExact(playlistIo, fixture.resources.at(playlistUrl).body.size());
++        closeWrapped(format, playlistIo);
++        require(hls.verifyEof(1000000, 1000000, 0) == 0,
++                "close-without-EOF did not verify finite completion");
++        require(!hls.transportEof(), "close-without-EOF faked transport EOF");
++    } else if (scenario == "close-partial") {
++        fixture.resources.emplace(segmentUrl, DirectFixture::Resource{largeSegment});
++        auto* segmentIo = openWrapped(format, segmentUrl);
++        readExact(segmentIo, 64);
++        closeWrapped(format, segmentIo);
++        require(hls.error() == AVERROR(EIO), "partial close missed resource-length failure");
++        require(std::string(hls.reason()) == "resource-length",
++                "partial close lost resource-length reason");
++        require(!hls.verified(), "partial close became verified");
++    } else if (scenario == "close-abandon") {
++        fixture.resources.emplace(segmentUrl, DirectFixture::Resource{largeSegment});
++        auto* segmentIo = openWrapped(format, segmentUrl);
++        readExact(segmentIo, 64);
++        hls.noteAbandon();
++        closeWrapped(format, segmentIo);
++        require(hls.error() == 0, "intentional abandon became a terminal finite-HLS error");
++        require(hls.transportError() == 0, "intentional abandon became a transport error");
++        require(!hls.verified(), "intentional abandon became verified");
++    } else {
++        throw std::runtime_error("unknown direct finite-HLS scenario");
++    }
++    return {scenario, hls.error(), hls.transportError(), hls.verified(), hls.transportEof(),
++            hls.mediaBytes(), hls.reason()};
++}
++
++static Result openAndCollect(AvInprocDecoder& source, const std::string& path,
++                             const AvInprocOpenOpts& options) {
++    std::string error;
++    if (!source.open(path, options, error)) {
++        Result result;
++        result.failed = true;
++        result.error = error;
++        result.diagnostics = source.compressedDiagnostics();
++        require(!error.empty(), "failed input open lost its error");
++        return result;
++    }
++    return collect(source);
++}
++
++static void same(const Result& actual, const Result& reference, bool seeking = false) {
++    require(!actual.failed, ("complete finite source failed: " + actual.error).c_str());
++    require(!reference.failed, ("reference source failed: " + reference.error).c_str());
++    require(actual.diagnostics.inputEof && actual.diagnostics.audioEof &&
++            actual.diagnostics.ioEof == true && actual.diagnostics.ioError == 0 &&
++            actual.diagnostics.finiteHlsVerified == true &&
++            actual.diagnostics.finiteHlsError == 0 &&
++            actual.diagnostics.inputReadResult == AVERROR_EOF,
++            "finite EOF was not verified as clean");
++    const size_t offset = seeking ? reference.units.size() - actual.units.size() : 0;
++    require(!actual.units.empty() &&
++            (seeking ? actual.units.size() < reference.units.size()
++                     : actual.units.size() == reference.units.size()),
++            "finite transport changed AU count");
++    for (size_t i = 0; i < actual.units.size(); ++i) {
++        const auto& a = actual.units[i];
++        const auto& b = reference.units[i + offset];
++        require(a.pts == b.pts && a.duration == b.duration &&
++                a.timebaseNum == b.timebaseNum && a.timebaseDen == b.timebaseDen &&
++                a.annexb == b.annexb && a.keyframe == b.keyframe,
++                "transport changed original PTS, duration, timebase or AU bytes");
++        require(a.geometry.codedWidth == 320 && a.geometry.codedHeight == 240 &&
++                a.geometry.sourceAspect.valid &&
++                a.geometry.sourceAspect.x * 9 == a.geometry.sourceAspect.y * 16 &&
++                a.geometry.limitedBt601Signaled(),
++                "transport changed coded geometry, source DAR or color");
++    }
++    if (!seeking)
++        require(!actual.pcm.empty() && actual.pcm == reference.pcm &&
++                actual.firstAudio == reference.firstAudio,
++                "transport changed original audio PTS or decoded stereo PCM");
++    if (!seeking)
++        require(actual.diagnostics.inputVideoPackets == actual.units.size() &&
++                actual.diagnostics.returnedAccessUnits == actual.units.size(),
++                "finite input/returned packet accounting drifted");
++}
++
++int main(int argc, char** argv) {
++    try {
++        require(argc == 7, "usage: test_finite_hls MODE INPUT REFERENCE FPS_NUM FPS_DEN GOOD_INPUT");
++        const std::string mode = argv[1], input = argv[2], reference = argv[3];
++        if (mode == "unit") {
++            const auto result = runDirectFiniteHlsScenario(input);
++            std::printf("{\"scenario\":\"%s\",\"finite_hls_error\":%d,"
++                        "\"transport_error\":%d,\"transport_eof\":%s,"
++                        "\"finite_hls_verified\":%s,\"media_bytes\":%lld,"
++                        "\"finite_hls_error_kind\":\"%s\"}\n",
++                        result.scenario.c_str(), result.finiteHlsError, result.transportError,
++                        result.transportEof ? "true" : "false",
++                        result.verified ? "true" : "false",
++                        static_cast<long long>(result.mediaBytes), result.reason.c_str());
++            return 0;
++        }
++        std::atomic<bool> cancelled{false}, paused{false};
++        AvInprocOpenOpts opts;
++        opts.compressedVideo = true;
++        opts.finiteHls = mode == "explicit";
++        opts.expectW = 320; opts.expectH = 240;
++        opts.maxAccessUnitBytes = opts.maxVclRbspBytes = 8192;
++        opts.expectedFpsNum = std::stoi(argv[4]);
++        opts.expectedFpsDen = std::stoi(argv[5]);
++        opts.requireAllIdr = opts.requireLimitedBt601 = true;
++        opts.headers = "X-Plex-Token: generated-test-token\r\n"
++                       "X-Plex-Session-Identifier: generated-test-session\r\n";
++        opts.cancelled = &cancelled;
++        opts.paused = &paused;
++        AvInprocDecoder source;
++        const size_t before = descriptors();
++        const auto started = std::chrono::steady_clock::now();
++        Result actual;
++        if (mode == "cancel" || mode == "external-cancel") {
++            std::string error;
++            require(source.open(input, opts, error), "cancellation fixture did not open");
++            std::thread cancel([&] {
++                std::this_thread::sleep_for(std::chrono::milliseconds(200));
++                if (mode == "cancel") source.requestStop();
++                else cancelled.store(true);
++            });
++            try { actual = collect(source); }
++            catch (...) { cancel.join(); throw; }
++            cancel.join();
++            require(actual.failed && actual.diagnostics.cancelled &&
++                    actual.diagnostics.finiteHlsVerified != true,
++                    "blocked HLS cancellation became successful EOF");
++        } else if (mode == "backpressure") {
++            std::string error;
++            require(source.open(input, opts, error), "backpressure fixture did not open");
++            paused.store(true);
++            const auto initial = source.compressedDiagnostics();
++            require(source.advanceCompressedAudio(error) == AvAudioProgress::Paused &&
++                    source.compressedDiagnostics().inputVideoPackets == initial.inputVideoPackets,
++                    "paused HLS advanced its input");
++            paused.store(false);
++            bool blocked = false;
++            std::vector<uint8_t> earlierPcm;
++            for (unsigned i = 0; i < 4096 && !blocked; ++i) {
++                const auto result = source.advanceCompressedAudio(error);
++                require(result != AvAudioProgress::Error && result != AvAudioProgress::Eof,
++                        "HLS failed before bounded backpressure");
++                blocked = result == AvAudioProgress::Backpressure;
++                uint8_t bytes[8192];
++                while (const int count = source.drainPcm(bytes, sizeof(bytes), false))
++                    earlierPcm.insert(earlierPcm.end(), bytes, bytes + count);
++            }
++            require(blocked, "HLS did not preserve bounded video backpressure");
++            actual = collect(source);
++            actual.pcm.insert(actual.pcm.begin(), earlierPcm.begin(), earlierPcm.end());
++        } else {
++            if (mode == "seek") opts.startMs = 500;
++            if (mode == "seek-reject") opts.startMs = 750;
++            actual = openAndCollect(source, input, opts);
++        }
++        if (mode == "error" || mode == "reopen" || mode == "seek-reject") {
++            require(actual.failed && actual.diagnostics.finiteHlsVerified != true,
++                    "missing, failed or unfinished segment became successful natural EOF");
++        }
++        source.close();
++        if (mode == "reopen" || mode == "cancel" || mode == "external-cancel") {
++            cancelled.store(false);
++            actual = openAndCollect(source, argv[6], opts);
++            source.close();
++        }
++        if (mode != "error" && mode != "seek-reject") {
++            opts.startMs = 0;
++            opts.finiteHls = false;
++            const auto expected = openAndCollect(source, reference, opts);
++            source.close();
++            require(expected.units.size() == 48, "generated reference did not contain 48 AUs");
++            same(actual, expected, mode == "seek");
++        }
++        require(videoDecoderOpens == 0, "libav attempted a software video decoder");
++        require(descriptors() == before, "HLS close/reopen leaked an input descriptor");
++        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
++            std::chrono::steady_clock::now() - started).count();
++        require(elapsed < 12000, "bounded HLS lifecycle exceeded twelve seconds");
++        std::printf("{\"access_units\":%zu,\"pcm_bytes\":%zu,\"elapsed_ms\":%lld,"
++                    "\"io_error\":%d,\"io_eof\":%s,\"finite_hls_error\":%d,"
++                    "\"finite_hls_error_kind\":\"%s\",\"finite_hls_verified\":%s,"
++                    "\"video_decoder_opens\":%u,\"failed\":%s}\n",
++                    actual.units.size(), actual.pcm.size(), static_cast<long long>(elapsed),
++                    actual.diagnostics.ioError.value_or(0),
++                    actual.diagnostics.ioEof.value_or(false) ? "true" : "false",
++                    actual.diagnostics.finiteHlsError.value_or(0),
++                    actual.diagnostics.finiteHlsErrorKind.c_str(),
++                    actual.diagnostics.finiteHlsVerified.value_or(false) ? "true" : "false",
++                    videoDecoderOpens,
++                    actual.failed ? "true" : "false");
++        return 0;
++    } catch (const std::exception& error) {
++        std::fprintf(stderr, "finite HLS regression: %s\n", error.what());
++        return 1;
++    }
++}
+diff --git a/tests/unit/test_finite_hls.py b/tests/unit/test_finite_hls.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/test_finite_hls.py
+@@ -0,0 +1,416 @@
++#!/usr/bin/env python3
++"""Generated finite HLS fixtures through the real compressed libav reader."""
++from collections import Counter
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from pathlib import Path
++from threading import Lock, Thread
++from urllib.parse import urlsplit
++import json
++import subprocess
++import sys
++import unittest
++import xml.etree.ElementTree as ET
++
++
++EXECUTABLE = Path(sys.argv.pop(1)).resolve()
++WORK = Path(sys.argv.pop(1)).resolve() / "hls"
++ROOT = Path(__file__).resolve().parents[2]
++
++
++class FiniteHlsTests(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        WORK.mkdir()
++        cls.fixtures = {}
++        cls.requests = Counter()
++        cls.auth_failures = 0
++        cls.lock = Lock()
++        cls.serial = 0
++        for label, rate, duration in (("24", "24", "2"), ("23976", "24000/1001", "2.002")):
++            directory = WORK / label
++            directory.mkdir()
++            command = [
++                "ffmpeg", "-v", "error", "-nostdin", "-filter_threads", "1",
++                "-f", "lavfi", "-i", f"testsrc2=size=320x240:rate={rate}:duration={duration}",
++                "-f", "lavfi", "-i", f"sine=frequency=880:sample_rate=48000:duration={duration}",
++                "-frames:v", "48", "-vf", "setsar=4/3", "-c:v", "libx264",
++                "-profile:v", "baseline", "-level:v", "3.0", "-threads", "1",
++                "-x264-params", "cabac=0:bframes=0:ref=1:weightp=0:partitions=none:"
++                "qp=28:scenecut=0:slices=1:threads=1:keyint=1:no-deblock=1",
++                "-colorspace", "smpte170m", "-color_primaries", "smpte170m",
++                "-color_trc", "smpte170m", "-color_range", "tv",
++                "-c:a", "aac", "-ar", "48000", "-ac", "2",
++                "-hls_time", "0.5", "-hls_playlist_type", "vod",
++                "-hls_segment_filename", str(directory / "seg%03d.ts"),
++                "-f", "hls", str(directory / "index.m3u8"),
++            ]
++            result = subprocess.run(command, capture_output=True, text=True, check=False)
++            (directory / "generate-command.json").write_text(json.dumps(command, indent=2) + "\n")
++            (directory / "generate.stderr").write_text(result.stderr)
++            if result.returncode:
++                raise AssertionError("local HLS fixture generation failed: " + result.stderr)
++            playlist = directory / "index.m3u8"
++            # The host muxer rounds the half-second target to zero; HLS requires
++            # a positive integer target. Media bytes and timestamps are unmodified.
++            playlist.write_text(playlist.read_text().replace(
++                "#EXT-X-TARGETDURATION:0", "#EXT-X-TARGETDURATION:1"))
++            segments = sorted(directory.glob("seg*.ts"))
++            assert len(segments) == 4
++            (directory / "reference.ts").write_bytes(b"".join(p.read_bytes() for p in segments))
++            cls.fixtures[label] = directory
++
++        class Handler(BaseHTTPRequestHandler):
++            protocol_version = "HTTP/1.1"
++
++            def log_message(self, *_args):
++                pass
++
++            def do_GET(self):
++                path = urlsplit(self.path).path
++                pieces = path.strip("/").split("/")
++                if len(pieces) < 3 or pieces[1] not in cls.fixtures:
++                    self.send_error(404)
++                    return
++                scenario, label, name = pieces[0], pieces[1], pieces[-1]
++                with cls.lock:
++                    visit = cls.requests[path]
++                    cls.requests[path] += 1
++                    authenticated = (
++                        self.headers.get("X-Plex-Token") == "generated-test-token"
++                        and self.headers.get("X-Plex-Session-Identifier") == "generated-test-session"
++                    )
++                    if not authenticated:
++                        cls.auth_failures += 1
++                if not authenticated:
++                    self.send_error(401)
++                    return
++                directory = cls.fixtures[label]
++                content_type = "video/mp2t"
++                status = 200
++                length_extra = 0
++                chunk_short = False
++                chunk_complete = False
++                if name in ("index.m3u8", "start.m3u8", "start"):
++                    content_type = "application/vnd.apple.mpegurl"
++                    text = (directory / "index.m3u8").read_text()
++                    if scenario in ("master", "master-blank", "master-comment",
++                                    "master-spaced", "master-conflict",
++                                    "master-missing") and name == "start.m3u8":
++                        text = ('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1200000,'
++                                'CODECS="avc1.42e01e,mp4a.40.2",RESOLUTION=320x240\n'
++                                'media/index.m3u8\n')
++                        if scenario == "master-blank":
++                            text = text.replace("\nmedia/index.m3u8\n", "\n\nmedia/index.m3u8\n")
++                        elif scenario == "master-comment":
++                            text = text.replace("\nmedia/index.m3u8\n",
++                                                "\n# ordinary comment\nmedia/index.m3u8\n")
++                        elif scenario == "master-spaced":
++                            text = text.replace("\nmedia/index.m3u8\n",
++                                                "\n# ordinary comment\n\nmedia/index.m3u8\n")
++                        elif scenario == "master-conflict":
++                            text = text.replace("\nmedia/index.m3u8\n",
++                                                "\n# ordinary comment\n"
++                                                "#EXT-X-MEDIA-SEQUENCE:0\n"
++                                                "media/index.m3u8\n")
++                        elif scenario == "master-missing":
++                            text = text.replace("media/index.m3u8\n",
++                                                "# ordinary comment\n\n")
++                    if scenario == "redirect" and name == "start.m3u8":
++                        self.send_response(302)
++                        self.send_header("Location", f"/complete/{label}/index.m3u8")
++                        self.send_header("Content-Length", "0")
++                        self.end_headers()
++                        return
++                    if scenario in ("no-end", "event", "shift", "regress"):
++                        lines = text.replace("#EXT-X-PLAYLIST-TYPE:VOD",
++                                             "#EXT-X-PLAYLIST-TYPE:EVENT").splitlines()
++                        header = lines[:lines.index(next(x for x in lines if x.startswith("#EXTINF:")))]
++                        pairs = [lines[i:i + 2] for i, line in enumerate(lines)
++                                 if line.startswith("#EXTINF:")]
++                        count = 4
++                        terminal = False
++                        if scenario == "event":
++                            count, terminal = (2, False) if not visit else (4, True)
++                        elif scenario == "shift":
++                            count = 2 if not visit else 4
++                            if visit:
++                                header = [x.replace("#EXT-X-MEDIA-SEQUENCE:0",
++                                                    "#EXT-X-MEDIA-SEQUENCE:1") for x in header]
++                        elif scenario == "regress":
++                            count, terminal = (3, False) if not visit else (2, True)
++                        text = "\n".join(header + [x for pair in pairs[:count] for x in pair] +
++                                         (["#EXT-X-ENDLIST"] if terminal else [])) + "\n"
++                    if scenario == "gap":
++                        text = text.replace("seg001.ts", "#EXT-X-GAP\nseg001.ts")
++                    if scenario == "segment-range":
++                        text = text.replace("seg001.ts",
++                                            "#EXT-X-BYTERANGE:188@0\nseg001.ts")
++                    if scenario == "map":
++                        lines = text.splitlines()
++                        first_extinf = next(i for i, line in enumerate(lines)
++                                            if line.startswith("#EXTINF:"))
++                        lines.insert(first_extinf, '#EXT-X-MAP:URI="init.ts"')
++                        text = "\n".join(lines) + "\n"
++                    if scenario == "map-range":
++                        lines = text.splitlines()
++                        first_extinf = next(i for i, line in enumerate(lines)
++                                            if line.startswith("#EXTINF:"))
++                        lines.insert(first_extinf,
++                                     '#EXT-X-MAP:URI="init.ts",BYTERANGE="188@0"')
++                        text = "\n".join(lines) + "\n"
++                    if scenario == "dangling":
++                        text = text.replace("#EXT-X-ENDLIST", "#EXTINF:1.0,\n#EXT-X-ENDLIST")
++                    if scenario == "orphan-before":
++                        lines = text.splitlines()
++                        first_extinf = next(i for i, line in enumerate(lines)
++                                            if line.startswith("#EXTINF:"))
++                        lines.insert(first_extinf, "orphan.ts")
++                        text = "\n".join(lines) + "\n"
++                    if scenario == "after-end":
++                        text += "#EXTINF:1.0,\nseg003.ts\n"
++                    if scenario == "orphan-after-end":
++                        text += "tail.ts\n"
++                    if scenario == "bad-target":
++                        text = text.replace("#EXT-X-TARGETDURATION:1",
++                                            "#EXT-X-TARGETDURATION:0")
++                    if scenario == "discontinuity-sequence":
++                        text = text.replace("#EXT-X-MEDIA-SEQUENCE:0",
++                            "#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:5")
++                    if scenario == "cross-origin":
++                        text = text.replace("seg001.ts",
++                            f"http://localhost:{cls.server.server_port}/complete/{label}/seg001.ts")
++                    body = text.encode()
++                    if scenario == "progressive":
++                        body = (directory / "reference.ts").read_bytes()
++                elif name.startswith("seg") and (directory / name).is_file():
++                    body = (directory / name).read_bytes()
++                    target = "seg003.ts" if scenario.startswith("last-") else "seg001.ts"
++                    if name == target:
++                        if scenario == "missing":
++                            status = 404
++                            body = b""
++                        elif scenario == "server-error":
++                            status = 500
++                            body = b""
++                        elif scenario == "short":
++                            length_extra = len(body) - len(body) // 2
++                            body = body[:len(body) // 2]
++                        elif scenario in ("chunk-short", "last-chunk-short"):
++                            chunk_short = True
++                        elif scenario == "chunked":
++                            chunk_complete = True
++                        elif scenario == "empty":
++                            body = b""
++                        elif scenario in ("garbage", "last-garbage"):
++                            body = b"not a transport stream\n" * 30
++                        elif scenario in ("last-incomplete", "last-one-frame"):
++                            starts = [i for i in range(0, len(body), 188)
++                                      if body[i + 1] & 0x40 and
++                                      ((body[i + 1] & 31) << 8 | body[i + 2]) == 256]
++                            assert len(starts) == 12
++                            body = body[:starts[11 if scenario == "last-one-frame" else 6]]
++                elif name == "init.ts":
++                    body = (directory / "seg000.ts").read_bytes()[:188]
++                else:
++                    self.send_error(404)
++                    return
++                self.send_response(status)
++                self.send_header("Content-Type", content_type)
++                self.send_header("Connection", "close")
++                if chunk_short or chunk_complete:
++                    self.send_header("Transfer-Encoding", "chunked")
++                    body = (f"{len(body):x}\r\n".encode() +
++                            (body[:len(body) // 2] if chunk_short else body + b"\r\n0\r\n\r\n"))
++                else:
++                    self.send_header("Content-Length", str(len(body) + length_extra))
++                self.end_headers()
++                self.close_connection = True
++                try:
++                    self.wfile.write(body)
++                    self.wfile.flush()
++                except (BrokenPipeError, ConnectionResetError):
++                    pass
++
++        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        cls.thread = Thread(target=cls.server.serve_forever)
++        cls.thread.start()
++        cls.base = f"http://127.0.0.1:{cls.server.server_port}"
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.server.shutdown()
++        cls.thread.join()
++        cls.server.server_close()
++        (WORK / "server-summary.json").write_text(json.dumps({
++            "requests": dict(cls.requests), "auth_failures": cls.auth_failures,
++            "thread_joined": not cls.thread.is_alive(),
++        }, indent=2) + "\n")
++
++    def run_case(self, scenario, mode="complete", rate="24", entry="index.m3u8"):
++        type(self).serial += 1
++        output = WORK / f"{self.serial:03d}-{scenario}-{mode}-{rate}"
++        source = (str(self.fixtures[rate] / "index.m3u8") if scenario == "file"
++                  else f"{self.base}/{scenario}/{rate}/{entry}")
++        command = [
++            str(EXECUTABLE), mode, source,
++            str(self.fixtures[rate] / "reference.ts"),
++            "24" if rate == "24" else "24000", "1" if rate == "24" else "1001",
++            f"{self.base}/complete/{rate}/index.m3u8",
++        ]
++        output.with_suffix(".command.json").write_text(json.dumps(command, indent=2) + "\n")
++        result = subprocess.run(command, capture_output=True, text=True, check=False)
++        output.with_suffix(".stdout").write_text(result.stdout)
++        output.with_suffix(".stderr").write_text(result.stderr)
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        self.assertEqual(self.auth_failures, 0, "a nested HLS request lost session/auth headers")
++        return json.loads(result.stdout)
++
++    def run_unit_case(self, scenario):
++        command = [
++            str(EXECUTABLE), "unit", scenario,
++            str(self.fixtures["24"] / "reference.ts"),
++            "24", "1", str(self.fixtures["24"] / "reference.ts"),
++        ]
++        result = subprocess.run(command, capture_output=True, text=True, check=False)
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        return json.loads(result.stdout)
++
++    def test_complete_original_timestamps_audio_and_dar(self):
++        for rate in ("24", "23976"):
++            with self.subTest(rate=rate):
++                self.run_case("complete", rate=rate)
++
++    def test_master_relative_paths(self):
++        self.run_case("master", entry="start.m3u8")
++
++    def test_master_variant_can_follow_blank_and_comment_lines(self):
++        for scenario in ("master-blank", "master-comment", "master-spaced"):
++            with self.subTest(scenario=scenario):
++                self.run_case(scenario, entry="start.m3u8")
++
++    def test_master_variant_still_requires_uri_before_conflicting_tags_or_eof(self):
++        for scenario in ("master-conflict", "master-missing"):
++            with self.subTest(scenario=scenario):
++                before = self.requests[f"/{scenario}/24/media/index.m3u8"]
++                self.run_case(scenario, mode="error", entry="start.m3u8")
++                self.assertEqual(self.requests[f"/{scenario}/24/media/index.m3u8"], before)
++
++    def test_redirects_and_cross_origin_cannot_forward_tokens(self):
++        before = self.requests["/complete/24/index.m3u8"]
++        self.run_case("redirect", mode="error", entry="start.m3u8")
++        self.assertEqual(self.requests["/complete/24/index.m3u8"], before)
++        before = self.requests["/complete/24/seg001.ts"]
++        self.run_case("cross-origin", mode="error")
++        self.assertEqual(self.requests["/complete/24/seg001.ts"], before)
++
++    def test_local_file_hls(self):
++        self.run_case("file")
++
++    def test_constant_discontinuity_sequence_is_not_a_clock_jump(self):
++        self.run_case("discontinuity-sequence")
++
++    def test_explicit_extensionless_hls(self):
++        self.run_case("extensionless", mode="explicit", entry="start")
++        self.run_case("unguarded", mode="error", entry="start")
++        self.assertEqual(self.requests["/unguarded/24/seg000.ts"], 0)
++
++    def test_event_to_advertised_endlist(self):
++        self.run_case("event")
++
++    def test_orphan_or_trailing_media_uris_are_rejected(self):
++        for scenario in ("orphan-before", "orphan-after-end"):
++            with self.subTest(scenario=scenario):
++                self.run_case(scenario, mode="error")
++
++    def test_unsupported_map_and_byterange_forms_are_rejected(self):
++        for scenario in ("segment-range", "map", "map-range"):
++            with self.subTest(scenario=scenario):
++                initial_segment = self.requests[f"/{scenario}/24/seg001.ts"]
++                initial_init = self.requests[f"/{scenario}/24/init.ts"]
++                self.run_case(scenario, mode="error")
++                self.assertEqual(self.requests[f"/{scenario}/24/seg001.ts"], initial_segment)
++                self.assertEqual(self.requests[f"/{scenario}/24/init.ts"], initial_init)
++
++    def test_transport_errors_are_not_eof_or_skipped(self):
++        for scenario in ("missing", "server-error", "short", "chunk-short", "chunked",
++                         "empty", "garbage"):
++            with self.subTest(scenario=scenario):
++                initial_bad = self.requests[f"/{scenario}/24/seg001.ts"]
++                initial_next = self.requests[f"/{scenario}/24/seg002.ts"]
++                self.run_case(scenario, mode="error")
++                self.assertEqual(self.requests[f"/{scenario}/24/seg001.ts"] - initial_bad, 1)
++                if scenario != "garbage":
++                    self.assertEqual(self.requests[f"/{scenario}/24/seg002.ts"] - initial_next, 0)
++
++    def test_last_segment_cannot_hide_truncation_at_eof(self):
++        for scenario in ("last-chunk-short", "last-garbage", "last-incomplete", "last-one-frame"):
++            with self.subTest(scenario=scenario):
++                result = self.run_case(scenario, mode="error")
++                self.assertFalse(result["finite_hls_verified"])
++                if scenario in ("last-incomplete", "last-one-frame"):
++                    self.assertEqual(result["io_error"], 0)
++                    self.assertTrue(result["io_eof"])
++                    self.assertEqual(result["finite_hls_error_kind"], "video-extent")
++
++    def test_unfinished_or_inconsistent_manifest(self):
++        for scenario in ("no-end", "shift", "regress", "gap", "dangling", "after-end",
++                         "progressive", "bad-target"):
++            with self.subTest(scenario=scenario):
++                self.run_case(scenario, mode="error")
++
++    def test_error_then_reopen(self):
++        self.run_case("missing", mode="reopen")
++
++    def test_cancel_and_external_cancel_then_reopen(self):
++        self.run_case("no-end", mode="cancel")
++        self.run_case("no-end", mode="external-cancel")
++
++    def test_required_close_without_eof_tracks_completion_and_abandonment(self):
++        complete = self.run_unit_case("close-complete")
++        self.assertTrue(complete["finite_hls_verified"])
++        self.assertFalse(complete["transport_eof"])
++        self.assertGreater(complete["media_bytes"], 0)
++
++        partial = self.run_unit_case("close-partial")
++        self.assertFalse(partial["finite_hls_verified"])
++        self.assertEqual(partial["finite_hls_error_kind"], "resource-length")
++
++        abandon = self.run_unit_case("close-abandon")
++        self.assertEqual(abandon["finite_hls_error"], 0)
++        self.assertEqual(abandon["transport_error"], 0)
++        self.assertFalse(abandon["finite_hls_verified"])
++
++    def test_pause_and_bounded_backpressure(self):
++        self.run_case("complete", mode="backpressure")
++
++    def test_seek_preserves_original_clock(self):
++        self.run_case("complete", mode="seek")
++        self.run_case("complete", mode="seek-reject")
++
++    def test_profiles_are_additive_and_keep_the_same_limits(self):
++        def normalized(element, root=False):
++            return (element.tag,
++                    sorted((key, value) for key, value in element.attrib.items()
++                           if not (root and key == "protocol")),
++                    [normalized(child) for child in element])
++        profiles = sorted((ROOT / "assets/plex-profiles").glob("MiSTerPlex-FPGA-*.xml"))
++        self.assertEqual(len(profiles), 8)
++        for path in profiles:
++            with self.subTest(profile=path.name):
++                tree = ET.parse(path)
++                for tag in ("TranscodeTargets/VideoProfile",
++                            "TranscodeTargetProfiles/VideoTranscodeTarget"):
++                    http = tree.findall(f"{tag}[@protocol='http']")
++                    hls = tree.findall(f"{tag}[@protocol='hls']")
++                    self.assertEqual(len(http), 1)
++                    self.assertEqual(len(hls), 1)
++                    self.assertEqual(normalized(http[0], True), normalized(hls[0], True))
++                flags = tree.find("TranscodeTargets/VideoProfile[@protocol='hls']/"
++                                  "Setting[@name='VideoEncodeFlags']").attrib["value"]
++                for setting in ("-profile:v baseline", "cabac=0", "bframes=0", "ref=1",
++                                "weightp=0", "8x8dct=0", "partitions=none", "slices=1"):
++                    self.assertIn(setting, flags)
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)
+diff --git a/tests/unit/test_fpga_compressed_runtime.sh b/tests/unit/test_fpga_compressed_runtime.sh
+--- a/tests/unit/test_fpga_compressed_runtime.sh
++++ b/tests/unit/test_fpga_compressed_runtime.sh
+@@ -1,17 +1,35 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
+ 
+-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+ cd "$root"
+ mkdir -p build/session
+ work="$root/build/session/compressed-runtime-$$"
+ mkdir "$work"
+-trap 'rm -rf -- "$work"' EXIT
++trap 'if [[ "${MPX_KEEP_TEST_WORK:-0}" == 1 ]]; then printf "Retained work: %s\n" "$work"; else rm -rf -- "$work"; fi' EXIT
+ export TMPDIR="$work"
++export PYTHONDONTWRITEBYTECODE=1
+ 
+ make -s -j1 "$root/build/test_resolve" "$root/build/test_avclock"
+ build/test_resolve
+ build/test_avclock
++run_hls() {
++    local sanitize=()
++    if [[ "${MPX_HLS_SANITIZE:-0}" == 1 ]]; then
++        sanitize=(-fsanitize=address,undefined -fno-omit-frame-pointer)
++    fi
++    ${CXX:-g++} -std=c++17 -O1 -Wall -DMPX_HAVE_LIBAV -DMPX_FPGA_AV_TRACE=1 \
++        "${sanitize[@]}" \
++        -Ihost $(pkg-config --cflags libavformat libavcodec libavutil libswresample) \
++        tests/unit/test_finite_hls.cpp arm/misterplexd/av_inproc_decode.cpp \
++        $(pkg-config --libs libavformat libavcodec libavutil libswresample) \
++        -pthread -ldl -o "$work/finite-hls"
++    python3 tests/unit/test_finite_hls.py "$work/finite-hls" "$work"
++}
++if [[ "${MPX_COMPRESSED_TEST_SCOPE:-all}" == hls ]]; then
++    run_hls
++    exit
++fi
+ ${CXX:-g++} -std=c++17 -O2 -Wall -Ihost \
+     tests/unit/test_fpga_terminal_accounting.cpp -o "$work/terminal"
+ "$work/terminal"
+@@ -187,4 +205,5 @@
+ PY
+ "$work/progress" --terminal-full "$work/terminal-full.ts"
+ "$work/progress" --terminal-short "$work/terminal-short.ts"
++run_hls
+ printf '%s\n' 'FPGA compressed runtime regressions passed (not hardware acceptance)'
+diff --git a/tests/unit/test_resolve.cpp b/tests/unit/test_resolve.cpp
+--- a/tests/unit/test_resolve.cpp
++++ b/tests/unit/test_resolve.cpp
+@@ -136,15 +136,48 @@
+         "fpga-session", 0, fpgaProfile);
+     const auto fpgaDecision = buildUniversalDecisionUrl(
+         fpgaStart, "fpga-session", "header-only-token", fpgaProfile);
++    CHECK(fpgaStart.find("/video/:/transcode/universal/start.m3u8?") != std::string::npos);
+     for (const auto& url : {fpgaStart, fpgaDecision}) {
+         CHECK(!url.empty());
+         CHECK(url.find("directPlay=0&directStream=0") != std::string::npos);
++        CHECK(url.find("protocol=hls") != std::string::npos);
++        CHECK(url.find("protocol=http") == std::string::npos);
+         CHECK(url.find("container=mpegts") != std::string::npos);
+         CHECK(url.find("audioChannels=2") != std::string::npos);
+         CHECK(url.find("videoResolution=320x240") != std::string::npos);
+         CHECK(url.find("videoFrameRate=24000%2F1001") != std::string::npos);
+         CHECK(url.find("X-Plex-Token") == std::string::npos);
+         CHECK(url.find("header-only-token") == std::string::npos);
++    }
++    const auto hlsSeek = buildUniversalTranscodeUrl(
++        "http://pms.example:32400", "/library/metadata/3", "header-only-token",
++        "seek-session", 1500, fpgaProfile);
++    CHECK(hlsSeek.find("offset=2") != std::string::npos);
++    CHECK(buildUniversalDecisionUrl(hlsSeek, "seek-session", "header-only-token", fpgaProfile)
++              .find("offset=2") != std::string::npos);
++    const auto legacyStart = buildUniversalTranscodeUrl(
++        "http://pms.example:32400", "/library/metadata/3", "", "legacy-session", 0, w240);
++    CHECK(legacyStart.find("start.mp4?") != std::string::npos);
++    CHECK(legacyStart.find("protocol=http") != std::string::npos);
++    CHECK(buildUniversalDecisionUrl(legacyStart, "fpga-session", "", fpgaProfile).empty());
++    for (const int rate : {24, 24000}) {
++        for (const char* prototype : {"idr", "ip"}) {
++            for (const bool filteringOff : {false, true}) {
++                WeakLadder selected;
++                CHECK(applyFpgaPlexProfile(selected, prototype, rate, rate == 24 ? 1 : 1001,
++                                           filteringOff));
++                const auto start = buildUniversalTranscodeUrl(
++                    "http://pms.example:32400", "/library/metadata/3", "not-in-url", "s", 0,
++                    selected);
++                const auto decision = buildUniversalDecisionUrl(start, "s", "not-in-url", selected);
++                CHECK(start.find("start.m3u8?") != std::string::npos);
++                CHECK(!decision.empty() && decision.find("protocol=hls") != std::string::npos);
++                CHECK(start.find("not-in-url") == std::string::npos);
++                CHECK(plexFfmpegHeaders("s", "not-in-url", selected)
++                          .find("X-Plex-Client-Profile-Name: " + selected.clientProfileName) !=
++                      std::string::npos);
++            }
++        }
+     }
+     const auto fpgaHeaders = plexFfmpegHeaders("fpga-session", "header-only-token", fpgaProfile);
+     CHECK(fpgaHeaders.find("X-Plex-Token: header-only-token\r\n") != std::string::npos);

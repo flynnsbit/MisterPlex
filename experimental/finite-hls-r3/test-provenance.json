@@ -1,0 +1,1068 @@
+{
+  "auth_failures": 0,
+  "final_log": "test-output/hls-r3.log",
+  "final_log_sha256": "af48c9e43e55d914f24cf8f233982f90cc7179264f58ad9421c9664af7791b33",
+  "final_work": "/home/flynnsbit/Projects/lab-monorepo/projects/misterplex/memory/lab/fpga-h264-30ff2997/clean-resume-5754/eof-transport-revision-03/candidate/build/session/compressed-runtime-828784",
+  "generated_media_not_in_release": true,
+  "grant": "hls-master-spacing-fix-r3-5754",
+  "hardware_acceptance": false,
+  "hls_cases": [
+    {
+      "case": "001-no-end-cancel-24",
+      "command_sha256": "d45c81bdb01774e1c3dbd19db0bda5d8299f8d80405996c7f6acf16e1f87cd16",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "cancel",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 250,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "39076708f7fec08032c39be6ab72e4dfbd619241cb7d65bb41fba69396f6597e"
+    },
+    {
+      "case": "002-no-end-external-cancel-24",
+      "command_sha256": "77148fa2146c05745d6c25d29a92fd31f79b506664a3c63edea88c7f1460d71a",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "external-cancel",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 249,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "1c8a37980c4d98fac4f1383dc8fff6b21c6a007060bef344b2b6f9d614f1b9d0"
+    },
+    {
+      "case": "003-complete-complete-24",
+      "command_sha256": "4443e131d188e3cb72edb3e26b16c0f2b4ddedbb87ef0994b2b2251ebe2bf982",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 31,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "274da288a7e47e5989703727092ca4931c54f9efd4fd1b0ee5f621833da995c8"
+    },
+    {
+      "case": "004-complete-complete-23976",
+      "command_sha256": "57068e2a31e58cd934cbb3a6064bb80981da5cd2be8e5a36a40962cf971f20ea",
+      "fps": [
+        "24000",
+        "1001"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 31,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "274da288a7e47e5989703727092ca4931c54f9efd4fd1b0ee5f621833da995c8"
+    },
+    {
+      "case": "005-discontinuity-sequence-complete-24",
+      "command_sha256": "4763a3aacd842c52260e85eebdaca7a9e51790f9a335f0796967b5c13912099c",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 30,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "2d08e73204fb15d079cc56502d81153f4dddc2d7b92f3385f14bc4e828c9352b"
+    },
+    {
+      "case": "006-missing-reopen-24",
+      "command_sha256": "317d5b318745151f8face79e96457455de6845e4c6649c7b6218d473924d3570",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "reopen",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 35,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "38d15acdb9826e327362dbf84eed9b4259cbe6933516b97012f875d3af5ed3ed"
+    },
+    {
+      "case": "007-event-complete-24",
+      "command_sha256": "3b1bf40e3115a29df3a3511c3084f4e1dabf404f09d572c278a957ad711c8303",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 533,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "93c8e6b905c3b469d15934956cc5c81f1676e6d3caea7224f09f03061115a9df"
+    },
+    {
+      "case": "008-extensionless-explicit-24",
+      "command_sha256": "51dc6d41494adbcd88024f5a791661970092e7363a5a7e41171c4dbe8f82d9e0",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "explicit",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 32,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "b7f9b230a346e98dfaed96dc61a8c1c6b71758b199c68de8e508a6f8a05a223e"
+    },
+    {
+      "case": "009-unguarded-error-24",
+      "command_sha256": "b8e844dbced95ac656dd38603f29cee982de8277a5b7f0a851fb644a7a08d7c6",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "41bc2c06478bb205814a1c55553592ff8ae16ee488e9ef86b73224f6aac24644"
+    },
+    {
+      "case": "010-last-chunk-short-error-24",
+      "command_sha256": "35b1caa252cdba8212cdfc85d8e2e337420cbcac912ea9750fe46dc3daa3d658",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 34,
+        "elapsed_ms": 18,
+        "failed": true,
+        "finite_hls_error": -38,
+        "finite_hls_error_kind": "resource-length",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 262144,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "7dceb878e260cafe21154345f4f4c099dd28230aa030163d0a054fee94e23921"
+    },
+    {
+      "case": "011-last-garbage-error-24",
+      "command_sha256": "ddaec2764b87ca08e3752a34dc6ecb20bd284dd2071215f6b17a4a66ce2cc050",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 36,
+        "elapsed_ms": 19,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "video-extent",
+        "finite_hls_verified": false,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 294912,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "46e8c731be50fdea53b8d56888df3b8aa69db701d6a24bc2e70e87e815542653"
+    },
+    {
+      "case": "012-last-incomplete-error-24",
+      "command_sha256": "368fe7e266431fd593be68a09bb9d32a6a528f31fd7be26c204b24b0c690429e",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 42,
+        "elapsed_ms": 17,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "video-extent",
+        "finite_hls_verified": false,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 327680,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "0a4f7a877df33c920feab003c814761fb999556bfe4b2cdc70733fb1c6fc88b8"
+    },
+    {
+      "case": "013-last-one-frame-error-24",
+      "command_sha256": "db1232695c1b84c6b7eeda7b405f7919f0f527d6f48087764a3108d62a68c6ee",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 47,
+        "elapsed_ms": 21,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "video-extent",
+        "finite_hls_verified": false,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 360448,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "1d24527c5e0253b5e4c7eca37924350f41bd808286bad03c03d9a1159de45b01"
+    },
+    {
+      "case": "014-file-complete-24",
+      "command_sha256": "ba8cd6d5b481a0b526b8487c3c3d8cdc9b2967a7c056519e7491eacd4e0f027e",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 24,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "a67bf8cea1a9a57f6d234d9b183cdceffd7bb0b68916b556e996d197acd732a9"
+    },
+    {
+      "case": "015-master-complete-24",
+      "command_sha256": "9cef8418c3c390dde092b51cc2f0cf43e1b944255c89328b6b96cfa903dfccd6",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 30,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "2d08e73204fb15d079cc56502d81153f4dddc2d7b92f3385f14bc4e828c9352b"
+    },
+    {
+      "case": "016-master-blank-complete-24",
+      "command_sha256": "513f7e44cde3b3df7bfb640794d633e8339138e0f5bcf124fff30a3bf6b70c12",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 31,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "274da288a7e47e5989703727092ca4931c54f9efd4fd1b0ee5f621833da995c8"
+    },
+    {
+      "case": "017-master-comment-complete-24",
+      "command_sha256": "78bfe02b3fcd28ae24a06e1ba5d3f3a019ab091501c49e32def960fa0518a9a2",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 31,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "274da288a7e47e5989703727092ca4931c54f9efd4fd1b0ee5f621833da995c8"
+    },
+    {
+      "case": "018-master-spaced-complete-24",
+      "command_sha256": "b25f72673269ddd05c910d3259c58271cd15775ce41f56c1e7ef53589cc12158",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "complete",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 35,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "38d15acdb9826e327362dbf84eed9b4259cbe6933516b97012f875d3af5ed3ed"
+    },
+    {
+      "case": "019-master-conflict-error-24",
+      "command_sha256": "37f1c46ef9e89c247f4a6973662a56408649244c5f8c4f9fce6cd0baafba433f",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "020-master-missing-error-24",
+      "command_sha256": "312a6bbf5fd1c2cb9a7565315c4dbf35508c79e11788ec72e3e88ca036061578",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "afc7146e1cf28a4959e05e3f1cb7bdf91df6e9bbb7b0381cbc52bca9cf2bbb77"
+    },
+    {
+      "case": "021-orphan-before-error-24",
+      "command_sha256": "6236881621d00afd01e5751de9116cd4f11f3402293de93abd5d6da359a24c28",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "022-orphan-after-end-error-24",
+      "command_sha256": "ee8cf4a6dcf01a1d2c1f76f56acb214b055abde844b8c1522b6ee2b3b1a09e7e",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "023-complete-backpressure-24",
+      "command_sha256": "3b37ee9315e3899140d432dc06ef43335fa73da13c10668b0e731ba5c97cc788",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "backpressure",
+      "result": {
+        "access_units": 48,
+        "elapsed_ms": 32,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 389120,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "b7f9b230a346e98dfaed96dc61a8c1c6b71758b199c68de8e508a6f8a05a223e"
+    },
+    {
+      "case": "024-redirect-error-24",
+      "command_sha256": "0617db677a6b2b64e2aa085160589607eab02b1458595339db1833b62a75ff93",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -5,
+        "finite_hls_error_kind": "transport",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": -5,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "ea19e9d21a947aedccf5587ac5029290fa83798e47a75add4eb80eedfd727218"
+    },
+    {
+      "case": "025-cross-origin-error-24",
+      "command_sha256": "43aa5a3eabefe2fce0e045320a346091717a2f602cb07ee3c07d4c162bd04e05",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 10,
+        "elapsed_ms": 7,
+        "failed": true,
+        "finite_hls_error": -13,
+        "finite_hls_error_kind": "origin",
+        "finite_hls_verified": false,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 65536,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "948b83f776e45e4217ebcd20f1d034cb23bd5f6da1598c63db041618cf60d0c6"
+    },
+    {
+      "case": "026-complete-seek-24",
+      "command_sha256": "6201af7c932caa5bfd63933f25201152d32d13bdf5cbf0097a9ea21e62818a2f",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "seek",
+      "result": {
+        "access_units": 36,
+        "elapsed_ms": 29,
+        "failed": false,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": true,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 286720,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "dff20e16827033e4f63a3bf08189b322e6aa356872c435dd356c43c3529ef14a"
+    },
+    {
+      "case": "027-complete-seek-reject-24",
+      "command_sha256": "445676f0e113c918d935711fb51ab0dd18bb8f272bda6fc103a0f5faee2d7513",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "seek-reject",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 4,
+        "failed": true,
+        "finite_hls_error": 0,
+        "finite_hls_error_kind": "none",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "1459f856c476a7cd352a501497f3521c34cb8d97eae69970c9cd3217b5af04d3"
+    },
+    {
+      "case": "028-missing-error-24",
+      "command_sha256": "8d3ea3e162973ad8e3df22988f8a6b50fe34b7d00c8e67ea53d588d0aac5bc2a",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 10,
+        "elapsed_ms": 9,
+        "failed": true,
+        "finite_hls_error": -875574520,
+        "finite_hls_error_kind": "transport",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": -875574520,
+        "pcm_bytes": 65536,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "5c29731afa95e58f66e5a15201521cec77c02db3a3a84975bb0282326c447669"
+    },
+    {
+      "case": "029-server-error-error-24",
+      "command_sha256": "4075ff2f9834fe9bad0890d89eaeb54747fe368fcb9a82d5943a31f0d162e508",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 10,
+        "elapsed_ms": 9,
+        "failed": true,
+        "finite_hls_error": -1482175992,
+        "finite_hls_error_kind": "transport",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": -1482175992,
+        "pcm_bytes": 65536,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "284865255beb92195d7f0afaddfecaad99e1da8bf778735ee9225ee059487da0"
+    },
+    {
+      "case": "030-short-error-24",
+      "command_sha256": "be1449c4f7675c8d21d3495c42e5b08626cf515d191d977da4ace3037d155002",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 15,
+        "elapsed_ms": 8,
+        "failed": true,
+        "finite_hls_error": -5,
+        "finite_hls_error_kind": "transport",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": -5,
+        "pcm_bytes": 102400,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "71357bd6772b4c30e89f90a35e9aea94ee366b21c91694bde253a2fd25d83aa6"
+    },
+    {
+      "case": "031-chunk-short-error-24",
+      "command_sha256": "6d43f8ac4df243b6f7c6871e45be75d8dfb00b421581e20d0e6a50dda9ac58c8",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 10,
+        "elapsed_ms": 8,
+        "failed": true,
+        "finite_hls_error": -38,
+        "finite_hls_error_kind": "resource-length",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 65536,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cece5db576138155f8149633d6f28fed066eca2b517d3d4e3434e759c139ee2a"
+    },
+    {
+      "case": "032-chunked-error-24",
+      "command_sha256": "facb32eb84ce00e50e95979f74983c0294b59ecebdd4e310ff191a9c88c3c6d0",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 10,
+        "elapsed_ms": 8,
+        "failed": true,
+        "finite_hls_error": -38,
+        "finite_hls_error_kind": "resource-length",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 65536,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cece5db576138155f8149633d6f28fed066eca2b517d3d4e3434e759c139ee2a"
+    },
+    {
+      "case": "033-empty-error-24",
+      "command_sha256": "bd4a8898fdc7d95b4d121b9918aa8be07bc1d67423c3892e9e5ed4b612c3730e",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 10,
+        "elapsed_ms": 8,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "resource-length",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 65536,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "db318fe595395ca42c04f33d9ce1df9b35233c5c494e7d5db7d490aa6f1fe1fa"
+    },
+    {
+      "case": "034-garbage-error-24",
+      "command_sha256": "691271f7343b09a46cb29b05d17b92db6dcfe15b4a3dba4866b64ab4cef53c6c",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 10,
+        "elapsed_ms": 8,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "corrupt-packet",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 65536,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "2591978dbfe47025605ac804b2f906446b855e8bc84e44e77e2d99c562858706"
+    },
+    {
+      "case": "035-no-end-error-24",
+      "command_sha256": "0857451c49e5dd32b44a100c4eeb89a11646181ad183aa67d753ac529c03ef05",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 46,
+        "elapsed_ms": 5039,
+        "failed": true,
+        "finite_hls_error": -110,
+        "finite_hls_error_kind": "deadline",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": -1414092869,
+        "pcm_bytes": 360448,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "ddcc847495bf6fa8bbe87e37264232b25fd77a5c4958111b3915cd8f67b819aa"
+    },
+    {
+      "case": "036-shift-error-24",
+      "command_sha256": "6075d02b3ecaffcf3580c5a6b9b5ae48d7d818d0dab0d8a56ad9e8b55e68e441",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 22,
+        "elapsed_ms": 514,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 167936,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "b7247ee76ba5f327aa9a183b08f7ca8549174f167f95913f816bc2b9debde0cb"
+    },
+    {
+      "case": "037-regress-error-24",
+      "command_sha256": "3b993f207f90f8eda74181ee07afaad9916be95287a21531213569a58cb34422",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 34,
+        "elapsed_ms": 518,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": true,
+        "io_error": 0,
+        "pcm_bytes": 262144,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "b43e4f73cf4306de9388bfbd5eb0e011261237400606630881b1b114369a7acd"
+    },
+    {
+      "case": "038-gap-error-24",
+      "command_sha256": "a747c6db1cc6b54ab06069ebd92ed7f44c5038733b8cfe09dde4c255bb40c9e4",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "039-dangling-error-24",
+      "command_sha256": "1fc1a9da55c9e451218b1b81ad9b76a32252c737d1c3e9062c40b179bcc4cd37",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "040-after-end-error-24",
+      "command_sha256": "fe7e32a24f2240c6bbba9889d3f208aaa0afb0982f8995041800fab078d7e806",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "041-progressive-error-24",
+      "command_sha256": "ccf3a5bb292e54d09c67c34630dfdd903428414717e0fc6af4d9f3d4a5b6e155",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -5,
+        "finite_hls_error_kind": "resource-length",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "273439a481131ea4f1d22feff0f0bcd58535fa7215e1432a79b02c276db5f076"
+    },
+    {
+      "case": "042-bad-target-error-24",
+      "command_sha256": "ea967b0b0aebd68009eae9c76bbc1e5669aef864b705f07137a2bda99c1a517b",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "043-segment-range-error-24",
+      "command_sha256": "ff46f594e5d4e52bdc81827384f2c6909784cb1665bafcbcb485ad2a88d71bfb",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "044-map-error-24",
+      "command_sha256": "db4d8413c0f959436301ebc24bafffdc9aa3419c3f6fb625f115130279618729",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    },
+    {
+      "case": "045-map-range-error-24",
+      "command_sha256": "076a9306466944a58bd2c531f845b24ada0a8acec9e1147a63b89ca07350a4dc",
+      "fps": [
+        "24",
+        "1"
+      ],
+      "mode": "error",
+      "result": {
+        "access_units": 0,
+        "elapsed_ms": 1,
+        "failed": true,
+        "finite_hls_error": -1094995529,
+        "finite_hls_error_kind": "manifest",
+        "finite_hls_verified": false,
+        "io_eof": false,
+        "io_error": 0,
+        "pcm_bytes": 0,
+        "video_decoder_opens": 0
+      },
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "cdb063aa46ee85f385c111e84c2ef78ac4b15bf57460b9d6199cba50e0b99920"
+    }
+  ],
+  "hls_native_invocations": 45,
+  "hls_test_methods": 20,
+  "master_variant_spacing_cases": {
+    "negative": [
+      "master-conflict",
+      "master-missing"
+    ],
+    "pinned_libav_behavior_reference": "ffmpeg-8.1.2/libavformat/hls.c:999-1008",
+    "positive": [
+      "master-blank",
+      "master-comment",
+      "master-spaced"
+    ]
+  },
+  "new_failure_evidence": "none",
+  "owner": "8f57f066-5a9e-4c97-b5a2-c4a1f09ef306",
+  "runtime_selector": "MPX_COMPRESSED_TEST_SCOPE=hls with ASan/UBSan/leak detection",
+  "server_thread_joined": true,
+  "syntax_only_compile": {
+    "command": "g++ -std=c++17 -fsyntax-only -DMPX_HAVE_LIBAV -DMPX_FPGA_AV_TRACE=1 -Ihost -I PINNED_ARM_PREFIX/include arm/misterplexd/av_inproc_decode.cpp",
+    "passed": true
+  }
+}

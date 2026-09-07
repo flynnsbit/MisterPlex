@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-hls-source-only",
+  "public_branch_base_commit": "7875eb0e2a733aff6e78bc99fbfbbb6d60832da1",
+  "prior_public_v13_commit": "b55d108cc79780ce3e129d4b0c9ba82d45c373e7",
+  "manifest_sha256": "6a314a76c4019bb3e3c7434e092aac47a57acbdeb64688a2f4107288446dad56",
+  "source_archive_sha256": "eda65ccbf506509beabbc59a78286c6408911f93b06a0498981ba9ab65a82961",
+  "baseline_patch_sha256": "4b410156847bdb73b46b982386bb428fc25c070a075f0b9cb63915b2ff804f0c",
+  "r2_delta_patch_sha256": "1d3fd4630e16386619299234181a44bc7d60720841f192142c44c51b8032e066",
+  "review_receipt_sha256": "713f1f842ffda732be8c917a6aefdc55970ee2ff9d4ac715b32651ffc9a6d96b",
+  "review_outcome": "PRIOR_FINDING_RESOLVED_NO_SIGNIFICANT_ISSUES",
+  "binding": "Complete86-source archive and both patches match; exact two-file correction versus reviewedr2, other84 inputs and prior releases unchanged.",
+  "revision_lineage": {
+    "r1_manifest_sha256": "cf3d815ff555345486b5a15e4cdf95898fd9b7dc39c4b50350689a4da24fc545",
+    "r1_archive_sha256": "f8f311e3f6a7be2e819035518550de43a0945772a4a775f1479c377767c427fc",
+    "r2_manifest_sha256": "b3b2b1ae537752a17972f2f0622a522a2da98de646af5909c120078aa48ed837",
+    "r2_archive_sha256": "14ba06e49db187a0b6312d18e5a84d5db8cb607d008d003852c213269f559929"
+  },
+  "review_limits": {
+    "source_publication_approved": true,
+    "pms_compatibility_qualified": false,
+    "arm_runtime_qualified": false,
+    "hardware_or_playback_approved": false,
+    "supported_candidate_contract_only": true
+  },
+  "supported_scope": {
+    "finite_muxed_mpegts_hls": true,
+    "endlist_required": true,
+    "verifiable_resource_lengths_required": true,
+    "fixed_direct_origin_required": true,
+    "additive_xml_targets": 8,
+    "http_targets_preserved": true
+  },
+  "unsupported_or_refused": [
+    "chunked or unknown-length resources",
+    "redirect children",
+    "cross-origin children",
+    "segment or MAP byteranges",
+    "MAP resources",
+    "multiple renditions or windowed playlists",
+    "actual discontinuity playback qualification",
+    "actual PMS compatibility claims",
+    "ARM runtime/build approval",
+    "Web/HDMI/glass/audio approval"
+  ],
+  "included_records": {
+    "file_map_json_sha256": "61b021b60e1d20d4b2f51e6e100e1da3c2f6a3d1d1f124ec09e250f53fe2bbd5",
+    "source_freeze_json_sha256": "2de2eda780b76e214f865aafe128c4c85bf071284a38abe77a4bcdaf15b267d8",
+    "source_manifest_json_sha256": "6a314a76c4019bb3e3c7434e092aac47a57acbdeb64688a2f4107288446dad56",
+    "source_tar_gz_sha256": "eda65ccbf506509beabbc59a78286c6408911f93b06a0498981ba9ab65a82961",
+    "source_patch_sha256": "4b410156847bdb73b46b982386bb428fc25c070a075f0b9cb63915b2ff804f0c",
+    "r2_delta_patch_sha256": "1d3fd4630e16386619299234181a44bc7d60720841f192142c44c51b8032e066",
+    "preservation_json_sha256": "03512a2d1268cccbe004eb766ba427df7b6d28e22bb014393bd3f4a98d557e2c",
+    "dependency_provenance_json_sha256": "27935ce9adf748a2575664ba01b528384d1dafc0b96ec83fa4f6d34c3bfdfed0",
+    "test_provenance_json_sha256": "739124e788b240698ad4a8941e69b956e2989115b5e43434238aee27892821be"
+  },
+  "restoration": {
+    "source_restore_requirement": "Restore source.tar.gz with file-map.json over a checked-out MisterPlex tree before building or diffing against canonical source.",
+    "restore_command_example": "tar -xzf source.tar.gz --strip-components=1 -C /path/to/MisterPlex",
+    "separate_hls_dependency_stage": "Use the exact restored scripts/build_arm_ffmpeg.sh and scripts/check_arm_ffmpeg_static.py with a separately staged FFmpeg 8.1.2 HLS-capable dependency build; the old four static ARM archives remain untouched and insufficient.",
+    "directly_changed_vs_r2": [
+      "arm/misterplexd/finite_hls_io.hpp",
+      "tests/unit/test_finite_hls.py"
+    ]
+  }
+}

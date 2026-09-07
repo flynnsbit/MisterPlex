@@ -1,0 +1,1760 @@
+// misterplexd — ARM-side daemon for MiSTerPlex.
+// Phase 2: GDM + companion + FFmpeg → /dev/fb0 (FPGA scanout via MiSTer_fb).
+// Phase 4: multi-server conf, auto next-episode, optional subtitle burn-in.
+
+#include "companion.hpp"
+#include "natural_eof.hpp"
+#include "playback_controls.hpp"
+#include "media_player.hpp"
+#include "pms_timeline.hpp"
+#include "plex_resolve.hpp"
+#include "libmisterplex/display_raster.hpp"
+#include "libmisterplex/av_clock.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <unistd.h>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <pthread.h>
+#include <thread>
+#include <vector>
+
+namespace {
+
+std::atomic<bool> g_stop{false};
+void on_signal(int) { g_stop.store(true); }
+
+class FpgaWorkerHandoff {
+public:
+    explicit FpgaWorkerHandoff(misterplex::MediaPlayer& player) : player_(player) {
+        player_.suspendFpgaWorkers();
+    }
+    ~FpgaWorkerHandoff() {
+        if (!completed_)
+            player_.resumeFpgaWorkers(true);
+    }
+    FpgaWorkerHandoff(const FpgaWorkerHandoff&) = delete;
+    FpgaWorkerHandoff& operator=(const FpgaWorkerHandoff&) = delete;
+
+    void completePlayback() {
+        player_.resumeFpgaWorkers(false);
+        completed_ = true;
+    }
+
+private:
+    misterplex::MediaPlayer& player_;
+    bool completed_ = false;
+};
+
+std::string loadConf(const std::string& path, const char* key) {
+    std::ifstream in(path);
+    if (!in)
+        return {};
+    const std::string p = std::string(key) + "=";
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (line.rfind(p, 0) == 0)
+            return line.substr(p.size());
+    }
+    return {};
+}
+
+// Collect every KEY= value (for multi-line PLEX_BASE=).
+std::vector<std::string> loadConfAll(const std::string& path, const char* key) {
+    std::vector<std::string> out;
+    std::ifstream in(path);
+    if (!in)
+        return out;
+    const std::string p = std::string(key) + "=";
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (line.rfind(p, 0) == 0)
+            out.push_back(line.substr(p.size()));
+    }
+    return out;
+}
+
+// Upsert KEY=value in conf (preserves comments/other keys). Used so F12 OSD
+// content/display choices persist into conf the user can inspect.
+bool upsertConfKey(const std::string& path, const char* key, const std::string& value) {
+    if (path.empty() || !key || !*key)
+        return false;
+    std::ifstream in(path);
+    std::vector<std::string> lines;
+    std::string line;
+    bool found = false;
+    const std::string p = std::string(key) + "=";
+    if (in) {
+        while (std::getline(in, line)) {
+            if (!found && line.rfind(p, 0) == 0) {
+                lines.push_back(p + value);
+                found = true;
+            } else {
+                lines.push_back(line);
+            }
+        }
+    }
+    if (!found)
+        lines.push_back(p + value);
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out)
+            return false;
+        for (const auto& l : lines)
+            out << l << '\n';
+    }
+    return ::rename(tmp.c_str(), path.c_str()) == 0;
+}
+
+bool confTruthy(const std::string& v) {
+    return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
+misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
+                                                const misterplex::ContentResolution& res,
+                                                bool bitrateExplicit,
+                                                bool qualityExplicit,
+                                                bool h264ProfileExplicit) {
+    misterplex::WeakLadder weak = base;
+    // Prefer named profile so level/bitrate stay consistent with tier.
+    // applyPlexTranscodeProfile always rewrites maxVideoBitrateKbps / videoQuality /
+    // h264Profile from the named ladder (e.g. 720p→main@20M@q100). Preserve operator
+    // WEAK_BITRATE / WEAK_QUALITY / WEAK_H264_PROFILE when set so the light present-rate
+    // ladder can stick (baseline is cheaper to decode on dual-A9).
+    const int explicitBitrateKbps = base.maxVideoBitrateKbps;
+    const int explicitQuality = base.videoQuality;
+    const std::string explicitH264Profile = base.h264Profile;
+    const std::string geomRes =
+        std::to_string(res.width) + "x" + std::to_string(res.height);
+    // Prefer named product label (240p/480p/720p), then WxH geometry.
+    if (!misterplex::applyPlexTranscodeProfile(res.label, weak) &&
+        !misterplex::applyPlexTranscodeProfile(geomRes, weak)) {
+        weak.profileName = res.label;
+        // PMS universal wants WxH in videoResolution=, never the short label alone.
+        weak.videoResolution = geomRes;
+        if (res.width >= 1280 || res.height >= 720) {
+            weak.h264Level = 31;
+            if (!qualityExplicit)
+                weak.videoQuality = 95;
+        }
+    }
+    if (bitrateExplicit)
+        weak.maxVideoBitrateKbps = explicitBitrateKbps;
+    else
+        weak.maxVideoBitrateKbps = res.weakBitrateKbps;
+    if (qualityExplicit && explicitQuality >= 1 && explicitQuality <= 100)
+        weak.videoQuality = explicitQuality;
+    if (h264ProfileExplicit && (explicitH264Profile == "baseline" || explicitH264Profile == "main"))
+        weak.h264Profile = explicitH264Profile;
+    return weak;
+}
+
+} // namespace
+
+namespace {
+
+// MiSTerPlex ships its own static ffmpeg, but installs that predate that (or that
+// share a box with mistercast-linux) keep it elsewhere. Probe our own bin first so
+// a stock install is self-contained, then fall back rather than hard-failing.
+std::string defaultFfmpegPath() {
+    for (const char* c : {"/media/fat/misterplex/bin/ffmpeg", "/media/fat/mistercast/bin/ffmpeg"}) {
+        if (::access(c, X_OK) == 0)
+            return c;
+    }
+    return "/media/fat/misterplex/bin/ffmpeg";
+}
+
+// One process only. A second copy fights DDR banks and corrupts glass.
+// Hold the fd for the process lifetime. Do not unlink the path (same
+// inode rule as /tmp/misterplex_spi.lock).
+class ProcessSingleton {
+public:
+    static constexpr const char* kPath = "/tmp/misterplexd.lock";
+    static constexpr int kExitAlreadyRunning = 3;
+
+    bool acquire(std::string& err) {
+        fd_ = ::open(kPath, O_CREAT | O_RDWR, 0666);
+        if (fd_ < 0) {
+            err = std::string("open ") + kPath + " failed: " + std::strerror(errno);
+            return false;
+        }
+        if (::flock(fd_, LOCK_EX | LOCK_NB) != 0) {
+            char buf[32]{};
+            ::lseek(fd_, 0, SEEK_SET);
+            const ssize_t n = ::read(fd_, buf, sizeof(buf) - 1);
+            int holder = 0;
+            if (n > 0)
+                holder = std::atoi(buf);
+            err = "already running";
+            if (holder > 0)
+                err += " pid=" + std::to_string(holder);
+            err += std::string(" lock=") + kPath;
+            ::close(fd_);
+            fd_ = -1;
+            return false;
+        }
+        if (::ftruncate(fd_, 0) != 0) {
+            err = std::string("ftruncate ") + kPath + " failed: " + std::strerror(errno);
+            ::flock(fd_, LOCK_UN);
+            ::close(fd_);
+            fd_ = -1;
+            return false;
+        }
+        char pidbuf[32];
+        const int len =
+            std::snprintf(pidbuf, sizeof(pidbuf), "%d\n", static_cast<int>(::getpid()));
+        if (len <= 0 || ::write(fd_, pidbuf, static_cast<size_t>(len)) != len) {
+            err = std::string("write pid ") + kPath + " failed: " + std::strerror(errno);
+            ::flock(fd_, LOCK_UN);
+            ::close(fd_);
+            fd_ = -1;
+            return false;
+        }
+        return true;
+    }
+
+    ~ProcessSingleton() {
+        if (fd_ >= 0) {
+            ::flock(fd_, LOCK_UN);
+            ::close(fd_);
+        }
+    }
+
+    ProcessSingleton() = default;
+    ProcessSingleton(const ProcessSingleton&) = delete;
+    ProcessSingleton& operator=(const ProcessSingleton&) = delete;
+
+private:
+    int fd_ = -1;
+};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // Keep comm=misterplexd so killall -x misterplexd matches. mpx-main hid
+    // every extra copy from killall and let a daemon storm paint DDR.
+
+    std::string name = "MiSTerPlex";
+    std::string machineId = "misterplex-1";
+    int port = 3005;
+    std::string ffmpeg = defaultFfmpegPath();
+    std::string confPath = "/media/fat/misterplex/misterplex.conf";
+    std::string confToken;
+    std::string plexTvToken;
+    bool plexTvLinkEnabled = true;
+    int decodeW = 320, decodeH = 240;
+    bool cliDecodeExplicit = false;
+    int cliDecodeW = 0, cliDecodeH = 0;
+    std::string confDecodeValue;
+    std::string presentMode = "fb0";
+    misterplex::DdrFrameFormat ddrFrameFormat = misterplex::DdrFrameFormat::Yuv420p;
+    bool ddrMemSync = true;
+    bool ddrMemFlush = false;
+    bool presentProfile = false;
+    bool streamEnabled = false;
+    std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
+    bool autoNext = true;
+    std::string subtitleMode = "off"; // off | burn | ffmpeg
+    int subtitleStreamId = -1;
+    // Phase 4 match-source-Hz: conf reserved for switchres; Content FPS hint is software-only.
+    std::string matchSourceHz = "off";
+    std::string sourceFpsConf = "auto";
+    misterplex::WeakLadder weak;
+    std::string cliTranscodeProfile;
+    bool transcodeProfileExplicit = false;
+    bool weakResExplicit = false;
+    bool weakBitrateExplicit = false;
+    bool weakQualityExplicit = false;
+    bool weakH264ProfileExplicit = false;
+    std::vector<std::string> servers;
+    std::string defaultPms;
+    int64_t skipForwardMs = 30000;
+    int64_t skipBackMs = 10000;
+    // Lab: --play-file PATH [--play-seconds N] plays a local file then exits (no GDM).
+    std::string playFile;
+    int playSeconds = 25;
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc)
+            name = argv[++i];
+        else if (std::strcmp(argv[i], "--id") == 0 && i + 1 < argc)
+            machineId = argv[++i];
+        else if (std::strcmp(argv[i], "--port") == 0 && i + 1 < argc)
+            port = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--ffmpeg") == 0 && i + 1 < argc)
+            ffmpeg = argv[++i];
+        else if (std::strcmp(argv[i], "--pms") == 0 && i + 1 < argc)
+            defaultPms = argv[++i];
+        else if (std::strcmp(argv[i], "--conf") == 0 && i + 1 < argc)
+            confPath = argv[++i];
+        else if (std::strcmp(argv[i], "--decode") == 0 && i + 1 < argc) {
+            int w = 0, h = 0;
+            if (std::sscanf(argv[++i], "%dx%d", &w, &h) == 2) {
+                decodeW = w;
+                decodeH = h;
+                cliDecodeExplicit = true;
+                cliDecodeW = w;
+                cliDecodeH = h;
+            }
+        } else if (std::strcmp(argv[i], "--transcode-profile") == 0 && i + 1 < argc) {
+            cliTranscodeProfile = argv[++i];
+        } else if (std::strcmp(argv[i], "--play-file") == 0 && i + 1 < argc) {
+            playFile = argv[++i];
+        } else if (std::strcmp(argv[i], "--play-seconds") == 0 && i + 1 < argc) {
+            playSeconds = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--help") == 0) {
+            std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
+                        "[--conf PATH] [--decode WxH] [--transcode-profile 240p|480p] "
+                        "[--play-file PATH] [--play-seconds N]\n");
+            return 0;
+        }
+    }
+
+    ProcessSingleton singleton;
+    {
+        std::string lockErr;
+        if (!singleton.acquire(lockErr)) {
+            std::fprintf(stderr, "misterplexd: %s — one copy only (DDR/glass)\n",
+                         lockErr.c_str());
+            return ProcessSingleton::kExitAlreadyRunning;
+        }
+    }
+
+    {
+        // Multi-server: PLEX_SERVERS=url1,url2 and/or repeated PLEX_BASE= lines.
+        auto baseLines = loadConfAll(confPath, "PLEX_BASE");
+        auto serversCsv = loadConf(confPath, "PLEX_SERVERS");
+        servers = misterplex::mergePlexServers(serversCsv, baseLines);
+        auto host = loadConf(confPath, "PLEX_HOST");
+        if (!host.empty()) {
+            auto hbase = misterplex::normalizePlexBase(host);
+            if (!hbase.empty()) {
+                bool seen = false;
+                for (const auto& s : servers) {
+                    if (s == hbase) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (!seen)
+                    servers.insert(servers.begin(), hbase);
+            }
+        }
+        if (!servers.empty())
+            defaultPms = servers.front();
+        else {
+            auto n = misterplex::normalizePlexBase(defaultPms);
+            if (!n.empty()) {
+                defaultPms = n;
+                servers.push_back(n);
+            }
+        }
+
+        confToken = loadConf(confPath, "PLEX_TOKEN");
+        plexTvToken = loadConf(confPath, "PLEXTV_TOKEN");
+        {
+            auto link = loadConf(confPath, "PLEXTV_LINK");
+            if (!link.empty())
+                plexTvLinkEnabled = confTruthy(link);
+        }
+        auto profile = loadConf(confPath, "TRANSCODE_PROFILE");
+        if (profile.empty())
+            profile = loadConf(confPath, "WEAK_PROFILE");
+        if (!profile.empty()) {
+            transcodeProfileExplicit = true;
+            if (!misterplex::applyPlexTranscodeProfile(profile, weak))
+                std::fprintf(stderr, "misterplexd: unknown TRANSCODE_PROFILE=%s (keeping %s)\n",
+                             profile.c_str(), weak.profileName.c_str());
+        }
+        auto v = loadConf(confPath, "FFMPEG");
+        if (!v.empty())
+            ffmpeg = v;
+        v = loadConf(confPath, "DECODE");
+        if (!v.empty()) {
+            confDecodeValue = v;
+            int w = 0, h = 0;
+            if (std::sscanf(v.c_str(), "%dx%d", &w, &h) == 2) {
+                decodeW = w;
+                decodeH = h;
+            }
+        }
+        v = loadConf(confPath, "WEAK_RES");
+        if (!v.empty()) {
+            weakResExplicit = true;
+            if (!misterplex::applyPlexTranscodeProfile(v, weak)) {
+                weak.profileName = "custom";
+                weak.videoResolution = v;
+            }
+        }
+        v = loadConf(confPath, "WEAK_BITRATE");
+        if (!v.empty()) {
+            weakBitrateExplicit = true;
+            weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+        }
+        v = loadConf(confPath, "WEAK_QUALITY");
+        if (!v.empty()) {
+            const int q = std::atoi(v.c_str());
+            if (q >= 1 && q <= 100) {
+                weak.videoQuality = q;
+                weakQualityExplicit = true;
+            }
+        }
+        // Lab present-rate ladder: WEAK_H264_PROFILE=baseline (cheaper dual-A9 decode).
+        // Default 720p named profile is main (quality path); baseline may band more.
+        v = loadConf(confPath, "WEAK_H264_PROFILE");
+        if (v.empty())
+            v = loadConf(confPath, "H264_PROFILE");
+        if (!v.empty()) {
+            if (v == "baseline" || v == "main") {
+                weak.h264Profile = v;
+                weakH264ProfileExplicit = true;
+            } else {
+                std::fprintf(stderr,
+                             "misterplexd: WEAK_H264_PROFILE=%s ignored (use baseline|main)\n",
+                             v.c_str());
+            }
+        }
+        v = loadConf(confPath, "PRESENT");
+        if (!v.empty())
+            presentMode = v; // fb0 | fpga | both | none(test/lab)
+        v = loadConf(confPath, "DDR_FRAME_FORMAT");
+        if (!v.empty() && v != "yuv420p" && v != "yuv420" && v != "i420") {
+            std::fprintf(stderr,
+                         "misterplexd: DDR_FRAME_FORMAT=%s ignored; DDR frame store is "
+                         "fixed to yuv420p\n",
+                         v.c_str());
+        }
+        v = loadConf(confPath, "DDR_MEM_SYNC");
+        if (!v.empty())
+            ddrMemSync = confTruthy(v);
+        v = loadConf(confPath, "DDR_MEM_FLUSH");
+        if (!v.empty())
+            ddrMemFlush = confTruthy(v);
+        v = loadConf(confPath, "PRESENT_PROFILE");
+        if (!v.empty())
+            presentProfile = confTruthy(v);
+        // Env wins over conf so official play can set PRESENT_PROFILE=1
+        // while the living box conf stays 0.
+        if (const char* e = std::getenv("PRESENT_PROFILE")) {
+            if (e[0])
+                presentProfile = confTruthy(e);
+        }
+        v = loadConf(confPath, "STREAM");
+        if (!v.empty())
+            streamEnabled = confTruthy(v);
+        v = loadConf(confPath, "STREAM_SKIP_RGB");
+        if (!v.empty())
+            streamSkipRgb = v;
+        v = loadConf(confPath, "AUTO_NEXT");
+        if (!v.empty())
+            autoNext = confTruthy(v);
+        // Phase 4 subtitles: off | burn (PMS universal) | ffmpeg (local files, STREAM=0)
+        v = loadConf(confPath, "SUBTITLES");
+        if (!v.empty()) {
+            subtitleMode = v;
+            if (v == "burn" || v == "1" || v == "true" || v == "yes" || v == "on") {
+                weak.burnSubtitles = true;
+                subtitleMode = (v == "ffmpeg") ? "ffmpeg" : "burn";
+            } else if (v == "ffmpeg") {
+                subtitleMode = "ffmpeg";
+            } else {
+                subtitleMode = "off";
+            }
+        }
+        v = loadConf(confPath, "SUBTITLE_STREAM");
+        if (!v.empty()) {
+            subtitleStreamId = std::atoi(v.c_str());
+            weak.subtitleStreamId = subtitleStreamId;
+        }
+        // Phase 4: match-source-Hz / Content FPS (see docs/match-source-hz.md).
+        // Conf is applied on each play: SOURCE_FPS selects Content FPS hint from PMS
+        // metadata (or forces 12/24/30/60). MATCH_SOURCE_HZ=on still cannot switch
+        // modelines without HPS switchres — logs target only.
+        v = loadConf(confPath, "MATCH_SOURCE_HZ");
+        if (!v.empty())
+            matchSourceHz = v;
+        v = loadConf(confPath, "SOURCE_FPS");
+        if (!v.empty())
+            sourceFpsConf = v;
+        v = loadConf(confPath, "SKIP_MS");
+        if (!v.empty()) {
+            const int ms = std::atoi(v.c_str());
+            if (ms >= 0) {
+                skipForwardMs = ms;
+                skipBackMs = ms;
+            }
+        }
+        v = loadConf(confPath, "SKIP_FORWARD_MS");
+        if (!v.empty())
+            skipForwardMs = std::max(0, std::atoi(v.c_str()));
+        v = loadConf(confPath, "SKIP_BACK_MS");
+        if (!v.empty())
+            skipBackMs = std::max(0, std::atoi(v.c_str()));
+        std::fprintf(stderr,
+                     "misterplexd: MATCH_SOURCE_HZ=%s SOURCE_FPS=%s "
+                     "(cadence/OSD path; switchres TODO)\n",
+                     matchSourceHz.c_str(), sourceFpsConf.c_str());
+    }
+    // CLI_DECODE_WINS: persist DECODE= (OSD 240p) must not clobber --decode.
+    // T7 --decode 1280x720 + DECODE=320x240 polled PLXJ at 0x3007F130, not L4.
+    if (cliDecodeExplicit) {
+        if (decodeW != cliDecodeW || decodeH != cliDecodeH) {
+            std::fprintf(stderr,
+                         "misterplexd: CLI_DECODE_WINS --decode %dx%d "
+                         "(conf DECODE=%s ignored)\n",
+                         cliDecodeW, cliDecodeH,
+                         confDecodeValue.empty() ? "(unset)" : confDecodeValue.c_str());
+        } else {
+            std::fprintf(stderr, "misterplexd: CLI_DECODE_WINS --decode %dx%d\n",
+                         cliDecodeW, cliDecodeH);
+        }
+        decodeW = cliDecodeW;
+        decodeH = cliDecodeH;
+    }
+    if (!cliTranscodeProfile.empty()) {
+        transcodeProfileExplicit = true;
+        if (!misterplex::applyPlexTranscodeProfile(cliTranscodeProfile, weak))
+            std::fprintf(stderr, "misterplexd: unknown --transcode-profile=%s (keeping %s)\n",
+                         cliTranscodeProfile.c_str(), weak.profileName.c_str());
+    }
+    // Align PMS ladder with decode size only when the operator did not choose a
+    // transcode profile/resolution explicitly. This is the fallback path when
+    // OSD_CONTROL=0 or no Plex core is loaded; with OSD_CONTROL=1 the OSD status
+    // word (O[4]) is the content-resolution source of truth.
+    if (!transcodeProfileExplicit && !weakResExplicit &&
+        weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
+        const std::string decodeRes = std::to_string(decodeW) + "x" + std::to_string(decodeH);
+        if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
+            // Named profile miss: still publish a valid weak ladder for 720p custom.
+            if (decodeW >= 1280 || decodeH >= 720) {
+                if (!misterplex::applyPlexTranscodeProfile("720p", weak)) {
+                    weak.profileName = "720p";
+                    weak.videoResolution = "1280x720";
+                    weak.h264Level = 31;
+                    if (!weakBitrateExplicit)
+                        weak.maxVideoBitrateKbps = 4000;
+                }
+            } else {
+                weak.profileName = "custom";
+                weak.videoResolution = decodeRes;
+                if (!weakBitrateExplicit) {
+                    if (decodeW >= 640)
+                        weak.maxVideoBitrateKbps = 2500;
+                    else if (decodeW >= 480)
+                        weak.maxVideoBitrateKbps = 1500;
+                }
+            }
+        }
+    }
+    std::string weakWhy;
+    if (!misterplex::validateWeakLadder(weak, &weakWhy)) {
+        std::fprintf(stderr, "misterplexd: invalid transcode profile (%s); falling back to 240p\n",
+                     weakWhy.c_str());
+        misterplex::applyPlexTranscodeProfile("240p", weak);
+    }
+
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+    std::signal(SIGCHLD, SIG_DFL);
+    // Session handoff (seek / new playMedia) calls killChildren() while the audio
+    // and STREAM pump threads may still be writing to the ffmpeg pipes. The default
+    // SIGPIPE action terminates the process *silently* — no log line, no dmesg entry
+    // — and it is not in installCrashGuard()'s list, so Main is left SIGSTOPped and
+    // F12/OSD die with us. Ignoring it turns those writes into a normal EPIPE that
+    // the pump loops already treat as end-of-stream.
+    std::signal(SIGPIPE, SIG_IGN);
+
+    // An SPI critical section SIGSTOPs Main for a few microseconds. If a previous
+    // misterplexd died inside that window, Main is still stopped right now and
+    // F12/OSD/MiSTer_cmd are all dead — resume it before we do anything else,
+    // then arm the crash guard so we cannot strand it again.
+    misterplex::FpgaSpi::resumeStrandedMain();
+    misterplex::FpgaSpi::installCrashGuard();
+
+    for (const char* key : {"MPX_VIDEO_BACKEND", "MPX_LEGACY_CORE_PREFIX",
+                            "MPX_H264_PROTOTYPE", "MPX_H264_FILTER"}) {
+        const auto value = loadConf(confPath, key);
+        if (!value.empty() && !std::getenv(key))
+            ::setenv(key, value.c_str(), 0);
+    }
+    misterplex::MediaPlayer player;
+    player.setFfmpegPath(ffmpeg);
+    {
+        // Lab present-rate ladder: FFMPEG_SWS_FLAGS=fast_bilinear|exact_fast_bilinear|…
+        // Default remains bicubic for soft-sky banding (see SCORE_BANDING_FIX).
+        auto sws = loadConf(confPath, "FFMPEG_SWS_FLAGS");
+        if (!sws.empty()) {
+            player.setFfmpegSwsFlags(sws);
+            std::fprintf(stderr, "misterplexd: FFMPEG_SWS_FLAGS=%s\n", sws.c_str());
+        }
+        auto fpsf = loadConf(confPath, "FFMPEG_FPS_FILTER");
+        if (!fpsf.empty()) {
+            const bool on = confTruthy(fpsf); // off/0/false → omit fps= filter
+            player.setFfmpegFpsFilter(on);
+            std::fprintf(stderr, "misterplexd: FFMPEG_FPS_FILTER=%s\n", on ? "on" : "off");
+        }
+        // UV bias: counter fluorescent green (measured U low on HDMI vs source).
+        int uBias = 0, vBias = 0;
+        auto ub = loadConf(confPath, "UV_U_BIAS");
+        auto vb = loadConf(confPath, "UV_V_BIAS");
+        if (!ub.empty())
+            uBias = std::atoi(ub.c_str());
+        if (!vb.empty())
+            vBias = std::atoi(vb.c_str());
+        if (uBias != 0 || vBias != 0) {
+            player.setUvBias(uBias, vBias);
+            std::fprintf(stderr, "misterplexd: UV_U_BIAS=%d UV_V_BIAS=%d\n", uBias, vBias);
+        }
+    }
+    // MIX-GLASS-MAX: probe live doorbell page once. true480 never 1280x720.
+    // Pin 960-store prefix8 so OSD Content 720p cannot snap idle back to 1280.
+    {
+        const auto pin = misterplex::readLiveGlassPin();
+        const auto glass = misterplex::probeLiveGlass();
+        player.setLiveGlass(glass);
+        player.setRbfPrefix8(pin.prefix8);
+        const auto bank = misterplex::glassMax(decodeW, decodeH, glass, pin.prefix8);
+        const uint32_t db = misterplex::presentBankDoorbell(bank.width, bank.height);
+        if (bank.width != decodeW || bank.height != decodeH) {
+            std::fprintf(stderr,
+                         "misterplexd: GLASS-MAX glass=%s content=%dx%d → bank=%dx%d "
+                         "doorbell=0x%08X\n",
+                         misterplex::liveGlassLabel(glass), decodeW, decodeH, bank.width,
+                         bank.height, db);
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: GLASS-MAX glass=%s bank=%dx%d doorbell=0x%08X\n",
+                         misterplex::liveGlassLabel(glass), bank.width, bank.height, db);
+        }
+        decodeW = bank.width;
+        decodeH = bank.height;
+    }
+    player.setDecodeSize(decodeW, decodeH);
+    {
+        // Display raster latches here (daemon start = core reset). Live F12
+        // Display only upserts DISPLAY_RES; next start applies it.
+        const auto dlab = loadConf(confPath, "DISPLAY_RES");
+        const misterplex::ContentResolution dr = misterplex::resolutionFromLabel(
+            dlab.empty() ? "720p" : dlab.c_str());
+        if (misterplex::displayRasterApplyOnStartup()) {
+            player.latchAndApplyDisplayRaster(dr);
+            std::fprintf(stderr,
+                         "misterplexd: DISPLAY_RES=%s latched at start "
+                         "(video_mode; F12 Display waits for reset)\n",
+                         dr.label);
+        }
+    }
+    player.setPresentMode(presentMode);
+    player.setDdrFrameFormat(ddrFrameFormat);
+    player.setDdrMemSync(ddrMemSync);
+    player.setDdrMemFlush(ddrMemFlush);
+    player.setPresentProfile(presentProfile);
+    player.setStreamEnabled(streamEnabled);
+    player.setStreamSkipRgb(streamSkipRgb);
+    player.setSkipDeltasMs(skipForwardMs, skipBackMs);
+    std::fprintf(stderr, "misterplexd: SKIP_FORWARD_MS=%lld SKIP_BACK_MS=%lld\n",
+                 static_cast<long long>(skipForwardMs), static_cast<long long>(skipBackMs));
+    if (subtitleMode == "ffmpeg")
+        player.setSubtitleMode("ffmpeg");
+    if (subtitleStreamId >= 0)
+        player.setSubtitleStreamIndex(subtitleStreamId);
+    bool osdControl = false;
+    {
+        auto audio = loadConf(confPath, "AUDIO");
+        if (!audio.empty())
+            player.setAudioEnabled(confTruthy(audio));
+        auto audioDev = loadConf(confPath, "AUDIO_DEVICE");
+        if (!audioDev.empty())
+            player.setAudioPath(audioDev);
+        // Default 0 — no hardcoded audio lag. Conf AUDIO_DELAY_MS only.
+        int audioDelayMs = 0;
+        auto adv = loadConf(confPath, "AUDIO_DELAY_MS");
+        if (!adv.empty())
+            audioDelayMs = std::atoi(adv.c_str());
+        player.setAudioDelayMs(audioDelayMs);
+        std::fprintf(stderr, "misterplexd: AUDIO_DELAY_MS=%d (0=fresh, no hardcoded lag)\n",
+                     audioDelayMs);
+    }
+    {
+        // A/V pacing knobs. Defaults match the shipped behaviour; conf lets the lab
+        // retune without a rebuild.
+        auto lead = loadConf(confPath, "AV_PRESENT_LEAD_MS");
+        if (!lead.empty())
+            player.setPresentLeadMs(std::atoi(lead.c_str()));
+        else
+            player.setPresentLeadMs(misterplex::kDefaultPresentLeadMs);
+        auto hdmiLag = loadConf(confPath, "AV_HDMI_AUDIO_LAG_MS");
+        if (!hdmiLag.empty())
+            player.setAvHdmiAudioLagMs(std::atoi(hdmiLag.c_str()));
+        auto drop = loadConf(confPath, "AV_RESYNC_DROP_MS");
+        if (!drop.empty())
+            player.setResyncDropMs(std::atoi(drop.c_str()));
+        else
+            player.setResyncDropMs(misterplex::MediaPlayer::kDefaultResyncDropMs);
+        auto ppm = loadConf(confPath, "AUDIO_CLOCK_PPM");
+        if (!ppm.empty())
+            player.setAudioClockPpm(std::atoi(ppm.c_str()));
+        std::fprintf(stderr, "misterplexd: AUDIO_CLOCK_PPM=%d\n", player.audioClockPpm());
+        auto avoff = loadConf(confPath, "AV_OFFSET_MS");
+        if (!avoff.empty())
+            player.setAvOffsetMs(std::atoi(avoff.c_str()));
+        std::fprintf(stderr, "misterplexd: AV_PRESENT_LEAD_MS=%s AV_RESYNC_DROP_MS=%s\n",
+                     lead.empty() ? "40(default)" : lead.c_str(),
+                     drop.empty() ? "80(default)" : drop.c_str());
+        std::fprintf(stderr, "misterplexd: AV_HDMI_AUDIO_LAG_MS=%s\n",
+                     hdmiLag.empty() ? "auto" : hdmiLag.c_str());
+    }
+    {
+        // Idle/screensaver: without this the last frame of the previous video stays
+        // latched in the frame store after playback ends.
+        auto idle = loadConf(confPath, "IDLE_SCREEN");
+        misterplex::IdleMode im = misterplex::IdleMode::Logo;
+        if (idle == "black")
+            im = misterplex::IdleMode::Black;
+        else if (idle == "screensaver")
+            im = misterplex::IdleMode::Screensaver;
+        else if (idle == "last" || idle == "off")
+            im = misterplex::IdleMode::LastFrame;
+        player.setIdleMode(im);
+        // OSD_CONTROL requires the v7 CONF_STR layout; on an older core the same
+        // bits mean Pattern/Content FPS and would decode as a bogus A/V offset.
+        osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
+        player.setOsdControl(osdControl);
+        std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
+        std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
+                     idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
+    }
+    player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+    if (streamEnabled) {
+        std::fprintf(stderr,
+                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
+                     "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
+                     presentMode.c_str(), streamSkipRgb.c_str());
+    }
+    std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
+                 ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
+    std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
+    std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
+    if (weak.burnSubtitles)
+        std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
+    else if (subtitleMode == "ffmpeg")
+        std::fprintf(stderr, "misterplexd: SUBTITLES=ffmpeg (local files, STREAM=0)\n");
+    if (!player.initPresent()) {
+        std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
+    } else {
+        // Paint the idle screen at boot so the core never shows a stale frame store.
+        player.startIdle();
+        player.startOsdPoll();
+        player.startInputPoll();
+    }
+
+    // Lab A/V sync: play local file and exit (no companion / GDM).
+    if (!playFile.empty()) {
+        // Restore CLI/conf canvas after OSD seed. decodeW/H are already
+        // glass-capped (true480 never 1280x720). Do not skip ACK.
+        player.setDecodeSize(decodeW, decodeH);
+        {
+            const auto geom = misterplex::ddrFrameGeometryForPresentedSize(decodeW, decodeH);
+            const auto layout = misterplex::makeDdrFrameLayout(
+                geom, misterplex::ddrFramePhysBaseForGeometry(geom));
+            const uint32_t plxjPhys = layout.doorbell_phys + 0x130u;
+            std::fprintf(stderr,
+                         "misterplexd: LAB play-file=%s seconds=%d decode=%dx%d "
+                         "doorbell=0x%08X PLXJ=0x%08X%s\n",
+                         playFile.c_str(), playSeconds, decodeW, decodeH,
+                         layout.doorbell_phys, plxjPhys,
+                         (decodeW == 1280 && decodeH == 720) ? " L4" : "");
+        }
+        std::string probeFail;
+        int srcW = 0, srcH = 0;
+        int srcFpsN = 0, srcFpsD = 0;
+        const auto sourceAspect =
+            player.probeSourceAspect(playFile, {}, &probeFail, &srcW, &srcH,
+                                     &srcFpsN, &srcFpsD);
+        if (srcW > 0 && srcH > 0) {
+            player.setSourceMediaSize(srcW, srcH);
+            std::fprintf(stderr, "misterplexd: play-file source_coded=%dx%d\n", srcW,
+                         srcH);
+        }
+        if (srcFpsN > 0 && srcFpsD > 0) {
+            misterplex::capExactFpsToMaxHz(srcFpsN, srcFpsD, 30.0);
+            player.setContentFpsRational(srcFpsN, srcFpsD);
+            std::fprintf(stderr,
+                         "misterplexd: play-file content fps=%d/%d (match cap 30Hz)\n",
+                         srcFpsN, srcFpsD);
+        }
+        if ((!sourceAspect.valid && !player.fpgaH264Backend()) ||
+            !player.setSourceAspect(sourceAspect)) {
+            if (!sourceAspect.valid) {
+                std::fprintf(stderr,
+                             "misterplexd: play-file probe: source aspect invalid (%s)\n",
+                             probeFail.empty() ? "unknown" : probeFail.c_str());
+            }
+            std::fprintf(stderr,
+                         "misterplexd: play-file failed: source display aspect unavailable\n");
+            return 1;
+        }
+        if (!player.play(playFile, 0, {}, playSeconds * 1000LL)) {
+            std::fprintf(stderr, "misterplexd: play-file failed\n");
+            return 1;
+        }
+        // Wait up to playSeconds; exit early only after we have observed playing
+        // then see it clear (natural EOF). Do not treat the pre-thread window as done.
+        bool sawPlaying = false;
+        for (int i = 0; i < playSeconds * 10; ++i) {
+            if (player.playing())
+                sawPlaying = true;
+            else if (sawPlaying)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        player.stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        const auto summary = player.lastPlaybackSummary();
+        if (summary.deliveredFrames() <= 0) {
+            std::fprintf(stderr,
+                         "misterplexd: LAB play-file ERROR zero frames delivered "
+                         "(raw=%lld presented=%lld recon=%lld totalBytes=%lld short_read=%d "
+                         "got=%zu/%zu eof=%d stream=%d skip_rgb=%d). Check FFmpeg stderr/log, "
+                         "source streams, and DDR/F1 delivery before grading captures.\n",
+                         static_cast<long long>(summary.rawFrames),
+                         static_cast<long long>(summary.presentedFrames),
+                         static_cast<long long>(summary.reconFrames),
+                         static_cast<long long>(summary.totalBytes), summary.shortRead ? 1 : 0,
+                         summary.shortReadGot, summary.shortReadWant, summary.videoEof ? 1 : 0,
+                         summary.streamEnabled ? 1 : 0, summary.skipRgb ? 1 : 0);
+            return 2;
+        }
+        std::fprintf(stderr,
+                     "misterplexd: LAB play-file done frames=%lld presented=%lld recon=%lld "
+                     "totalBytes=%lld\n",
+                     static_cast<long long>(summary.rawFrames),
+                     static_cast<long long>(summary.presentedFrames),
+                     static_cast<long long>(summary.reconFrames),
+                     static_cast<long long>(summary.totalBytes));
+        return 0;
+    }
+
+    misterplex::Companion comp;
+    comp.setName(name);
+    comp.setMachineId(machineId);
+    comp.setPort(static_cast<uint16_t>(port));
+    comp.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+    comp.setPlexTvEnabled(plexTvLinkEnabled);
+    comp.setPlexTvToken(plexTvToken);
+    comp.setPlexTvLinkPath("/media/fat/misterplex/plex_link.txt");
+    comp.setPlexTvPersist([&](const std::string& tok) {
+        if (!upsertConfKey(confPath, "PLEXTV_TOKEN", tok))
+            std::fprintf(stderr, "misterplexd: failed to persist PLEXTV_TOKEN\n");
+    });
+
+    misterplex::PmsTimelineReporter pmsTimeline;
+    pmsTimeline.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+
+    // Session context for multi-base resolve + auto-next.
+    std::mutex sessionMu;
+    misterplex::PlayRequest lastPlay;
+    std::string lastBase = defaultPms;
+    std::string lastToken = confToken;
+    std::atomic<bool> autoNextInFlight{false};
+    // Monotonic play generation: supersede in-flight async resolve when a newer
+    // playMedia/auto-next arrives (P4-SCRUB out-of-order bind race).
+    std::atomic<uint64_t> playGen{0};
+    std::atomic<uint64_t> activePlayGen{0};
+    std::atomic<uint64_t> seekGen{0};
+    misterplex::TransportGenerations transport{playGen, seekGen};
+    // Serializes stop -> layout/DAR commit -> demux start. FpgaSpi layout changes
+    // remap shared DDR and must never race an active presenter or a newer request.
+    std::mutex playHandoffMu;
+
+    auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
+        misterplex::ContentResolution raw =
+            osdControl ? misterplex::contentResolutionFromOsdWord(player.lastOsdWord())
+                       : misterplex::contentResolutionFromSize(decodeW, decodeH);
+        const auto clamped =
+            misterplex::clampContentToLiveGlass(raw, player.liveGlass());
+        if (clamped.width != raw.width || clamped.height != raw.height)
+            std::fprintf(stderr,
+                         "misterplexd: OSD content=%s ignored on glass=%s — using %s "
+                         "(RBF present bank, not F12)\n",
+                         raw.label, misterplex::liveGlassLabel(player.liveGlass()),
+                         clamped.label);
+        return clamped;
+    };
+    auto displayResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
+        // HDMI raster follows the live bitstream. F12 Display 240p/720p on
+        // true480 fights the 30 Hz 640×480 beam and breaks present.
+        misterplex::ContentResolution raw =
+            osdControl ? misterplex::displayResolutionFromOsdWord(
+                             player.lastOsdWord(),
+                             misterplex::contentResolutionFromOsdWord(player.lastOsdWord()))
+                       : misterplex::contentResolutionFromSize(decodeW, decodeH);
+        return misterplex::clampDisplayToLiveGlass(player.liveGlass(), raw);
+    };
+    auto persistOsdResToConf = [&](const misterplex::ContentResolution& content,
+                                   const misterplex::ContentResolution& display) {
+        // DECODE= glass-capped bank. TRANSCODE_PROFILE stays content (PMS).
+        const auto bank =
+            misterplex::glassMax(content.width, content.height, player.liveGlass());
+        const std::string cGeom =
+            std::to_string(bank.width) + "x" + std::to_string(bank.height);
+        if (!upsertConfKey(confPath, "DECODE", cGeom))
+            std::fprintf(stderr, "misterplexd: conf upsert DECODE failed path=%s\n",
+                         confPath.c_str());
+        if (!upsertConfKey(confPath, "TRANSCODE_PROFILE", content.label))
+            std::fprintf(stderr, "misterplexd: conf upsert TRANSCODE_PROFILE failed\n");
+        if (!upsertConfKey(confPath, "DISPLAY_RES", display.label))
+            std::fprintf(stderr, "misterplexd: conf upsert DISPLAY_RES failed\n");
+        if (!upsertConfKey(confPath, "CONTENT_RES", content.label))
+            std::fprintf(stderr, "misterplexd: conf upsert CONTENT_RES failed\n");
+        decodeW = bank.width;
+        decodeH = bank.height;
+        std::fprintf(stderr,
+                     "misterplexd: conf synced from OSD content=%s display=%s DECODE=%s "
+                     "TRANSCODE_PROFILE=%s glass=%s bank=%dx%d\n",
+                     content.label, display.label, cGeom.c_str(), content.label,
+                     misterplex::liveGlassLabel(player.liveGlass()), bank.width, bank.height);
+    };
+
+    auto resolveAgainstServers = [&](const misterplex::PlayRequest& req,
+                                     const std::string& preferredBase, int64_t off,
+                                     const misterplex::WeakLadder& weakForPlay, int matchW,
+                                     int matchH) -> std::pair<misterplex::ResolveResult, std::string> {
+        // Cast-pinned host must not authenticate with conf token (different PMS).
+        std::string token;
+        if (!req.token.empty())
+            token = req.token;
+        else if (req.address.empty())
+            token = confToken;
+        // Cast-selected base wins when address present.
+        std::string selected =
+            misterplex::buildPlexBase(req.protocol, req.address, req.port, preferredBase);
+        if (selected.empty())
+            selected = preferredBase.empty() ? defaultPms : preferredBase;
+
+        auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
+            // STREAM=1: prefer direct H.264 Part for CAVLC host recon.
+            // STREAM=0: weak universal by default. matchW/H are CONTENT bank for
+            // direct-Part size match (not display present size).
+            return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
+                                                 weakForPlay,
+                                                 /*preferDirectH264=*/streamEnabled, matchW,
+                                                 matchH);
+        };
+
+        // 720p24: Plex Web pins address=LAN PMS. That 401s the conf token and
+        // skips the host 9324 proxy (x86 1280x720 baseline @ 24p). Cast then
+        // played testsrc (120s) or PMS HEVC→720 (~13 unique). Prefer proxy.
+        if (player.liveGlass() == misterplex::LiveGlass::L4 &&
+            preferredBase.find("127.0.0.1:9324") != std::string::npos) {
+            std::string t = token;
+            if (t.empty())
+                t = confToken;
+            auto proxied = misterplex::resolvePlayTarget(
+                req.key, preferredBase, t, off, /*weakAlways=*/true, weakForPlay,
+                /*preferDirectH264=*/streamEnabled, matchW, matchH);
+            if (proxied.ok) {
+                std::fprintf(stderr,
+                             "misterplexd: 720p24 PLEX_BASE proxy %s (cast address=%s)\n",
+                             preferredBase.c_str(),
+                             req.address.empty() ? "-" : req.address.c_str());
+                return {proxied, preferredBase};
+            }
+        }
+
+        auto resolved = tryBase(selected);
+        if (resolved.ok)
+            return {resolved, selected};
+
+        // Multi-server fallback only when cast did not pin an address.
+        if (!req.address.empty())
+            return {resolved, selected};
+
+        for (const auto& s : servers) {
+            if (s == selected)
+                continue;
+            auto r = tryBase(s);
+            if (r.ok) {
+                std::fprintf(stderr, "misterplexd: resolve ok via fallback server %s\n", s.c_str());
+                return {r, s};
+            }
+        }
+        return {resolved, selected};
+    };
+
+    auto doPlay = [&](const misterplex::PlayRequest& req) {
+        uint64_t gen = req.dispatchGeneration;
+        if (gen == 0) {
+            std::lock_guard<std::mutex> handoff(playHandoffMu);
+            gen = ++playGen;
+        }
+        if (gen != playGen.load()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded before resolve key=%s\n",
+                         req.key.c_str());
+            return;
+        }
+        int64_t off = req.offsetMs;
+        const auto contentRes = contentResolutionForNextPlay();
+        const auto displayRes = displayResolutionForNextPlay();
+        const auto bankRes =
+            misterplex::glassMax(contentRes.width, contentRes.height, player.liveGlass());
+        // CLOSED-STOP: playMedia already planted wantPlay_ + fullScreenVideo.
+        // Silent return after ACK/demux fail leaves Plex Web spinning.
+        auto closedStopPlay = [&](const char* why, int64_t timeMs, int64_t durationMs) {
+            const int bankW = player.decodeW();
+            const int bankH = player.decodeH();
+            const auto geom = misterplex::ddrFrameGeometryForPresentedSize(bankW, bankH);
+            const auto layout = misterplex::makeDdrFrameLayout(
+                geom, misterplex::ddrFramePhysBaseForGeometry(geom));
+            const uint32_t plxjPhys = layout.doorbell_phys + 0x130u;
+            std::fprintf(stderr,
+                         "misterplexd: CLOSED-STOP %s content=%s display=%s bank=%dx%d "
+                         "doorbell=0x%08X PLXJ=0x%08X\n",
+                         why, contentRes.label, displayRes.label, bankW, bankH,
+                         layout.doorbell_phys, plxjPhys);
+            comp.closedStop(timeMs, durationMs, player.fpgaH264Backend());
+            pmsTimeline.endSession(timeMs, durationMs);
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastPlay = misterplex::PlayRequest{};
+            lastBase.clear();
+        };
+        const auto weakForPlay = weakForContentResolution(
+            weak, contentRes, weakBitrateExplicit, weakQualityExplicit, weakH264ProfileExplicit);
+        std::fprintf(stderr,
+                     "misterplexd: content=%s display=%s source=%s status_word=0x%04x "
+                     "pms_videoResolution=%s bitrate=%d present=%dx%d glass=%s "
+                     "doorbell=0x%08X PRESENT=fpga DDR path (SDRAM stick optional)\n",
+                     contentRes.label, displayRes.label,
+                     osdControl ? "OSD O[5:4]/O[15:14]" : "conf/--decode",
+                     player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
+                     weakForPlay.maxVideoBitrateKbps, bankRes.width, bankRes.height,
+                     misterplex::liveGlassLabel(player.liveGlass()),
+                     misterplex::presentBankDoorbell(bankRes.width, bankRes.height));
+        auto [resolved, base] =
+            resolveAgainstServers(req, defaultPms, off, weakForPlay, contentRes.width,
+                                  contentRes.height);
+
+        if (gen != playGen.load()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded during resolve key=%s\n",
+                         req.key.c_str());
+            return;
+        }
+
+        if (!resolved.ok) {
+            if (player.fpgaH264Backend()) {
+                std::lock_guard<std::mutex> failedHandoff(playHandoffMu);
+                if (gen != playGen.load() || !comp.acceptsPlayRequest(req))
+                    return;
+                misterplex::retirePlayback(player, pmsTimeline);
+                if (gen != playGen.load())
+                    return;
+                std::fprintf(stderr, "misterplexd: FPGA resolve failed: %s\n",
+                             resolved.detail.c_str());
+                closedStopPlay("FPGA resolve failed; no fallback", off, resolved.durationMs);
+                return;
+            }
+            std::fprintf(stderr, "misterplexd: resolve failed: %s — test pattern\n",
+                         resolved.detail.c_str());
+            resolved.playable = "testsrc";
+            resolved.ok = true;
+            resolved.durationMs = 120000;
+            resolved.sourceFpsHint = 30; // testsrc default
+            resolved.fpsNum = 30;
+            resolved.fpsDen = 1;
+            resolved.sourceAspect = {4, 3, true};
+        } else {
+            std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
+                         resolved.detail.c_str(), resolved.title.c_str(),
+                         static_cast<long long>(resolved.durationMs),
+                         resolved.transcoded ? 1 : 0, base.c_str());
+        }
+
+        int resolvedFpsNum = resolved.fpsNum;
+        int resolvedFpsDen = resolved.fpsDen;
+        std::unique_lock<std::mutex> handoff;
+        // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
+        const int effective =
+            misterplex::applySourceFpsConf(sourceFpsConf, resolved.sourceFpsHint);
+        if (effective > 0) {
+            std::fprintf(stderr,
+                         "misterplexd: Content FPS hint=%d (SOURCE_FPS=%s pms_vfr=%s "
+                         "frameRate=%s resolved=%d) — exact pacing uses resolved rate; "
+                         "switchres TODO\n",
+                         effective, sourceFpsConf.c_str(),
+                         resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str(),
+                         resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
+                         resolved.sourceFpsHint);
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: Content FPS hint unknown (SOURCE_FPS=%s)\n",
+                         sourceFpsConf.c_str());
+        }
+        if (confTruthy(matchSourceHz) || matchSourceHz == "on" || matchSourceHz == "1") {
+            std::fprintf(stderr,
+                         "misterplexd: match-source-Hz ON target≈%dHz — switchres not "
+                         "wired (cadence path active; see docs/match-source-hz.md)\n",
+                         effective > 0 ? effective : 0);
+        }
+
+        // Exact rational rate for A/V pacing. This is deliberately NOT the bucketed
+        // hint above: PMS reports Media@videoFrameRate="24p" for 23.976 content, and
+        // pacing that at 24 costs ~1 ms/s of lipsync drift.
+        if (!player.fpgaH264Backend()) {
+            misterplex::applyContentFpsConf(loadConf(confPath, "AV_CONTENT_FPS"),
+                                            resolvedFpsNum, resolvedFpsDen);
+            if (resolvedFpsNum > 0 && resolvedFpsDen > 0)
+                misterplex::capExactFpsToMaxHz(resolvedFpsNum, resolvedFpsDen, 30.0);
+        }
+        std::fprintf(stderr,
+                     "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s "
+                     "match_cap=30Hz)\n",
+                     resolvedFpsNum, resolvedFpsDen,
+                     resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
+                     resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
+        if (!resolved.sourceAspect.valid && !player.fpgaH264Backend()) {
+            resolved.sourceAspect =
+                player.probeSourceAspect(resolved.playable, resolved.httpHeaders);
+            if (resolved.sourceAspect.valid) {
+                std::fprintf(stderr,
+                             "misterplexd: source aspect probed from stream=%u:%u\n",
+                             resolved.sourceAspect.x, resolved.sourceAspect.y);
+            }
+        }
+
+        // Plex Web may send only containerKey=/playQueues/N. A ratingKey is not a
+        // playQueueItemID; inventing one makes the controller index a nonexistent
+        // queue row and discard otherwise advancing timeline polls.
+        std::string resolvedPlayQueueItemId = req.playQueueItemId;
+        std::string resolvedPlayQueueId = req.playQueueId;
+        std::string resolvedPlayQueueVersion = req.playQueueVersion;
+        std::string resolvedContainerKey = req.containerKey;
+        if (resolvedPlayQueueItemId.empty()) {
+            std::string queueRef = req.containerKey;
+            if (queueRef.empty() && !req.playQueueId.empty())
+                queueRef = "/playQueues/" + req.playQueueId;
+            std::string queueToken = req.token;
+            if (queueToken.empty() && req.address.empty())
+                queueToken = confToken;
+            if (!queueRef.empty() && queueRef.find("/playQueues/") != std::string::npos) {
+                const auto queue =
+                    misterplex::fetchPlayQueue(queueRef, base, queueToken, req.key, {});
+                if (queue.ok && queue.currentIndex >= 0 &&
+                    static_cast<size_t>(queue.currentIndex) < queue.items.size()) {
+                    const auto& item = queue.items[static_cast<size_t>(queue.currentIndex)];
+                    const bool keyMatches =
+                        item.key == req.key ||
+                        (!item.ratingKey.empty() &&
+                         (item.ratingKey == resolved.ratingKey ||
+                          req.key.find(item.ratingKey) != std::string::npos));
+                    if (keyMatches && !item.playQueueItemId.empty()) {
+                        resolvedPlayQueueItemId = item.playQueueItemId;
+                        if (!queue.playQueueId.empty())
+                            resolvedPlayQueueId = queue.playQueueId;
+                        if (!queue.playQueueVersion.empty())
+                            resolvedPlayQueueVersion = queue.playQueueVersion;
+                        if (!queue.containerKey.empty())
+                            resolvedContainerKey = queue.containerKey + "?own=1";
+                        std::fprintf(stderr,
+                                     "misterplexd: play queue bound id=%s item=%s version=%s\n",
+                                     resolvedPlayQueueId.c_str(),
+                                     resolvedPlayQueueItemId.c_str(),
+                                     resolvedPlayQueueVersion.empty()
+                                         ? "-"
+                                         : resolvedPlayQueueVersion.c_str());
+                    }
+                } else {
+                    std::fprintf(stderr,
+                                 "misterplexd: play queue identity unavailable: %s\n",
+                                 queue.detail.c_str());
+                }
+            }
+        }
+
+        handoff = std::unique_lock<std::mutex>(playHandoffMu);
+        if (gen != playGen.load() || !comp.acceptsPlayRequest(req)) {
+            std::fprintf(stderr,
+                         "misterplexd: PLAY superseded before aspect commit key=%s\n",
+                         req.key.c_str());
+            return;
+        }
+        misterplex::retirePlayback(player, pmsTimeline);
+        FpgaWorkerHandoff fpgaWorkers(player);
+        // Content owns DECODE/present-bank *request*. Bank is GLASS-MAX(content).
+        player.setDecodeSize(bankRes.width, bankRes.height);
+        player.setContentFpsRational(resolvedFpsNum, resolvedFpsDen);
+        player.setPlaybackTitle(resolved.title);
+        bool sourceAspectPublished = player.setSourceAspect(resolved.sourceAspect);
+        // RETRY-GLASS-CAP: display≠content ACK fail retries glassMax(content),
+        // never raw 1280x720 (true480 L4 poke 0x3047F000) or a shrink on L4.
+        // 720/720 still skips (display==content). Keep the retry — do not drop
+        // the rtl_invariants display≠content needle.
+        if (!player.fpgaH264Backend() && !sourceAspectPublished &&
+            (displayRes.width != contentRes.width || displayRes.height != contentRes.height)) {
+            const auto retryBank = misterplex::glassMax(
+                contentRes.width, contentRes.height, player.liveGlass());
+            std::fprintf(
+                stderr,
+                "misterplexd: source aspect display layout ACK failed; retrying "
+                "glass-capped content layout %dx%d (content %dx%d glass=%s)\n",
+                retryBank.width, retryBank.height, contentRes.width, contentRes.height,
+                misterplex::liveGlassLabel(player.liveGlass()));
+            player.setDecodeSize(retryBank.width, retryBank.height);
+            sourceAspectPublished = player.setSourceAspect(resolved.sourceAspect);
+        }
+        if (!sourceAspectPublished) {
+            std::fprintf(stderr,
+                         "misterplexd: PLAY rejected: source aspect unknown or FPGA ACK "
+                         "did not match\n");
+            closedStopPlay("PLAY rejected: source aspect unknown or FPGA ACK did not match",
+                           off, resolved.durationMs);
+            return;
+        }
+        player.setSourceMediaSize(resolved.mediaWidth, resolved.mediaHeight);
+        player.setSourceHasAudio(resolved.hasAudio);
+        if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
+            std::fprintf(stderr,
+                         "misterplexd: pms source media=%dx%d decode=%dx%d scale=%s "
+                         "hasAudio=%d\n",
+                         resolved.mediaWidth, resolved.mediaHeight, player.decodeW(),
+                         player.decodeH(),
+                         (resolved.mediaWidth == player.decodeW() &&
+                          resolved.mediaHeight == player.decodeH())
+                             ? "identity_match_bank"
+                             : "scale_or_pad",
+                         resolved.hasAudio ? 1 : 0);
+        } else {
+            std::fprintf(stderr, "misterplexd: pms hasAudio=%d\n",
+                         resolved.hasAudio ? 1 : 0);
+        }
+
+        if (!req.offsetPresent && resolved.viewOffsetMs > 0) {
+            // PMS continue-watching offset when cast omitted offset=. playMedia already
+            // planted scrubTarget at 0; demux will start at viewOffset. Re-plant so the
+            // companion hold matches the real start (avoids far-ahead freeze at 0:00).
+            off = resolved.viewOffsetMs;
+            std::fprintf(stderr,
+                         "misterplexd: applying PMS viewOffsetMs=%lld (cast offset absent)\n",
+                         static_cast<long long>(off));
+        }
+
+        misterplex::PlayRequest bound = req;
+        if (bound.ratingKey.empty())
+            bound.ratingKey = resolved.ratingKey;
+        if (bound.playQueueItemId.empty())
+            bound.playQueueItemId = resolvedPlayQueueItemId;
+        if (bound.playQueueId.empty())
+            bound.playQueueId = resolvedPlayQueueId;
+        if (bound.playQueueVersion.empty())
+            bound.playQueueVersion = resolvedPlayQueueVersion;
+        if (bound.containerKey.empty())
+            bound.containerKey = resolvedContainerKey;
+        if (bound.address.empty() && !base.empty()) {
+            auto hostport = base;
+            auto p = hostport.find("://");
+            if (p != std::string::npos)
+                hostport = hostport.substr(p + 3);
+            auto slash = hostport.find('/');
+            if (slash != std::string::npos)
+                hostport = hostport.substr(0, slash);
+            auto colon = hostport.rfind(':');
+            if (colon != std::string::npos) {
+                bound.address = hostport.substr(0, colon);
+                bound.port = hostport.substr(colon + 1);
+            } else {
+                bound.address = hostport;
+                bound.port = "32400";
+            }
+            if (base.rfind("https", 0) == 0)
+                bound.protocol = "https";
+            else
+                bound.protocol = "http";
+        }
+        if (bound.serverMachineId.empty())
+            bound.serverMachineId = "plex-server";
+
+        if (gen != playGen.load() || !comp.wantPlay()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded before bind key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        if (!comp.bindMedia(bound, resolved.durationMs)) {
+            // Stop won the race against async playMedia resolve — do not restart player.
+            // Do not write lastPlay here: stop may have cleared it; a failed bind must
+            // not resurrect the prior/new queue for a post-stop skipNext race.
+            std::fprintf(stderr, "misterplexd: PLAY aborted (stopped during resolve) key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        // Honor scrubber seeks/steps that landed while resolve was in flight.
+        // playMedia seeded timeMs_=req.offsetMs; if the user moved the timeline,
+        // start there instead of rewinding to the original cast offset.
+        int64_t startAt = off;
+        const int64_t scrubT = comp.timelineTimeMs();
+        if (scrubT != req.offsetMs)
+            startAt = scrubT;
+        if (startAt < 0)
+            startAt = 0;
+        if (resolved.durationMs > 0 && startAt > resolved.durationMs)
+            startAt = resolved.durationMs;
+
+        // Stop / newer playMedia may still race after bindMedia: re-check before
+        // setState/player.play so we never restart demux on a stopped session.
+        if (gen != playGen.load() || !comp.wantPlay()) {
+            std::fprintf(stderr, "misterplexd: PLAY aborted after bind key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        // Re-base companion plant to the demux start (viewOffset / in-flight seek).
+        // setState(buffering) alone cannot move time while an older plant holds.
+        // (0abee0b6 — stop Web scrubber freeze at 0:00 when demux is ahead of plant)
+        comp.seedPlaybackPosition(startAt, resolved.durationMs);
+
+        // Ensure timeline immediately reports duration + time for scrubber (seekRange).
+        comp.setState("buffering", startAt, resolved.durationMs);
+
+        if (gen != playGen.load() || !comp.wantPlay()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded before player.play key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        // Commit session context only when we are about to start demux. Writing
+        // lastPlay earlier can resurrect a queue bind if stop cleared it mid-flight.
+        // setPlay already planted a provisional lastPlay for skip-during-resolve.
+        // Final wantPlay/playGen gate under the same critical section as lastPlay
+        // so stop cannot clear then get a zombie lastPlay + player.play.
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            if (gen != playGen.load() || !comp.wantPlay()) {
+                std::fprintf(stderr, "misterplexd: PLAY superseded before demux key=%s\n",
+                             bound.key.c_str());
+                return;
+            }
+            lastPlay = bound;
+            lastBase = base;
+            if (!bound.token.empty())
+                lastToken = bound.token;
+            else if (req.address.empty() && !confToken.empty())
+                lastToken = confToken;
+        }
+
+        // Timeline must target the server that issued playMedia, with THAT request's
+        // credentials. Mixing cast host (e.g. *.plex.direct) with conf PLEX_TOKEN from
+        // a different PMS yields HTTP 401 while the old !body.empty() sink still looked ok
+        // (docs/evidence/timeline-stuck-20260730T173000Z / eeae7943).
+        std::string timelineToken;
+        const char* tokenSrc = "none";
+        if (!bound.token.empty()) {
+            timelineToken = bound.token;
+            tokenSrc = "cast";
+        } else if (req.address.empty() && !confToken.empty()) {
+            timelineToken = confToken;
+            tokenSrc = "conf";
+        }
+        misterplex::PmsTimelineSession timelineSession;
+        timelineSession.baseUrl = base;
+        timelineSession.token = timelineToken;
+        timelineSession.key = bound.key;
+        timelineSession.ratingKey = bound.ratingKey;
+        timelineSession.playQueueItemId = bound.playQueueItemId;
+        timelineSession.containerKey = bound.containerKey;
+        timelineSession.clientIdentifier = machineId;
+        timelineSession.product = "MiSTerPlex";
+        timelineSession.version = "0.4.1";
+        timelineSession.deviceName = name;
+        std::fprintf(stderr,
+                     "misterplexd: pms timeline session base=%s token_src=%s ratingKey=%s\n",
+                     base.c_str(), tokenSrc, timelineSession.ratingKey.c_str());
+        pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
+
+        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n", resolved.playable.c_str(),
+                     static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
+        activePlayGen.store(gen);
+        if (!player.play(resolved.playable, startAt, resolved.httpHeaders,
+                         resolved.durationMs, gen)) {
+            std::fprintf(stderr, "misterplexd: PLAY failed to start demux key=%s\n",
+                         bound.key.c_str());
+            closedStopPlay("PLAY failed to start demux", startAt, resolved.durationMs);
+            return;
+        }
+        fpgaWorkers.completePlayback();
+    };
+
+    // Live content-res change (OSD O[5:4]): sync conf, retarget PMS weak ladder,
+    // restart session at same playhead. Display (O[15:14]) writes video_mode in
+    // applyOsd and only upserts DISPLAY_RES here — no DECODE / play restart.
+    player.setLibraryFetch([&](const std::string& path) {
+        std::string url = defaultPms;
+        if (!path.empty() && path[0] == '/')
+            url += path;
+        else if (!path.empty())
+            url += "/" + path;
+        if (!confToken.empty())
+            url += (url.find('?') == std::string::npos ? "?" : "&") +
+                   std::string("X-Plex-Token=") + confToken;
+        return misterplex::plexHttpGet(url);
+    });
+    player.setLibraryPlay([&](const std::string& rk) {
+        misterplex::PlayRequest req;
+        req.ratingKey = rk;
+        req.key = "/library/metadata/" + rk;
+        req.token = confToken;
+        std::fprintf(stderr, "misterplexd: library overlay play ratingKey=%s\n", rk.c_str());
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastPlay = req;
+            if (!req.token.empty())
+                lastToken = req.token;
+        }
+        comp.stagePlay(req);
+        {
+            std::lock_guard<std::mutex> handoff(playHandoffMu);
+            ++playGen;
+        }
+        // doPlay -> stop() / FpgaWorkerHandoff joins OSD+input; never run on those threads.
+        std::thread([&, req]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            doPlay(req);
+        }).detach();
+    });
+    player.setOnDisplayResolutionChanged(
+        [&](const misterplex::ContentResolution& dr) {
+            if (!upsertConfKey(confPath, "DISPLAY_RES", dr.label))
+                std::fprintf(stderr, "misterplexd: conf upsert DISPLAY_RES failed\n");
+            else
+                std::fprintf(stderr,
+                             "misterplexd: DISPLAY_RES=%s saved (applies on reset; "
+                             "raster unchanged until then)\n",
+                             dr.label);
+        });
+    player.setOnContentResolutionChanged(
+        [&](const misterplex::ContentResolution& cr, bool playingNow) {
+            const auto displayRes = displayResolutionForNextPlay();
+            std::fprintf(stderr,
+                         "misterplexd: content_res OSD→%s (%dx%d) display=%s playing=%d — "
+                         "PMS ladder + conf sync (PRESENT=fpga DDR path)\n",
+                         cr.label, cr.width, cr.height, displayRes.label, playingNow ? 1 : 0);
+            persistOsdResToConf(cr, displayRes);
+            if (!playingNow)
+                return;
+            misterplex::PlayRequest cur;
+            {
+                std::lock_guard<std::mutex> lk(sessionMu);
+                cur = lastPlay;
+            }
+            if (cur.key.empty() && cur.ratingKey.empty()) {
+                std::fprintf(stderr,
+                             "misterplexd: content_res change ignored — no bound session\n");
+                return;
+            }
+            const int64_t pos = player.positionMs();
+            cur.offsetMs = pos > 0 ? pos : cur.offsetMs;
+            cur.offsetPresent = true;
+            cur.dispatchGeneration = 0;
+            std::fprintf(stderr,
+                         "misterplexd: content_res live restart key=%s offset_ms=%lld → "
+                         "content=%s display=%s\n",
+                         cur.key.empty() ? cur.ratingKey.c_str() : cur.key.c_str(),
+                         static_cast<long long>(cur.offsetMs), cr.label, displayRes.label);
+            // Async so we never restart from inside the OSD poller thread.
+            std::thread([&, cur]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                doPlay(cur);
+            }).detach();
+        });
+
+    // Shared play-queue step: delta=+1 (auto-next / skipNext), delta=-1 (skipPrevious).
+    // Returns true when a new title was started via doPlay.
+    auto tryQueueStep = [&](int delta, const char* tag,
+                            const misterplex::Companion::CurrentFn& current =
+                                misterplex::Companion::CurrentFn{},
+                            const misterplex::PlayRequest* accepted = nullptr) -> bool {
+        if (delta == 0)
+            return false;
+        if (current && !current())
+            return false;
+        const uint64_t generation = playGen.load();
+        const uint64_t seekGeneration = seekGen.load();
+        const uint64_t epoch = player.playbackEpoch();
+        // autoNext conf gates natural-EOF advance only; explicit skipNext/Prev always try.
+        misterplex::PlayRequest cur;
+        std::string base, token;
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            cur = lastPlay;
+            base = lastBase;
+            token = lastToken;
+        }
+        if (accepted) {
+            cur = *accepted;
+            base = misterplex::buildPlexBase(cur.protocol, cur.address, cur.port, base);
+            if (!cur.token.empty())
+                token = cur.token;
+        }
+        std::string qref = cur.containerKey;
+        if (qref.empty() && !cur.playQueueId.empty())
+            qref = "/playQueues/" + cur.playQueueId;
+        if (qref.empty() || qref.find("/playQueues/") == std::string::npos) {
+            std::fprintf(stderr, "misterplexd: %s skip — no playQueue bound\n", tag);
+            return false;
+        }
+        auto q = misterplex::fetchPlayQueue(qref, base, token, cur.key, cur.playQueueItemId);
+        if (!q.ok) {
+            std::fprintf(stderr, "misterplexd: %s queue fetch failed: %s\n", tag, q.detail.c_str());
+            return false;
+        }
+        const int dest = q.currentIndex + delta;
+        if (dest < 0 || dest >= static_cast<int>(q.items.size())) {
+            std::fprintf(stderr, "misterplexd: %s — end of queue (index=%d size=%zu delta=%d)\n",
+                         tag, q.currentIndex, q.items.size(), delta);
+            return false;
+        }
+        const auto& item = q.items[static_cast<size_t>(dest)];
+        misterplex::PlayRequest n = cur;
+        n.key = item.key;
+        n.ratingKey = item.ratingKey;
+        n.playQueueItemId =
+            !item.playQueueItemId.empty() ? item.playQueueItemId : item.ratingKey;
+        n.playQueueId = !q.playQueueId.empty() ? q.playQueueId : cur.playQueueId;
+        n.playQueueVersion =
+            !q.playQueueVersion.empty() ? q.playQueueVersion : cur.playQueueVersion;
+        n.containerKey = !q.containerKey.empty() ? q.containerKey + "?own=1" : cur.containerKey;
+        n.offsetMs = 0;
+        n.offsetPresent = true; // do not apply continue-watching on queue step
+        n.token = token;
+        n.dispatchGeneration = generation + 1;
+        std::fprintf(stderr, "misterplexd: %s → %s title=%s pqItem=%s\n", tag, n.key.c_str(),
+                     item.title.c_str(), n.playQueueItemId.c_str());
+        // Stage scrubber key before resolve so bindMedia key-match accepts this
+        // item (and Web sees queue advance immediately).
+        if (!comp.stagePlay(n, [&] {
+                if ((current && !current()) || seekGen.load() != seekGeneration ||
+                    player.playbackEpoch() != epoch)
+                    return false;
+                uint64_t expected = generation;
+                return playGen.compare_exchange_strong(expected, n.dispatchGeneration);
+            }))
+            return false;
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            if (playGen.load() != n.dispatchGeneration)
+                return false;
+            lastPlay = n;
+            if (!token.empty())
+                lastToken = token;
+        }
+        doPlay(n);
+        return true;
+    };
+
+    // Next-episode stub: on natural EOF, if playQueue has a next item, play it.
+    auto tryAutoNext = [&](const misterplex::Companion::CurrentFn& current) -> bool {
+        if (!autoNext)
+            return false;
+        return tryQueueStep(+1, "auto-next", current);
+    };
+
+    player.setProgress([&](const std::string& st, int64_t t, int64_t d) {
+        const uint64_t generation = activePlayGen.load();
+        if (generation != playGen.load())
+            return;
+        if (st == "ended") {
+            pmsTimeline.endSession(t, d);
+            const uint64_t epoch = player.playbackEpoch();
+            const uint64_t seekGeneration = seekGen.load();
+            const auto current = [&, generation, epoch, seekGeneration] {
+                return playGen.load() == generation &&
+                       player.playbackEpoch() == epoch && seekGen.load() == seekGeneration;
+            };
+            misterplex::handleNaturalEof(comp, autoNextInFlight, t, d, current,
+                [&, current] { return tryAutoNext(current); },
+                [](auto finish) { std::thread(std::move(finish)).detach(); });
+            return;
+        }
+        if (st == "stopped") {
+            pmsTimeline.endSession(t, d);
+            if (player.fpgaH264Backend()) {
+                comp.closedStop(t, d, true);
+                return;
+            }
+        } else
+            pmsTimeline.reportState(st, t, d);
+        comp.setState(st, t, d);
+    });
+
+    // playMedia HTTP thread: bump playGen immediately so in-flight doPlay aborts
+    // before the new onPlay_ thread even schedules (cast A→B race).
+    // Must not take playHandoffMu here — that mutex is held across player.stop().
+    // A 720p remux EOF used to leave audioPump in pipe_read; stop() never
+    // returned; the next Play blocked this lambda and Plex Web spun forever.
+    comp.setPlayQueued([&]() { return ++playGen; });
+
+    // Keep PMS /:/timeline auth in lock-step with cast-supplied tokens.
+    comp.setTokenUpdate([&](const std::string& tok) {
+        if (tok.empty())
+            return;
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastToken = tok;
+        }
+        pmsTimeline.updateToken(tok);
+    });
+
+    // Plant lastPlay immediately so skipNext/skipPrevious during async resolve use the
+    // new cast's queue bind — not the previous title's lastPlay (P4-SCRUB race).
+    comp.setPlay([&](const misterplex::PlayRequest& req) {
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastPlay = req;
+            if (!req.token.empty())
+                lastToken = req.token;
+            // Prefer cast address as provisional base when present.
+            if (!req.address.empty()) {
+                const std::string proto = req.protocol.empty() ? "http" : req.protocol;
+                const std::string port = req.port.empty() ? "32400" : req.port;
+                lastBase = proto + "://" + req.address + ":" + port;
+            }
+        }
+        doPlay(req);
+    });
+
+    std::mutex seekMu;
+    misterplex::wirePlaybackControls(comp, player, pmsTimeline, transport, activePlayGen,
+        playHandoffMu, seekMu, doPlay, [&] {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastPlay = misterplex::PlayRequest{};
+            lastBase.clear();
+        }, [](auto command) { std::thread(std::move(command)).detach(); });
+    // skipNext → play-queue advance (always tries; independent of AUTO_NEXT conf).
+    // Empty / unbound queue = no-op log.
+    comp.setSkipNext([&]() {
+        if (autoNextInFlight.exchange(true))
+            return;
+        std::thread([&]() {
+            try {
+                if (!tryQueueStep(+1, "skipNext"))
+                    std::fprintf(stderr, "misterplexd: skipNext — no next item\n");
+            } catch (...) {
+                std::fprintf(stderr, "misterplexd: skipNext exception\n");
+            }
+            autoNextInFlight.store(false);
+        }).detach();
+    });
+    // skipPrevious — Plex-style:
+    //   t > 3s  → restart current title @ 0
+    //   t ≤ 3s  → previous playQueue item when bound; else restart @ 0 (if t>0) or no-op
+    // Companion supplies the accepted pre-restart position and command identity.
+    comp.setSkipPrevious([&](const misterplex::TransportRequest& request) {
+        const int64_t t = request.positionMs;
+        const auto current = [&, request] { return transport.current(request); };
+        constexpr int64_t kRestartThresholdMs = 3000;
+        if (t > kRestartThresholdMs) {
+            std::fprintf(stderr, "misterplexd: skipPrevious restart@0 (t=%lld)\n",
+                         static_cast<long long>(t));
+            comp.seekTo(0, current);
+            return;
+        }
+        // Near start: try queue previous (network). Guard concurrent skip/auto-next.
+        if (autoNextInFlight.exchange(true))
+            return;
+        std::thread([&, t, request, current]() {
+            try {
+                if (!tryQueueStep(-1, "skipPrevious", current, &request.media)) {
+                    if (t > 0) {
+                        // Queue lookup is network-bound. If the user scrubbed away
+                        // while it was in flight, do not clobber the new plant with
+                        // a stale restart@0 (unit: plant 40s after skipPrev@1.5s).
+                        const int64_t nowT = comp.timelineTimeMs();
+                        const int64_t drift = nowT > t ? nowT - t : t - nowT;
+                        if (drift > kRestartThresholdMs && nowT > kRestartThresholdMs) {
+                            std::fprintf(stderr,
+                                         "misterplexd: skipPrevious no prev — drop stale "
+                                         "restart@0 (was t=%lld now=%lld)\n",
+                                         static_cast<long long>(t),
+                                         static_cast<long long>(nowT));
+                        } else {
+                            std::fprintf(stderr,
+                                         "misterplexd: skipPrevious no prev — restart@0 (t=%lld)\n",
+                                         static_cast<long long>(t));
+                            comp.seekTo(0, current);
+                        }
+                    } else {
+                        std::fprintf(stderr,
+                                     "misterplexd: skipPrevious — no previous item (at 0)\n");
+                    }
+                }
+            } catch (...) {
+                std::fprintf(stderr, "misterplexd: skipPrevious exception\n");
+            }
+            autoNextInFlight.store(false);
+        }).detach();
+    });
+
+    if (!comp.start()) {
+        std::fprintf(stderr, "misterplexd: companion start failed\n");
+        return 1;
+    }
+
+    if (defaultPms.empty()) {
+        std::fprintf(stderr,
+                     "misterplexd: no default Plex server configured; set PLEX_BASE in %s "
+                     "or pass --pms URL. Cast clients that include a server address can still "
+                     "select a server per play.\n",
+                     confPath.c_str());
+    }
+    std::fprintf(stderr,
+                 "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%dx%d "
+                 "weak=%s/%s@%dk h264=%s@L%d present=%s auto_next=%d subs=%s\n",
+                 name.c_str(), machineId.c_str(), port,
+                 defaultPms.empty() ? "(unset)" : defaultPms.c_str(), servers.size(),
+                 decodeW, decodeH, weak.profileName.c_str(), weak.videoResolution.c_str(),
+                 weak.maxVideoBitrateKbps, weak.h264Profile.c_str(), weak.h264Level,
+                 presentMode.c_str(), autoNext ? 1 : 0, subtitleMode.c_str());
+    for (size_t i = 0; i < servers.size(); ++i)
+        std::fprintf(stderr, "misterplexd:   server[%zu]=%s%s\n", i, servers[i].c_str(),
+                     i == 0 ? " (default)" : "");
+
+    // Watchdog: an SPI critical section SIGSTOPs Main only long enough to prove
+    // it is parked between its own transactions, but if that window is ever
+    // leaked — a hang inside the section, a thread killed mid-flight — Main
+    // stays stopped and the user loses F12 with no way back. Sweeping /proc
+    // twice a second costs nothing and touches no SPI, so it can never make
+    // things worse. This only ever sends SIGCONT: misterplexd does not start,
+    // stop, or reload Main.
+    unsigned tick = 0;
+    while (!g_stop.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (++tick % 3 != 0)
+            continue;
+        misterplex::FpgaSpi::resumeStrandedMain();
+    }
+
+    {
+        std::lock_guard<std::mutex> handoff(playHandoffMu);
+        misterplex::retirePlayback(player, pmsTimeline);
+    }
+    pmsTimeline.stopAndFlush();
+    comp.stop();
+    // Last chance on the way out: a window leaked during teardown would
+    // otherwise outlive us.
+    misterplex::FpgaSpi::resumeStrandedMain();
+    return 0;
+}

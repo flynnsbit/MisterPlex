@@ -1,0 +1,83 @@
+{
+  "grant": "hls-master-spacing-fix-r3-5754",
+  "host_machine": "x86_64",
+  "host_shared_libav": {
+    "libavcodec": {
+      "binary": "/usr/lib/libavcodec.so.63.1.101",
+      "sha256": "4f627b83d6400eff78c844edabe41c3fa568e40d56a943859f1e5c549aa15ef7",
+      "version": "63.1.101"
+    },
+    "libavformat": {
+      "binary": "/usr/lib/libavformat.so.63.1.101",
+      "sha256": "b8eff0f553af1959aee581cad51b5f1e25e0698c0c490ba5b4593b53ae2312da",
+      "version": "63.1.101"
+    },
+    "libavutil": {
+      "binary": "/usr/lib/libavutil.so.61.1.101",
+      "sha256": "35be32c0a1ac21e18a1234a8e92b6dc9337470667cec3a77271dc1792c12395d",
+      "version": "61.1.101"
+    },
+    "libswresample": {
+      "binary": "/usr/lib/libswresample.so.7.1.101",
+      "sha256": "44126a40f9a92891ad9b04541695fffd29fce77f01a3ec14b49587300f141bc9",
+      "version": "7.1.101"
+    }
+  },
+  "owner": "8f57f066-5a9e-4c97-b5a2-c4a1f09ef306",
+  "pinned_arm_public_headers": {
+    "libavformat/avformat.h": {
+      "path": "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/deps/ffmpeg-arm-static-safe/include/libavformat/avformat.h",
+      "sha256": "a92ad4e9ae2866fb5bb409a30dda8162e253f77e9250fd3057c09f60e3059cbe"
+    },
+    "libavformat/avio.h": {
+      "path": "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/deps/ffmpeg-arm-static-safe/include/libavformat/avio.h",
+      "sha256": "30312971fc299e65bc69cf1beddb76f50394e044d9c71fe32fec3ae9c13bd1af"
+    },
+    "libavutil/opt.h": {
+      "path": "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/deps/ffmpeg-arm-static-safe/include/libavutil/opt.h",
+      "sha256": "2a2cd99f0e8dbb799cff0fde4468e28e59e01249a63aeebf5d1dc43e29200120"
+    },
+    "libavutil/parseutils.h": {
+      "path": "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/deps/ffmpeg-arm-static-safe/include/libavutil/parseutils.h",
+      "sha256": "e8efed69396851f429a8258d50e9c4f0431f921687a7c31bf6db13d14f7482c3"
+    }
+  },
+  "pinned_hls_parser": {
+    "behavior": "is_variant persists across blank lines and ordinary comments until a URI is seen",
+    "path": "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/deps/ffmpeg-8.1.2/libavformat/hls.c",
+    "relevant_lines": [
+      999,
+      1008
+    ],
+    "sha256": "401fa5d806cc59888261e6fd08ee5772a4cda153192c1f339c99da5be388cd2c"
+  },
+  "prior_dependency_provenance_sha256": "1151500787062cecc68aabc5ef9986a2865a6cc2b39e699093089665e155098b",
+  "qualification_limit": "Host shared libav differs from pinned ARM8.1.2; host results are source regression evidence only, not ARM/PMS/hardware approval.",
+  "tools": {
+    "ffmpeg": {
+      "path": "/usr/bin/ffmpeg",
+      "sha256": "2e37495139c8cee4711b7e1475dac11ce54633431c4a025b7b70fa2e6d7ca3c3",
+      "version": "ffmpeg version n9.0.1 Copyright (c) 2000-2026 the FFmpeg developers"
+    },
+    "g++": {
+      "path": "/usr/bin/g++",
+      "sha256": "f04191f6a7b2cd7d9a62e1745872b8a6088791e5af6955488c69c9b2c4668bc9",
+      "version": "g++ (GCC) 16.2.1 20260810"
+    },
+    "git": {
+      "path": "/usr/bin/git",
+      "sha256": "93473c28694fd72bd889364107cd2770514de59780885a6a4aafca4d602e30ad",
+      "version": "git version 2.55.0"
+    },
+    "pkg-config": {
+      "path": "/usr/bin/pkgconf",
+      "sha256": "85769380bbe4c828cc4d830285975e6d0f8a290b93890ab43f393b01f8c89b93",
+      "version": "3.0.5"
+    },
+    "python3": {
+      "path": "/usr/bin/python3.14",
+      "sha256": "d78f9cf7178ecff09963551399855543c297f37ac207e626228bfe43cb26a70c",
+      "version": "Python 3.14.7"
+    }
+  }
+}

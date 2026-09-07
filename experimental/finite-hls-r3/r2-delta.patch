@@ -1,0 +1,71 @@
+diff --git a/arm/misterplexd/finite_hls_io.hpp b/arm/misterplexd/finite_hls_io.hpp
+--- a/arm/misterplexd/finite_hls_io.hpp
++++ b/arm/misterplexd/finite_hls_io.hpp
+@@ -90,8 +90,13 @@
+                 line.clear();
+                 return 0;
+             }
+-            if (manifest.pendingVariant && (line.empty() || line[0] == '#'))
+-                return owner->fail(AVERROR_INVALIDDATA);
++            const bool blank = line.find_first_not_of(" \t") == std::string::npos;
++            const bool ordinaryComment =
++                !line.empty() && line[0] == '#' && line.rfind("#EXT", 0) != 0;
++            if (manifest.pendingVariant && (blank || ordinaryComment)) {
++                line.clear();
++                return 0;
++            }
+             if (line.rfind("#EXTINF:", 0) == 0) {
+                 if (manifest.pending || manifest.pendingVariant || manifest.terminal ||
+                     manifest.master)
+diff --git a/tests/unit/test_finite_hls.py b/tests/unit/test_finite_hls.py
+--- a/tests/unit/test_finite_hls.py
++++ b/tests/unit/test_finite_hls.py
+@@ -93,10 +93,28 @@
+                 if name in ("index.m3u8", "start.m3u8", "start"):
+                     content_type = "application/vnd.apple.mpegurl"
+                     text = (directory / "index.m3u8").read_text()
+-                    if scenario == "master" and name == "start.m3u8":
++                    if scenario in ("master", "master-blank", "master-comment",
++                                    "master-spaced", "master-conflict",
++                                    "master-missing") and name == "start.m3u8":
+                         text = ('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1200000,'
+                                 'CODECS="avc1.42e01e,mp4a.40.2",RESOLUTION=320x240\n'
+                                 'media/index.m3u8\n')
++                        if scenario == "master-blank":
++                            text = text.replace("\nmedia/index.m3u8\n", "\n\nmedia/index.m3u8\n")
++                        elif scenario == "master-comment":
++                            text = text.replace("\nmedia/index.m3u8\n",
++                                                "\n# ordinary comment\nmedia/index.m3u8\n")
++                        elif scenario == "master-spaced":
++                            text = text.replace("\nmedia/index.m3u8\n",
++                                                "\n# ordinary comment\n\nmedia/index.m3u8\n")
++                        elif scenario == "master-conflict":
++                            text = text.replace("\nmedia/index.m3u8\n",
++                                                "\n# ordinary comment\n"
++                                                "#EXT-X-MEDIA-SEQUENCE:0\n"
++                                                "media/index.m3u8\n")
++                        elif scenario == "master-missing":
++                            text = text.replace("media/index.m3u8\n",
++                                                "# ordinary comment\n\n")
+                     if scenario == "redirect" and name == "start.m3u8":
+                         self.send_response(302)
+                         self.send_header("Location", f"/complete/{label}/index.m3u8")
+@@ -265,6 +283,18 @@
+     def test_master_relative_paths(self):
+         self.run_case("master", entry="start.m3u8")
+ 
++    def test_master_variant_can_follow_blank_and_comment_lines(self):
++        for scenario in ("master-blank", "master-comment", "master-spaced"):
++            with self.subTest(scenario=scenario):
++                self.run_case(scenario, entry="start.m3u8")
++
++    def test_master_variant_still_requires_uri_before_conflicting_tags_or_eof(self):
++        for scenario in ("master-conflict", "master-missing"):
++            with self.subTest(scenario=scenario):
++                before = self.requests[f"/{scenario}/24/media/index.m3u8"]
++                self.run_case(scenario, mode="error", entry="start.m3u8")
++                self.assertEqual(self.requests[f"/{scenario}/24/media/index.m3u8"], before)
++
+     def test_redirects_and_cross_origin_cannot_forward_tokens(self):
+         before = self.requests["/complete/24/index.m3u8"]
+         self.run_case("redirect", mode="error", entry="start.m3u8")

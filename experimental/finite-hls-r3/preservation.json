@@ -1,0 +1,23 @@
+{
+  "allowed_source_changes_only": [
+    "arm/misterplexd/finite_hls_io.hpp",
+    "tests/unit/test_finite_hls.py"
+  ],
+  "baseline_patch_reconstruction_verified": true,
+  "baseline_restored_from_r2_tree": true,
+  "grant": "hls-master-spacing-fix-r3-5754",
+  "new_failure_evidence": "freeze-failure.json only; no source/test failures",
+  "no_symlinks_or_unlisted_source": true,
+  "owner": "8f57f066-5a9e-4c97-b5a2-c4a1f09ef306",
+  "r2_archive_sha256": "14ba06e49db187a0b6312d18e5a84d5db8cb607d008d003852c213269f559929",
+  "r2_candidate_reconstruction_verified": true,
+  "r2_manifest_sha256": "b3b2b1ae537752a17972f2f0622a522a2da98de646af5909c120078aa48ed837",
+  "r2_preserved_byte_for_byte": {
+    "release/r1-delta.patch": "47ffb51526fb48a261e195efd68f7a56a3bcc59f3d12d01192c4092b304494e3",
+    "release/source-manifest.json": "b3b2b1ae537752a17972f2f0622a522a2da98de646af5909c120078aa48ed837",
+    "release/source.patch": "5a09c04e68019613d0a073c3ee1a3923216beedd57d4fd700bb97c1ec3976692",
+    "release/source.tar.gz": "14ba06e49db187a0b6312d18e5a84d5db8cb607d008d003852c213269f559929"
+  },
+  "r2_review_binding": "Both patches reproduce the frozen86-member candidate; only four authorized files differ fromr1.",
+  "r2_review_receipt": "clean-resume-5754/reviews/hls-r2-review.json"
+}
