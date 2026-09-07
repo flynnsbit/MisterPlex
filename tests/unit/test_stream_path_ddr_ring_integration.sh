@@ -11,7 +11,7 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
 SKIP RTL SIM: Verilator not found; stream_path DDR ring integration was NOT run.
 Install oss-cad-suite under ~/.local/oss-cad-suite or run with VERILATOR=/path/to/verilator.
 SKIP
-  exit 0
+  exit 3
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -42,6 +42,15 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_coeff_sat9.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_recon.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_bit_reader.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_residual_seq.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_slice_rbsp_ram.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mb_ctrl.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
 )
@@ -65,6 +74,7 @@ build_and_run() {
   "$RUN_VERILATOR" --cc --exe --build \
     --Mdir "$out" \
     --top-module stream_path_ddr_ring_tb_top "$@" -Wno-fatal \
+    -I"$ROOT/fpga/Plex_MiSTer/rtl" \
     -CFLAGS "-std=c++17 -O2" \
     "$TOP" "${RTL[@]}" "$TB"
   "$out/Vstream_path_ddr_ring_tb_top" "$SHARED_FIXTURE"

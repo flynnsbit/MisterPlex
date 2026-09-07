@@ -61,6 +61,26 @@ int main() {
             "planted seek time was not preserved: " + after);
     require(has(after, "key=\"/library/metadata/3\""),
             "planted seek key was cleared: " + after);
+    comp.closedStop(0, 1286942);
+    require(has(comp.timelineXml("legacy-closed-stop"), "state=\"buffering\""),
+            "legacy closedStop lost its existing seek-plant hold");
+
+    misterplex::Companion rejected;
+    rejected.setMachineId("misterplex-dev");
+    rejected.stagePlay(req);
+    require(rejected.bindMedia(req, 1286942), "bindMedia rejected terminal-stop fixture");
+    rejected.closedStop(0, 1286942, true);
+    const std::string failed = rejected.timelineXml("decoder-rejected");
+    require(has(failed, "state=\"stopped\""),
+            "terminal decoder rejection was hidden as buffering: " + failed);
+    require(has(failed, "time=\"42000\"") && has(failed, "key=\"/library/metadata/3\""),
+            "terminal rejection lost the planted position or media identity: " + failed);
+    rejected.setState("stopped", 0, 1286942);
+    require(has(rejected.timelineXml("late-stop"), "state=\"stopped\""),
+            "late teardown changed a final rejection back to buffering");
+    rejected.stagePlay(req);
+    require(has(rejected.timelineXml("retry"), "state=\"buffering\""),
+            "a fresh play did not clear terminal rejection");
 
     // Regression: playMedia plants scrubTarget=0, then demux starts far ahead
     // (viewOffset applied in doPlay, or first progress jumps). The FAR hold branch

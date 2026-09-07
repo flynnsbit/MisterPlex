@@ -78,7 +78,7 @@ def verilator_define_args(qsf: Path = PROJECT / "Plex.qsf") -> list[str]:
     for name, macro in sorted(verilator_lint_macros(qsf).items()):
         value = macro.value
         if name == "BUILD_DATE":
-            value = '\\"lint\\"'
+            value = '"lint"'
         args.append(f"-D{name}={value}")
     return args
 

@@ -17,6 +17,8 @@ module ddr_frame_store_warm_reset_tb #(
 	input  wire        start_req,
 	input  wire        bank_sel,
 	input  wire        vsync_pulse,
+	input  wire        input_cmd_valid,
+	input  wire [7:0]  input_cmd,
 	output wire [7:0]  rd_r,
 	output wire [7:0]  rd_g,
 	output wire [7:0]  rd_b,
@@ -26,6 +28,7 @@ module ddr_frame_store_warm_reset_tb #(
 	output wire [15:0] frames_done,
 	output wire        doorbell_ok,
 	output wire        debug_sched_valid,
+	output wire [15:0] debug_underrun_safe,
 	output wire [7:0]  debug_state,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
@@ -38,8 +41,6 @@ module ddr_frame_store_warm_reset_tb #(
 );
 	wire DDRAM_CLK;
 	wire [7:0] DDRAM_BE;
-	wire input_cmd_valid = 1'b0;
-	wire [7:0] input_cmd = 8'd0;
 
 	ddr_frame_store #(
 		.FRAME_W(80),
@@ -66,6 +67,7 @@ module ddr_frame_store_warm_reset_tb #(
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
+		.generation_clear(1'b0), .generation_idle(),
 		.rd_x(rd_x),
 		.rd_y(rd_y),
 		.rd_active(rd_active),
@@ -77,6 +79,8 @@ module ddr_frame_store_warm_reset_tb #(
 		.status_osd(16'd0),
 		.input_cmd_valid(input_cmd_valid),
 		.input_cmd(input_cmd),
+		.ioctl_download(1'b0), .ioctl_wr(1'b0),
+		.ioctl_dout(8'd0), .ioctl_index(16'd0),
 		.sdram_test_state(4'd0),
 		.sdram_size_code(4'd0),
 		.sdram_error_count(16'd0),
@@ -99,6 +103,7 @@ module ddr_frame_store_warm_reset_tb #(
 		.debug_state(debug_state)
 	);
 	assign debug_sched_valid = dut.sched_valid;
+	assign debug_underrun_safe = dut.underrun_safe;
 endmodule
 
 `default_nettype wire

@@ -48,6 +48,7 @@ module ddr_frame_store_spi_kick_tb (
 		.SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC(1'b1)
 	) dut (
 		.clk(clk), .clk_ddr(clk_ddr), .reset(reset),
+		.generation_clear(1'b0), .generation_idle(),
 		.rd_x(rd_x), .rd_y(rd_y), .rd_active(rd_active),
 		.rd_r(), .rd_g(), .rd_b(),
 		.start_req(start_req),

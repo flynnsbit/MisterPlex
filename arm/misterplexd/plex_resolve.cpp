@@ -1,4 +1,5 @@
 #include "plex_resolve.hpp"
+#include "../../assets/plex-profiles/fpga_profile.hpp"
 #include "libmisterplex/p720_transcode_vf.hpp"
 
 #include <algorithm>
@@ -6,9 +7,12 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
+#include <limits>
+#include <numeric>
 #include <sstream>
 #include <unistd.h>
 #include <vector>
@@ -29,7 +33,8 @@ std::string shellQuote(const std::string& s) {
 }
 
 std::string httpGet(const std::string& url, int timeoutSec = 15,
-                    const std::string& extraHeaders = {}) {
+                    const std::string& extraHeaders = {},
+                    const std::string& clientProfileName = "MiSTerPlex") {
     // Prefer curl (present on MiSTer); -k for plex.direct certs.
     std::ostringstream cmd;
     cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
@@ -41,7 +46,7 @@ std::string httpGet(const std::string& url, int timeoutSec = 15,
         << " -H 'X-Plex-Platform-Version: 120.0'"
         << " -H 'X-Plex-Device: Linux'"
         << " -H 'X-Plex-Device-Name: Chrome'"
-        << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
+        << " -H " << shellQuote("X-Plex-Client-Profile-Name: " + clientProfileName)
         << " -H 'X-Plex-Model: bundled'"
         << " -H 'X-Plex-Provides: player'";
     if (!extraHeaders.empty())
@@ -339,6 +344,25 @@ bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& 
     return false;
 }
 
+bool applyFpgaPlexProfile(WeakLadder& weak, const std::string& prototype,
+                          int fpsNum, int fpsDen, bool filteringOff, std::string* why) {
+    FpgaPmsProfile profile;
+    if (!selectFpgaPmsProfile(prototype, "240p", fpsNum, fpsDen, filteringOff, profile, why))
+        return false;
+    weak.profileName = "fpga-h264-240p";
+    weak.clientProfileName = profile.clientProfileName;
+    weak.videoResolution = profile.videoResolution;
+    weak.maxVideoBitrateKbps = profile.maxVideoBitrateKbps;
+    weak.videoQuality = 60;
+    weak.videoCodec = "h264";
+    weak.audioCodec = "aac";
+    weak.h264Profile = "baseline";
+    weak.h264Level = 30;
+    weak.fpgaFpsNum = profile.fpsNum;
+    weak.fpgaFpsDen = profile.fpsDen;
+    return true;
+}
+
 bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
     int w = 0, h = 0;
     auto fail = [&](const std::string& msg) {
@@ -348,6 +372,11 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
     };
     if (!parseResolution(weak.videoResolution, w, h))
         return fail("videoResolution must be WxH");
+    if (isFpgaPlexProfile(weak) &&
+        (w > 320 || h > 240 ||
+         !((weak.fpgaFpsNum == 24 && weak.fpgaFpsDen == 1) ||
+           (weak.fpgaFpsNum == 24000 && weak.fpgaFpsDen == 1001))))
+        return fail("FPGA profile requires initial 240p and exact film rate");
     if (weak.videoCodec != "h264")
         return fail("videoCodec must be h264");
     if (weak.audioCodec != "aac")
@@ -430,6 +459,8 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
                                        const std::string& session,
                                        int64_t offsetMs,
                                        const WeakLadder& weak) {
+    if (isFpgaPlexProfile(weak) && !validateWeakLadder(weak))
+        return {};
     std::ostringstream q;
     q << base << "/video/:/transcode/universal/start.mp4"
       << "?hasMDE=1"
@@ -447,6 +478,10 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
       << "&audioCodec=" << urlEncodeQuery(weak.audioCodec)
       << "&videoProfile=" << urlEncodeQuery(weak.h264Profile)
       << "&videoLevel=" << weak.h264Level;
+    if (isFpgaPlexProfile(weak))
+        q << "&container=mpegts&audioChannels=2&videoFrameRate="
+          << urlEncodeQuery(weak.fpgaFpsDen == 1 ? std::to_string(weak.fpgaFpsNum)
+              : std::to_string(weak.fpgaFpsNum) + "/" + std::to_string(weak.fpgaFpsDen));
     // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).
     if (weak.burnSubtitles) {
         q << "&subtitles=burn";
@@ -457,7 +492,7 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
     const int64_t offSec = universalOffsetSeconds(offsetMs);
     if (offSec > 0)
         q << "&offset=" << offSec;
-    if (!token.empty())
+    if (!token.empty() && !isFpgaPlexProfile(weak))
         q << "&X-Plex-Token=" << urlEncodeQuery(token);
     return q.str();
 }
@@ -599,19 +634,20 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     return ensureUniversalDecision(startUrl, sessionId, token, WeakLadder{});
 }
 
-bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
-                             const std::string& token, const WeakLadder& weak) {
+std::string buildUniversalDecisionUrl(const std::string& startUrl,
+                                      const std::string& sessionId,
+                                      const std::string& token, const WeakLadder& weak) {
     if (startUrl.find("/video/:/transcode/universal/") == std::string::npos)
-        return true;
+        return {};
     // Derive base + path from start URL
     auto pathPos = startUrl.find("/video/:/transcode/universal/start");
     if (pathPos == std::string::npos)
-        return true;
+        return {};
     const std::string base = startUrl.substr(0, pathPos);
     // Extract path= from query
     auto pathEq = startUrl.find("path=");
     if (pathEq == std::string::npos)
-        return true;
+        return {};
     pathEq += 5;
     auto pathEnd = startUrl.find('&', pathEq);
     std::string path = startUrl.substr(pathEq, pathEnd == std::string::npos ? std::string::npos
@@ -657,20 +693,36 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
                 << "&maxVideoBitrate=" << br
                 << "&videoCodec=" << vcodec << "&audioCodec=" << acodec
                 << "&videoProfile=" << vprofile << "&videoLevel=" << vlevel;
-    if (!token.empty())
+    if (isFpgaPlexProfile(weak)) {
+        if (!validateWeakLadder(weak))
+            return {};
+        decisionUrl << "&container=mpegts&audioChannels=2&videoFrameRate="
+                    << urlEncodeQuery(weak.fpgaFpsDen == 1 ? std::to_string(weak.fpgaFpsNum)
+                        : std::to_string(weak.fpgaFpsNum) + "/" + std::to_string(weak.fpgaFpsDen));
+    }
+    if (!token.empty() && !isFpgaPlexProfile(weak))
         decisionUrl << "&X-Plex-Token=" << urlEncodeQuery(token);
+    return decisionUrl.str();
+}
 
+bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
+                             const std::string& token, const WeakLadder& weak) {
+    const std::string decisionUrl = buildUniversalDecisionUrl(startUrl, sessionId, token, weak);
+    if (decisionUrl.empty())
+        return !isFpgaPlexProfile(weak);
     std::vector<std::pair<std::string, std::string>> decisionHeaders = {
         {"X-Plex-Session-Identifier", sessionId},
-        {"X-Plex-Client-Profile-Name", weak.clientProfileName},
     };
+    if (isFpgaPlexProfile(weak) && !token.empty())
+        decisionHeaders.push_back({"X-Plex-Token", token});
     if (plexSendClientLadderCaps(weak)) {
         decisionHeaders.push_back({"X-Plex-Client-Capabilities", plexClientCapabilities(weak)});
         decisionHeaders.push_back({"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)});
     }
-    std::ostringstream sessHdr;
-    sessHdr << curlHeaderArgs(decisionHeaders);
-    const std::string body = httpGet(decisionUrl.str(), 20, sessHdr.str());
+    // PMS uses the first profile header when duplicates are sent and caches that
+    // decision for the stream; the selected XML must replace the default here.
+    const std::string body = httpGet(decisionUrl, 20, curlHeaderArgs(decisionHeaders),
+                                    weak.clientProfileName);
     if (body.empty())
         return false;
     if (body.find("unable to find a matching profile") != std::string::npos)
@@ -756,6 +808,9 @@ SourceAspect sourceAspectFromPlexMetadata(const std::string& xml,
 WeakLadder fitWeakLadderToAspect(const WeakLadder& weak,
                                  const SourceAspect& aspect) {
     WeakLadder fitted = weak;
+    // FPGA requests preserve the profile's maximum rectangle; SPS supplies actual geometry.
+    if (isFpgaPlexProfile(weak))
+        return fitted;
     if (!aspect.valid || aspect.x == 0 || aspect.y == 0)
         return fitted;
 
@@ -808,6 +863,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                                 const WeakLadder& weak, bool preferDirectH264, int decodeW,
                                 int decodeH) {
     ResolveResult r;
+    const bool fpgaBackend = configuredVideoBackend() == VideoBackend::FpgaH264;
     std::string key = urlDecode(rawKeyOrPath);
     if (key.empty() || key == "test" || key == "testsrc") {
         r.ok = true;
@@ -847,6 +903,10 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.ok = false;
             r.playable.clear();
             r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+            return r;
+        }
+        if (fpgaBackend) {
+            r.detail = "local path; metadata deferred to the sole compressed demux";
             return r;
         }
         // Local files must publish DAR + 24000/1001 or PLAY is rejected / paced
@@ -905,13 +965,19 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Fetch metadata for title/duration/viewOffset
     std::string metaUrl = plexBase + key;
-    if (metaUrl.find('?') == std::string::npos)
-        metaUrl += "?";
-    else
-        metaUrl += "&";
-    if (!token.empty())
-        metaUrl += "X-Plex-Token=" + urlEncodeQuery(token);
-    const std::string xml = httpGet(metaUrl, 12);
+    std::string metaHeaders;
+    if (fpgaBackend) {
+        if (!token.empty())
+            metaHeaders = curlHeaderArgs({{"X-Plex-Token", token}});
+    } else {
+        if (metaUrl.find('?') == std::string::npos)
+            metaUrl += "?";
+        else
+            metaUrl += "&";
+        if (!token.empty())
+            metaUrl += "X-Plex-Token=" + urlEncodeQuery(token);
+    }
+    const std::string xml = httpGet(metaUrl, 12, metaHeaders);
     // A 404 or 401 from PMS still returns a BODY (an HTML error page), so
     // "response is not empty" does not mean "item exists". Without this check a
     // ratingKey that was deleted or renumbered by a library re-scan sails
@@ -1089,7 +1155,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         profLower == "main" || profLower.find("constrained baseline") != std::string::npos ||
         (profLower.find("main") != std::string::npos &&
          profLower.find("high") == std::string::npos);
-    const bool wantDirect =
+    const bool wantDirect = !fpgaBackend &&
         key.rfind("/library", 0) == 0 &&
         (preferDirectH264 || (mediaMatchesDecode && lightDirectProfile));
     const bool directH264 = wantDirect && isH264;
@@ -1130,9 +1196,26 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     }
 
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
-    if (weakAlways && key.rfind("/library", 0) == 0) {
-        const WeakLadder transcodeWeak =
-            fitWeakLadderToAspect(weak, r.sourceAspect);
+    if ((weakAlways || fpgaBackend) && key.rfind("/library", 0) == 0) {
+        WeakLadder requested = weak;
+        if (fpgaBackend) {
+            const char* prototype = std::getenv("MPX_H264_PROTOTYPE");
+            const char* filtering = std::getenv("MPX_H264_FILTER");
+            if (filtering && std::string(filtering) != "on" && std::string(filtering) != "off") {
+                r.detail = "FPGA H.264 filtering must be explicitly on or off";
+                return r;
+            }
+            int exactNum = 0, exactDen = 0;
+            if (!parseExactFps({}, r.frameRate, exactNum, exactDen)) {
+                r.detail = "FPGA H.264 requires numeric source frameRate; ambiguous metadata is not a clock";
+                return r;
+            }
+            if (!applyFpgaPlexProfile(requested, prototype ? prototype : "ip",
+                                      exactNum, exactDen,
+                                      filtering && std::string(filtering) == "off", &r.detail))
+                return r;
+        }
+        const WeakLadder transcodeWeak = fitWeakLadderToAspect(requested, r.sourceAspect);
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
                                                              offsetMs > 0 ? offsetMs : 0,
@@ -1161,6 +1244,10 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                 else
                     r.detail += " (STREAM preferDirect: H.264 Part missing → universal may be High/CABAC)";
             }
+            return r;
+        }
+        if (fpgaBackend) {
+            r.detail = "FPGA H.264 universal profile decision failed; direct/software fallback forbidden";
             return r;
         }
         r.detail = "universal decision failed; trying direct part";
@@ -1452,10 +1539,32 @@ bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRa
     den = 0;
     // Prefer the numeric video Stream@frameRate — it carries the real 23.976/29.97.
     if (!frameRate.empty()) {
-        char* end = nullptr;
-        double v = std::strtod(frameRate.c_str(), &end);
-        if (end != frameRate.c_str() && v > 0.0 && snapStdFps(v, num, den))
-            return true;
+        const std::string rate = lowerTrim(frameRate);
+        const auto slash = rate.find('/');
+        if (slash != std::string::npos) {
+            const std::string numerator = rate.substr(0, slash);
+            const std::string denominator = rate.substr(slash + 1);
+            char *nEnd = nullptr, *dEnd = nullptr;
+            errno = 0;
+            const long n = std::strtol(numerator.c_str(), &nEnd, 10);
+            const bool nOk = errno == 0;
+            errno = 0;
+            const long d = std::strtol(denominator.c_str(), &dEnd, 10);
+            if (nOk && errno == 0 && nEnd != numerator.c_str() && !*nEnd &&
+                dEnd != denominator.c_str() && !*dEnd && n > 0 && d > 0 &&
+                n <= std::numeric_limits<int>::max() && d <= std::numeric_limits<int>::max() &&
+                static_cast<double>(n) / d <= 1000.0) {
+                const long divisor = std::gcd(n, d);
+                num = static_cast<int>(n / divisor);
+                den = static_cast<int>(d / divisor);
+                return true;
+            }
+        } else {
+            char* end = nullptr;
+            const double v = std::strtod(rate.c_str(), &end);
+            if (end != rate.c_str() && !*end && v > 0.0 && snapStdFps(v, num, den))
+                return true;
+        }
     }
     if (videoFrameRate.empty())
         return false;

@@ -372,13 +372,16 @@ def check_quartus_syntax_tripwires() -> None:
 
     def missing_quartus_requirements(deblock_text: str, dpb_text: str) -> list[str]:
         missing: list[str] = []
-        m = re.search(r"module\s+h264_deblock_writeback_ctrl\s*#\s*\((.*?)\)\s*\(", deblock_text, re.S)
-        if not m or re.search(r"\blocalparam\b", m.group(1)):
-            missing.append(
-                "h264_deblock_writeback_ctrl parameter port list contains localparam. "
-                "Verilator accepts this, but Quartus rejected the fit source; keep "
-                "derived port widths as parameters or move them out of the port list."
-            )
+        for text in (deblock_text, dpb_text):
+            for module in re.finditer(
+                r"module\s+(\w+)\s*#\s*\((.*?)\)\s*\(", text, re.S
+            ):
+                if re.search(r"\blocalparam\b", module.group(2)):
+                    missing.append(
+                        f"{module.group(1)} parameter port list contains localparam. "
+                        "Keep derived port widths as parameters or move them out "
+                        "of the port list for Quartus compatibility."
+                    )
         if re.search(r"\)\s*\[[^\]]+\]", dpb_text):
             missing.append(
                 "h264_dpb.sv contains a part-select directly on a function/expression "
@@ -391,11 +394,12 @@ def check_quartus_syntax_tripwires() -> None:
     if missing:
         fail(f"Quartus syntax tripwire: {missing[0]}")
 
-    fault_deblock = deblock.replace("parameter int MB_AW =", "localparam int MB_AW =", 1)
-    if not missing_quartus_requirements(fault_deblock, dpb):
-        fail("deliberate h264_deblock localparam-in-parameter-list fault did not go red")
-    fault_dpb = dpb.replace("low8(pix(row, col))", "pix(row, col)[7:0]", 1)
-    if not missing_quartus_requirements(deblock, fault_dpb):
+    # Mutate current source, not the retired writeback/qpel module spellings.
+    fault_parameter = re.sub(r"\bparameter\b", "localparam", dpb, count=1)
+    if fault_parameter == dpb or not missing_quartus_requirements(deblock, fault_parameter):
+        fail("deliberate DPB localparam-in-parameter-list fault did not go red")
+    fault_dpb = re.sub(r"(=\s*clamp_coord\([^\n;]+\))\s*;", r"\1[7:0];", dpb, count=1)
+    if fault_dpb == dpb or not missing_quartus_requirements(deblock, fault_dpb):
         fail("deliberate h264_dpb function-call part-select fault did not go red")
     print("PASS Quartus syntax tripwires for known Verilator-clean fit failures")
 
@@ -628,9 +632,17 @@ def check_mailbox_map_collisions() -> None:
     check(map_path.exists(), f"Mailbox registry missing: {map_path}")
     registry = json.loads(map_path.read_text())
     mailboxes = registry["mailboxes"]
-    ring = registry.get("bitstream_ring", {})
+    ring = dict(registry.get("bitstream_ring", {}))
+    video_caps = registry.get("fpga_video_capabilities", {})
+    ring.update(video_caps)
+    video_presentation = registry.get("fpga_video_presentation", {})
+    ring.update(video_presentation)
+    audio_session = registry.get("fpga_audio_session", {})
+    check({"MACT", "MAST"} <= audio_session.keys(),
+          "Audio request/status mailboxes are missing from the registry")
+    ring.update(audio_session)
 
-    # ── Collect ALL addresses and magics across both sections ──
+    # Collect addresses and magics across all registered spaces.
     all_addrs: dict[int, str] = {}
     all_magics: dict[int, str] = {}
 
@@ -658,6 +670,64 @@ def check_mailbox_map_collisions() -> None:
         if magic in all_magics:
             fail(f"Ring magic collision: {rname} and {all_magics[magic]} both use 0x{magic:08X}")
         all_magics[magic] = rname
+
+    spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
+    audio_abi = audio_session.get("_abi_version")
+    check(audio_abi == cpp_const(spec_text, "kAudioSessionAbiVersion"),
+          "Audio ABI version differs from mailbox_abi_spec.hpp")
+    rtl_sources: dict[str, str] = {}
+    for name, mb in {**video_caps, **video_presentation, **audio_session}.items():
+        if name.startswith("_"):
+            continue
+        addr = int(mb["address"], 16)
+        magic = int(mb["magic"], 16)
+        check(addr % 8 == 0, f"{name} mailbox is not qword aligned")
+        check(cpp_const(spec_text, mb["arm_addr_const"]) == addr,
+              f"{name} address differs from mailbox_abi_spec.hpp")
+        check(cpp_const(spec_text, mb["arm_magic_const"]) == magic,
+              f"{name} magic differs from mailbox_abi_spec.hpp")
+        size = mb.get("size_bytes", 8)
+        check(size > 0 and size % 8 == 0, f"{name} mailbox size is not whole qwords")
+        if "arm_size_const" in mb:
+            check(cpp_const(spec_text, mb["arm_size_const"]) == size,
+                  f"{name} size differs from mailbox_abi_spec.hpp")
+        if "qwords" in mb:
+            check(len(mb["qwords"]) * 8 == size,
+                  f"{name} documented qword count differs from mailbox size")
+        for other_addr, other_name in all_addrs.items():
+            if other_name != name:
+                check(not (addr <= other_addr < addr + size),
+                      f"{name} mailbox region overlaps {other_name}")
+        if "commit_address" in mb:
+            commit_addr = int(mb["commit_address"], 16)
+            commit_magic = int(mb["commit_magic"], 16)
+            check(cpp_const(spec_text, mb["arm_commit_addr_const"]) == commit_addr,
+                  f"{name} commit address differs from mailbox_abi_spec.hpp")
+            check(cpp_const(spec_text, mb["arm_commit_magic_const"]) == commit_magic,
+                  f"{name} commit magic differs from mailbox_abi_spec.hpp")
+            check(commit_addr + 8 == addr + size,
+                  f"{name} commit must be the final qword")
+            check(commit_magic not in all_magics, f"{name} commit magic collision")
+            all_magics[commit_magic] = f"{name}:commit"
+        if "rtl_file" in mb:
+            rtl_file = mb["rtl_file"]
+            if rtl_file not in rtl_sources:
+                rtl_sources[rtl_file] = strip_comments(
+                    read(ROOT / "fpga/Plex_MiSTer" / rtl_file)
+                )
+            rtl_src = rtl_sources[rtl_file]
+            if name in audio_session:
+                check(sv_const(rtl_src, "AUDIO_ABI_VERSION") == audio_abi,
+                      f"Audio ABI version differs from {rtl_file}")
+            check(sv_const(rtl_src, mb["rtl_addr_param"]) == addr,
+                  f"{name} address differs from {rtl_file}")
+            check(sv_const(rtl_src, mb["rtl_magic_param"]) == magic,
+                  f"{name} magic differs from {rtl_file}")
+            if "commit_address" in mb:
+                check(sv_const(rtl_src, mb["rtl_commit_addr_param"]) == commit_addr,
+                      f"{name} commit address differs from {rtl_file}")
+                check(sv_const(rtl_src, mb["rtl_commit_magic_param"]) == commit_magic,
+                      f"{name} commit magic differs from {rtl_file}")
 
     # ── Cross-check RTL constants against registry ──
     frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
@@ -761,6 +831,7 @@ def check_ddr_bitstream_ring() -> None:
         )
     err_bits = {
         "kErrTelemetrySeqShift": 32,
+        "kErrResetEpochBit": 40,
         "kErrUnderrunStickyBit": 45,
         "kErrOverrunStickyBit": 46,
         "kErrActiveBit": 47,
@@ -772,15 +843,16 @@ def check_ddr_bitstream_ring() -> None:
         check(
             got == expected,
             f"DDR bitstream PLXE {name}={got}, expected {expected}. The RTL packs "
-            "PLXE as seq[39:32], flags[47:45], underrun_count[55:48], "
+            "PLXE as seq[39:32], acknowledged reset epoch[40], "
+            "flags[47:45], underrun_count[55:48], "
             "overrun_count[63:56]; do not parse the old [42:40] flag positions.",
         )
     rtl_nt = norm(rtl)
     check(
-        "DDRAM_DIN<={overrun_count[7:0],underrun_count[7:0],active,overrun_sticky,underrun_sticky,5'd0,telem_seq+8'd1,MAGIC_ERR}" in rtl_nt,
+        "issue(TX_TELEM,1,ERR_W,{overrun_count[7:0],underrun_count[7:0],active,overrun_sticky,underrun_sticky,4'd0,reset_seen,telem_seq+8'd1,MAGIC_ERR})" in rtl_nt,
         "ddr_bitstream_reader no longer packs PLXE as {overrun_count[7:0], "
-        "underrun_count[7:0], active, overrun_sticky, underrun_sticky, 5'd0, "
-        "telem_seq, MAGIC_ERR}. Update ddr_bitstream_ring.hpp decode constants and "
+        "underrun_count[7:0], active, overrun_sticky, underrun_sticky, 4'd0, "
+        "reset_seen, telem_seq, MAGIC_ERR}. Update ddr_bitstream_ring.hpp decode constants and "
         "red tests with the new producer layout.",
     )
     check(

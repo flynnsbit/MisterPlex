@@ -1,0 +1,10 @@
+{
+  "source": "Header excerpts from p1-240p-idr-audio-ui-a06-timing-r1/timing; no archive modifications.",
+  "headers": {
+    "positive_setup": "----------------\n; Command Info ;\n----------------\nReport Timing: Found 10 setup paths (0 violated).  Worst case slack is 7.497 \n",
+    "positive_hold": "----------------\n; Command Info ;\n----------------\nReport Timing: Found 10 hold paths (0 violated).  Worst case slack is 0.278 \n",
+    "extra_corner_setup": "----------------\n; Command Info ;\n----------------\nReport Timing: Found 10 setup paths (10 violated).  Worst case slack is -31.164 \n",
+    "extra_corner_hold": "----------------\n; Command Info ;\n----------------\nReport Timing: Found 10 hold paths (1 violated).  Worst case slack is -0.034 \n",
+    "no_paths": "-----------------\n; Report Timing ;\n-----------------\nNothing to report.\n\n"
+  }
+}

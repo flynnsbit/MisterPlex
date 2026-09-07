@@ -3,7 +3,8 @@ module async_fifo #(
 	parameter int WIDTH = 8,
 	parameter int AW    = 4,
 	// Assert wr_almost_full when free slots <= AF_HEADROOM (sticky band, not a single count).
-	parameter int AF_HEADROOM = 4
+	parameter int AF_HEADROOM = 4,
+	parameter bit USE_BLOCK_RAM = 1'b0
 )(
 	input  wire             wr_clk,
 	input  wire             wr_reset,
@@ -20,13 +21,10 @@ module async_fifo #(
 );
 	localparam int DEPTH = 1 << AW;
 
-	(* ramstyle = "MLAB" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
-
 	reg [AW:0] wr_bin, wr_gray;
 	reg [AW:0] rd_bin, rd_gray;
 	reg [AW:0] rd_gray_w1, rd_gray_w2;
 	reg [AW:0] wr_gray_r1, wr_gray_r2;
-	reg [WIDTH-1:0] rd_data_r;
 	reg             rd_valid;
 	localparam [AW:0] PTR_ONE = {{AW{1'b0}}, 1'b1};
 
@@ -71,7 +69,44 @@ module async_fifo #(
 	assign wr_full = wr_full_now;
 	assign wr_almost_full = wr_full_now || wr_af_level;
 	assign rd_empty = !rd_valid;
-	assign rd_data = rd_data_r;
+
+	generate
+	if (USE_BLOCK_RAM) begin : g_block_ram
+		(* ramstyle = "M10K" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
+		reg [WIDTH-1:0] read_data;
+		reg read_initialized;
+
+		always @(posedge wr_clk)
+			if (!wr_reset && wr_accept)
+				mem[wr_bin[AW-1:0]] <= wr_data;
+
+		// Reset the visibility flag, not the RAM read port, to retain dual-clock M10K inference.
+		always @(posedge rd_clk)
+			if (!rd_reset && rd_prefetch)
+				read_data <= mem[rd_bin[AW-1:0]];
+		always @(posedge rd_clk) begin
+			if (rd_reset)
+				read_initialized <= 1'b0;
+			else if (rd_prefetch)
+				read_initialized <= 1'b1;
+		end
+		assign rd_data = read_initialized ? read_data : '0;
+	end else begin : g_logic_ram
+		(* ramstyle = "MLAB" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
+		reg [WIDTH-1:0] read_data;
+
+		always @(posedge wr_clk)
+			if (!wr_reset && wr_accept)
+				mem[wr_bin[AW-1:0]] <= wr_data;
+		always @(posedge rd_clk) begin
+			if (rd_reset)
+				read_data <= '0;
+			else if (rd_prefetch)
+				read_data <= mem[rd_bin[AW-1:0]];
+		end
+		assign rd_data = read_data;
+	end
+	endgenerate
 
 	always @(posedge wr_clk) begin
 		if (wr_reset) begin
@@ -83,7 +118,6 @@ module async_fifo #(
 			rd_gray_w1 <= rd_gray;
 			rd_gray_w2 <= rd_gray_w1;
 			if (wr_accept) begin
-				mem[wr_bin[AW-1:0]] <= wr_data;
 				wr_bin <= wr_bin_next;
 				wr_gray <= wr_gray_next;
 			end
@@ -96,13 +130,11 @@ module async_fifo #(
 			rd_gray <= '0;
 			wr_gray_r1 <= '0;
 			wr_gray_r2 <= '0;
-			rd_data_r <= '0;
 			rd_valid <= 1'b0;
 		end else begin
 			wr_gray_r1 <= wr_gray;
 			wr_gray_r2 <= wr_gray_r1;
 			if (rd_prefetch) begin
-				rd_data_r <= mem[rd_bin[AW-1:0]];
 				rd_bin <= rd_bin_next;
 				rd_gray <= rd_gray_next;
 				rd_valid <= 1'b1;

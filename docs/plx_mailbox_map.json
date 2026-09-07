@@ -125,6 +125,148 @@
       }
     }
   ],
+  "fpga_video_presentation": {
+    "_comment": "ABI 2 display feedback; no ARM-rendered pixels. Invalidate final commit, publish coherent fields, commit last. Probe nonce and session must both match.",
+    "MVPS": {
+      "address": "0x30140090",
+      "size_bytes": 72,
+      "magic": "0x4D565053",
+      "arm_addr_const": "kVideoPresentationAddr",
+      "arm_magic_const": "kVideoPresentationMagic",
+      "arm_size_const": "kVideoPresentationBytes",
+      "commit_address": "0x301400D0",
+      "commit_magic": "0x4D565043",
+      "arm_commit_addr_const": "kVideoPresentationCommitAddr",
+      "arm_commit_magic_const": "kVideoPresentationCommitMagic",
+      "qwords": [
+        "flags[63:32] | MVPS[31:0]; active, has_frame, paused, buffering, audio_clock, error bits 0..5",
+        "session/epoch",
+        "signed original PTS",
+        "timebase denominator[63:32] | numerator[31:0]",
+        "unique presentation count[63:32] | AU sequence[31:0]",
+        "actually consumed 48 kHz audio samples; valid only with audio_clock",
+        "acknowledged Probe nonce",
+        "error code[63:32] | reserved zero[31:0]",
+        "nonzero publication[63:32] | MVPC[31:0]; zero publication while updating"
+      ]
+    }
+  },
+  "fpga_audio_session": {
+    "_comment": "Audio ABI 2 uses independent DDR control, not an AU-ring event. Both sides invalidate the final commit before updating and publish a nonzero commit last. ACK token, epoch and fresh video Probe nonce must match. Capture the kernel producer byte cursor with the HPS producer quiesced; Begin/Reset must not wait for another write-triggered SPI metadata publication. Consumed counts actual emitted stereo pairs, not DMA fetches or host writes.",
+    "_abi_version": 2,
+    "MACT": {
+      "address": "0x30140100",
+      "size_bytes": 48,
+      "magic": "0x4D414354",
+      "arm_addr_const": "kAudioControlAddr",
+      "arm_magic_const": "kAudioControlMagic",
+      "arm_size_const": "kAudioControlBytes",
+      "commit_address": "0x30140128",
+      "commit_magic": "0x4D414343",
+      "arm_commit_addr_const": "kAudioControlCommitAddr",
+      "arm_commit_magic_const": "kAudioControlCommitMagic",
+      "rtl_file": "rtl/audio_session_abi.svh",
+      "rtl_addr_param": "AUDIO_CONTROL_ADDR",
+      "rtl_magic_param": "AUDIO_CONTROL_MAGIC",
+      "rtl_commit_addr_param": "AUDIO_CONTROL_COMMIT_ADDR",
+      "rtl_commit_magic_param": "AUDIO_CONTROL_COMMIT_MAGIC",
+      "qwords": [
+        "reserved zero[63:56] | opcode[55:48] | ABI 2[47:32] | MACT[31:0]",
+        "requested video session/epoch",
+        "fresh video Probe nonce",
+        "nonzero request token",
+        "kernel producer BYTE position, 0..524284 and 4-byte aligned; remaining bits zero",
+        "nonzero publication[63:32] | MACC[31:0]; zero while updating"
+      ],
+      "opcodes": {
+        "1": "Begin: retire reads, align to supplied producer position, discard old PCM, reset consumed clock, leave active and paused for priming",
+        "2": "Pause: silence at sample boundary and retire reads while retaining unplayed samples",
+        "3": "Resume: wait for SPI DMA metadata to match the supplied producer position, then continue retained samples without flushing",
+        "4": "Reset: retire reads, align to supplied producer position, discard old PCM, reset consumed clock, leave inactive and paused"
+      }
+    },
+    "MAST": {
+      "address": "0x30140140",
+      "size_bytes": 64,
+      "magic": "0x4D415354",
+      "arm_addr_const": "kAudioStatusAddr",
+      "arm_magic_const": "kAudioStatusMagic",
+      "arm_size_const": "kAudioStatusBytes",
+      "commit_address": "0x30140178",
+      "commit_magic": "0x4D415343",
+      "arm_commit_addr_const": "kAudioStatusCommitAddr",
+      "arm_commit_magic_const": "kAudioStatusCommitMagic",
+      "rtl_file": "rtl/audio_session_abi.svh",
+      "rtl_addr_param": "AUDIO_STATUS_ADDR",
+      "rtl_magic_param": "AUDIO_STATUS_MAGIC",
+      "rtl_commit_addr_param": "AUDIO_STATUS_COMMIT_ADDR",
+      "rtl_commit_magic_param": "AUDIO_STATUS_COMMIT_MAGIC",
+      "qwords": [
+        "error[63:56] | acknowledged opcode[55:48] | flags[47:40] | ABI 2[39:32] | MAST[31:0]",
+        "current audio session/epoch",
+        "current audio Probe nonce",
+        "acknowledged request token",
+        "actually consumed stereo pairs",
+        "acknowledged request session/epoch",
+        "acknowledged request Probe nonce",
+        "nonzero publication[63:32] | MASC[31:0]; zero while updating"
+      ],
+      "flags": {
+        "0": "active",
+        "1": "paused",
+        "2": "DDR read pending",
+        "3": "unplayed prefetched samples retained",
+        "4": "audio session control supported"
+      },
+      "errors": {
+        "0": "request applied",
+        "1": "request rejected: opcode, identity, token or state"
+      }
+    }
+  },
+  "fpga_video_capabilities": {
+    "_comment": "ABI 2/layout 1. Probe nonce must be fresh. Invalidate MPC7 first, write MPC0-MPC6, then commit MPC7 nonzero. Header constants are in mailbox_abi_spec.hpp.",
+    "MPC0": {
+      "address": "0x30140050", "magic": "0x4D504330",
+      "arm_addr_const": "kVideoCapsAddr", "arm_magic_const": "kVideoCapsMagic",
+      "payload": "63:48 layout ID; 47:32 ABI version"
+    },
+    "MPC1": {
+      "address": "0x30140058", "magic": "0x4D504331",
+      "arm_addr_const": "kVideoFeaturesAddr", "arm_magic_const": "kVideoFeaturesMagic",
+      "payload": "63:32 implemented video features, not release certification"
+    },
+    "MPC2": {
+      "address": "0x30140060", "magic": "0x4D504332",
+      "arm_addr_const": "kVideoDimensionsAddr", "arm_magic_const": "kVideoDimensionsMagic",
+      "payload": "63:48 maximum coded height; 47:32 maximum coded width"
+    },
+    "MPC3": {
+      "address": "0x30140068", "magic": "0x4D504333",
+      "arm_addr_const": "kVideoAuLimitAddr", "arm_magic_const": "kVideoAuLimitMagic",
+      "payload": "63:32 maximum accepted encoded AU bytes, excluding transport metadata"
+    },
+    "MPC4": {
+      "address": "0x30140070", "magic": "0x4D504334",
+      "arm_addr_const": "kVideoBuildAddr", "arm_magic_const": "kVideoBuildMagic",
+      "payload": "63:32 nonzero immutable source build identity"
+    },
+    "MPC5": {
+      "address": "0x30140078", "magic": "0x4D504335",
+      "arm_addr_const": "kVideoNonceLowAddr", "arm_magic_const": "kVideoNonceLowMagic",
+      "payload": "63:32 challenge nonce low word"
+    },
+    "MPC6": {
+      "address": "0x30140080", "magic": "0x4D504336",
+      "arm_addr_const": "kVideoNonceHighAddr", "arm_magic_const": "kVideoNonceHighMagic",
+      "payload": "63:32 challenge nonce high word"
+    },
+    "MPC7": {
+      "address": "0x30140088", "magic": "0x4D504337",
+      "arm_addr_const": "kVideoCapsCommitAddr", "arm_magic_const": "kVideoCapsCommitMagic",
+      "payload": "63:32 publication sequence; zero while updating, nonzero after accepted writes"
+    }
+  },
   "bitstream_ring": {
     "_comment": "Bitstream ring control mailboxes at 0x30140000+, separate address space",
     "PLXB_CTRL": {

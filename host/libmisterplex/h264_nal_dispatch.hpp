@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -51,79 +53,135 @@ struct DispatchStats {
 
 class AnnexBFramer {
 public:
+    enum class Error { None, InvalidInput, TooLarge, Malformed, CallbackRejected };
+
     explicit AnnexBFramer(size_t maxAccumBytes = 2 * 1024 * 1024) : max_acc_(maxAccumBytes) {}
 
     void reset() {
         acc_.clear();
-        parse_from_ = 0;
+        search_from_ = 0;
+        started_ = false;
+        error_ = Error::None;
+    }
+
+    Error error() const { return error_; }
+    const char* errorText() const {
+        switch (error_) {
+        case Error::None: return "no framing error";
+        case Error::InvalidInput: return "invalid Annex-B input or buffer limit";
+        case Error::TooLarge: return "Annex-B NAL exceeds the buffer limit";
+        case Error::Malformed: return "malformed or truncated Annex-B stream";
+        case Error::CallbackRejected: return "Annex-B consumer rejected the NAL";
+        }
+        return "invalid framing error";
     }
 
     template <typename Fn>
     bool push(const uint8_t* data, size_t len, Fn&& onNal) {
-        if (data && len)
-            acc_.insert(acc_.end(), data, data + len);
-        return emitComplete(false, std::forward<Fn>(onNal));
+        if (error_ != Error::None)
+            return false;
+        if ((!data && len) || max_acc_ == 0 ||
+            max_acc_ > std::numeric_limits<size_t>::max() - 4)
+            return fail(Error::InvalidInput);
+        while (len != 0) {
+            const size_t room = max_acc_ + 4 - acc_.size();
+            if (room == 0)
+                return fail(Error::TooLarge);
+            const size_t count = std::min(room, len);
+            acc_.insert(acc_.end(), data, data + count);
+            data += count;
+            len -= count;
+            if (!emitComplete(false, onNal))
+                return false;
+        }
+        return true;
     }
 
     template <typename Fn>
     bool finish(Fn&& onNal) {
-        return emitComplete(true, std::forward<Fn>(onNal));
+        if (error_ != Error::None)
+            return false;
+        return emitComplete(true, onNal);
     }
 
 private:
+    bool fail(Error error) {
+        error_ = error;
+        return false;
+    }
+
     template <typename Fn>
-    bool emitComplete(bool final, Fn&& onNal) {
-        size_t i = parse_from_;
-        while (i + 3 < acc_.size()) {
-            if (annexBStartLen(acc_.data(), acc_.size(), i))
-                break;
-            ++i;
+    bool emit(size_t len, Fn& onNal) {
+        if (len > max_acc_)
+            return fail(Error::TooLarge);
+        if constexpr (std::is_void_v<std::invoke_result_t<Fn&, const uint8_t*, size_t>>) {
+            onNal(acc_.data(), len);
+        } else {
+            if (!onNal(acc_.data(), len))
+                return fail(Error::CallbackRejected);
         }
-        if (i > 0) {
-            acc_.erase(acc_.begin(), acc_.begin() + static_cast<std::ptrdiff_t>(i));
-            parse_from_ = 0;
-            i = 0;
-        }
-        while (i + 3 < acc_.size()) {
-            const size_t sc = annexBStartLen(acc_.data(), acc_.size(), i);
-            if (!sc) {
-                ++i;
-                continue;
+        return true;
+    }
+
+    template <typename Fn>
+    bool emitComplete(bool final, Fn& onNal) {
+        if (!started_) {
+            size_t start = 0;
+            while (start < acc_.size() &&
+                   !annexBStartLen(acc_.data(), acc_.size(), start)) {
+                if (acc_[start] != 0)
+                    return fail(Error::Malformed);
+                ++start;
             }
-            size_t j = i + sc;
-            bool foundNext = false;
-            while (j + 2 < acc_.size()) {
-                if (annexBStartLen(acc_.data(), acc_.size(), j)) {
-                    foundNext = true;
+            if (start == acc_.size()) {
+                // Leading/trailing zero bytes may straddle an input fragment.
+                if (final)
+                    acc_.clear();
+                else if (acc_.size() > 3)
+                    acc_.erase(acc_.begin(), acc_.end() - 3);
+                return true;
+            }
+            acc_.erase(acc_.begin(), acc_.begin() + static_cast<std::ptrdiff_t>(start));
+            started_ = true;
+            search_from_ = 0;
+        }
+        while (!acc_.empty()) {
+            const size_t sc = annexBStartLen(acc_.data(), acc_.size());
+            if (acc_.size() <= sc)
+                return final ? fail(Error::Malformed) : true;
+            size_t next = std::max(sc, search_from_);
+            while (next + 2 < acc_.size()) {
+                if (annexBStartLen(acc_.data(), acc_.size(), next))
                     break;
-                }
-                ++j;
+                ++next;
             }
-            if (!foundNext) {
-                if (!final) {
-                    parse_from_ = i;
-                    if (acc_.size() > max_acc_)
-                        reset();
+            if (next + 2 >= acc_.size()) {
+                if (final) {
+                    if (!emit(acc_.size(), onNal))
+                        return false;
+                    acc_.clear();
+                    started_ = false;
+                    search_from_ = 0;
                     return true;
                 }
-                j = acc_.size();
+                search_from_ = std::max(sc, acc_.size() - 3);
+                return true;
             }
-            if (j > i + sc) {
-                onNal(acc_.data() + i, j - i);
-            }
-            i = j;
-            if (final && i >= acc_.size())
-                break;
+            if (next <= sc)
+                return fail(Error::Malformed);
+            if (!emit(next, onNal))
+                return false;
+            acc_.erase(acc_.begin(), acc_.begin() + static_cast<std::ptrdiff_t>(next));
+            search_from_ = 0;
         }
-        if (i > 0 && i <= acc_.size())
-            acc_.erase(acc_.begin(), acc_.begin() + static_cast<std::ptrdiff_t>(i));
-        parse_from_ = 0;
         return true;
     }
 
     size_t max_acc_ = 0;
     std::vector<uint8_t> acc_;
-    size_t parse_from_ = 0;
+    size_t search_from_ = 0;
+    bool started_ = false;
+    Error error_ = Error::None;
 };
 
 class NalDispatcher {
@@ -182,17 +240,16 @@ public:
         if (!active_)
             return ControlResult::NoSession;
         const auto r = producer_.resume(session_id_);
-        if (r == ControlResult::Ok) {
+        if (r == ControlResult::Ok)
             paused_ = false;
-            sps_delivered_ = false;
-            pps_delivered_ = false;
-        }
         return r;
     }
 
     PushResult handleNal(const uint8_t* annexb, size_t len) {
         if (!active_ || !annexb || !len)
             return PushResult::Fatal;
+        if (paused_)
+            return PushResult::Full;
         const uint8_t type = annexBNalType(annexb, len);
         if (type == 0)
             return PushResult::Fatal;
@@ -202,11 +259,6 @@ public:
             sps_.assign(annexb, annexb + len);
         else if (type == 8)
             pps_.assign(annexb, annexb + len);
-
-        if (paused_) {
-            ++stats_.nal_dropped_paused;
-            return PushResult::Ok;
-        }
 
         if (type == 1 || type == 5) {
             const auto pr = replayParametersIfNeeded();

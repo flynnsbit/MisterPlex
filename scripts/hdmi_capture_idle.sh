@@ -55,7 +55,8 @@ if command -v fuser >/dev/null 2>&1 && fuser "$DEV" >/dev/null 2>&1; then
   exit 1
 fi
 
-TMP="$(mktemp -d)"
+TMP="${OUT}.frames.$$"
+mkdir -- "$TMP" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 
 for try in $(seq 1 "$TRIES"); do

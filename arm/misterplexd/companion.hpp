@@ -31,14 +31,28 @@ struct PlayRequest {
     uint64_t dispatchGeneration = 0;
 };
 
+enum class TransportCommand { Pause, Resume, Stop, Seek, Previous };
+
+struct TransportRequest {
+    uint64_t generation = 0;
+    uint64_t originGeneration = 0;
+    uint64_t seekGeneration = 0;
+    uint64_t epoch = 0;
+    int64_t positionMs = 0;
+    PlayRequest media;
+};
+
 class Companion {
 public:
     using LogFn = std::function<void(const std::string&)>;
     using PlayFn = std::function<void(const PlayRequest&)>;
     using PlayQueuedFn = std::function<uint64_t()>;
     using CtrlFn = std::function<void()>;
-    using SeekFn = std::function<void(int64_t ms)>;
-    using StepFn = std::function<void(int64_t deltaMs)>;
+    using TransportFn = std::function<void(const TransportRequest&)>;
+    using TransportQueuedFn = std::function<TransportRequest(TransportCommand)>;
+    using StepFn = std::function<void(int64_t deltaMs, const TransportRequest&)>;
+    // Guards execute under mu_; they must not acquire locks or re-enter Companion.
+    using CurrentFn = std::function<bool()>;
 
     void setName(std::string n) { name_ = std::move(n); }
     void setMachineId(std::string id) { machineId_ = std::move(id); }
@@ -53,20 +67,22 @@ public:
     // (seek, second playMedia, some polls). Forward to PMS timeline session.
     using TokenFn = std::function<void(const std::string& token)>;
     void setTokenUpdate(TokenFn f) { onTokenUpdate_ = std::move(f); }
-    void setPause(CtrlFn f) { onPause_ = std::move(f); }
-    void setResume(CtrlFn f) { onResume_ = std::move(f); }
-    void setStop(CtrlFn f) { onStop_ = std::move(f); }
-    void setSeek(SeekFn f) { onSeek_ = std::move(f); }
+    // Called under the state lock; the hook may perform only nonblocking atomic work.
+    void setTransportQueued(TransportQueuedFn f) { onTransportQueued_ = std::move(f); }
+    void setPause(TransportFn f) { onPause_ = std::move(f); }
+    void setResume(TransportFn f) { onResume_ = std::move(f); }
+    void setStop(TransportFn f) { onStop_ = std::move(f); }
+    void setSeek(TransportFn f) { onSeek_ = std::move(f); }
     // Relative scrubber step (stepForward/stepBack); deltaMs may be negative.
     void setStep(StepFn f) { onStep_ = std::move(f); }
     void setSkipNext(CtrlFn f) { onSkipNext_ = std::move(f); }
-    void setSkipPrevious(CtrlFn f) { onSkipPrevious_ = std::move(f); }
+    void setSkipPrevious(TransportFn f) { onSkipPrevious_ = std::move(f); }
     void setPlexTvEnabled(bool) {}
     void setPlexTvToken(const std::string&) {}
     void setPlexTvLinkPath(const std::string&) {}
     void setPlexTvPersist(std::function<void(const std::string&)>) {}
-    void closedStop(int64_t timeMs, int64_t durationMs) {
-        setState("stopped", timeMs, durationMs);
+    void closedStop(int64_t timeMs, int64_t durationMs, bool terminal = false) {
+        setState("stopped", timeMs, durationMs, terminal);
     }
 
     bool start();
@@ -75,7 +91,8 @@ public:
     bool httpReady() const { return httpReady_.load(); }
 
     // Update playback clock (ms) + state for timeline polls.
-    void setState(const std::string& state, int64_t timeMs, int64_t durationMs);
+    void setState(const std::string& state, int64_t timeMs, int64_t durationMs,
+                  bool terminal = false, const CurrentFn& current = {});
 
     // Bind media identity for scrubber (call after resolve / on playMedia).
     // Returns false if session already stopped (late async playMedia after stop)
@@ -84,7 +101,7 @@ public:
 
     // Plant scrubber bind for a queue step / skipNext without waiting for resolve.
     // Ensures bindMedia key-match accepts the upcoming doPlay for this key.
-    void stagePlay(const PlayRequest& req);
+    bool stagePlay(const PlayRequest& req, const CurrentFn& current = {});
 
     // Align plant + displayed clock to the demux start about to begin (e.g. PMS
     // viewOffset when cast omitted offset=). Keeps seek-hold semantics: early
@@ -92,8 +109,10 @@ public:
     // Port of 0abee0b6 — without this, Web scrubber freezes at 0:00.
     void seedPlaybackPosition(int64_t timeMs, int64_t durationMs);
 
-    // Clear media bind (after stop finishes).
-    void clearMedia();
+    // Accept Stop and invalidate queued work before clearing the bind.
+    // The caller retires the player only after this state lock is released.
+    TransportRequest clearMedia();
+    bool seekTo(int64_t ms, const CurrentFn& current = {});
 
     // True while a playMedia session is live (false after stop/clearMedia).
     bool wantPlay() const {
@@ -149,6 +168,9 @@ private:
     std::string timelineXml(const std::string& commandId) const;
     std::string lanIp() const;
     void log(const std::string& s) const;
+    TransportRequest transportRequestLocked(TransportCommand command);
+    bool acceptSeekLocked(int64_t ms, TransportRequest& request);
+    bool acceptPauseResumeLocked(bool pause, TransportRequest& request);
     static std::string xmlEsc(const std::string& s);
 
     std::string name_ = "MiSTerPlex";
@@ -158,13 +180,14 @@ private:
     PlayFn onPlay_;
     PlayQueuedFn onPlayQueued_;
     TokenFn onTokenUpdate_;
-    CtrlFn onPause_;
-    CtrlFn onResume_;
-    CtrlFn onStop_;
-    SeekFn onSeek_;
+    TransportQueuedFn onTransportQueued_;
+    TransportFn onPause_;
+    TransportFn onResume_;
+    TransportFn onStop_;
+    TransportFn onSeek_;
     StepFn onStep_;
     CtrlFn onSkipNext_;
-    CtrlFn onSkipPrevious_;
+    TransportFn onSkipPrevious_;
 
     bool openHttpListen();
 
@@ -185,6 +208,7 @@ private:
 
     mutable std::mutex mu_;
     std::string state_ = "stopped";
+    bool terminalStop_ = false;
     int64_t timeMs_ = 0;
     int64_t durationMs_ = 0;
     // After seek/step plant: pin scrubber to this target until demux playing/
@@ -203,6 +227,8 @@ private:
     std::string pendingPlayQueueItemId_;
     std::string pendingPlayQueueVersion_;
     std::string pendingRatingKey_;
+    std::string pendingToken_;
+    uint64_t pendingGeneration_ = 0;
     std::string serverMachineId_;
     std::string serverHost_;
     std::string serverPort_;

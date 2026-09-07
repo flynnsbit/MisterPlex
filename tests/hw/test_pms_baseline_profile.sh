@@ -1,32 +1,24 @@
 #!/usr/bin/env bash
-# Live PMS guard: verifies the delivered transcode bitstream, not request headers.
+# Real emitted bytes, not a successful profile header. Never expand tokens into argv.
+set +x
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONF_FILE="${MISTERPLEX_CONF:-${MISTER_CONF:-}}"
-if [[ -z "$CONF_FILE" ]]; then
-  for c in "$ROOT/assets/misterplex.conf" "$HOME/.config/misterplex/misterplex.conf"; do
-    [[ -f "$c" ]] && CONF_FILE="$c" && break
-  done
+limit_args=()
+if [[ -n "${MISTERPLEX_BASELINE_MAX_AU_BYTES:-}" ]]; then
+  limit_args=(--max-au-bytes "$MISTERPLEX_BASELINE_MAX_AU_BYTES")
 fi
-conf_val() {
-  local key="$1" file="$2"
-  [[ -n "$file" && -f "$file" ]] || return 0
-  awk -F= -v k="$key" '$1==k {sub(/^[ \t]+/, "", $2); sub(/[ \t\r]+$/, "", $2); print $2; exit}' "$file"
-}
-PLEX_BASE="${PLEX_BASE:-$(conf_val PLEX_BASE "$CONF_FILE")}"
-PLEX_TOKEN="${PLEX_TOKEN:-$(conf_val PLEX_TOKEN "$CONF_FILE")}"
-MISTERPLEX_BASELINE_KEY="${MISTERPLEX_BASELINE_KEY:-${PLEX_KEY:-}}"
-if [[ -z "${PLEX_BASE:-}" || -z "${PLEX_TOKEN:-}" || -z "${MISTERPLEX_BASELINE_KEY:-}" ]]; then
-  echo "SKIP-NOT-PASS test_pms_baseline_profile: set PLEX_BASE, PLEX_TOKEN, and MISTERPLEX_BASELINE_KEY for the live PMS Baseline check." >&2
-  echo "SKIP-NOT-PASS: this target is intentionally outside make unit and a skip must not be reported as pass." >&2
-  exit 77
+if [[ -n "${MISTERPLEX_BASELINE_MAX_VCL_RBSP_BYTES:-}" ]]; then
+  limit_args+=(--max-vcl-rbsp-bytes "$MISTERPLEX_BASELINE_MAX_VCL_RBSP_BYTES")
 fi
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "SKIP-NOT-PASS test_pms_baseline_profile: ffmpeg is required to extract the delivered H.264 stream." >&2
-  exit 77
-fi
-exec "$ROOT/build/pms_baseline_probe" \
-  --base "$PLEX_BASE" \
-  --token "$PLEX_TOKEN" \
-  --key "$MISTERPLEX_BASELINE_KEY" \
-  --seconds "${MISTERPLEX_BASELINE_SECONDS:-14}"
+case "${MISTERPLEX_BASELINE_REQUIRE_LIMITED_BT601:-0}" in
+  0) ;;
+  1) limit_args+=(--require-limited-bt601) ;;
+  *) echo "FAIL: MISTERPLEX_BASELINE_REQUIRE_LIMITED_BT601 must be0 or1" >&2; exit 2 ;;
+esac
+exec python3 "$ROOT/assets/plex-profiles/probe_pms.py" \
+  --prototype "${MISTERPLEX_BASELINE_PROTOTYPE:-ip}" \
+  --fps "${MISTERPLEX_BASELINE_FPS:-24}" \
+  --filter "${MISTERPLEX_BASELINE_FILTER:-on}" \
+  --seconds "${MISTERPLEX_BASELINE_SECONDS:-8}" \
+  --stream-read-timeout "${MISTERPLEX_BASELINE_STREAM_READ_TIMEOUT:-30}" \
+  --output "${MISTERPLEX_BASELINE_OUTPUT:-build/pms-profile-capture}" "${limit_args[@]}" "$@"

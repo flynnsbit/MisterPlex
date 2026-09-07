@@ -314,6 +314,49 @@ void runSharedFixture(const std::string& fixturePath) {
               << " bytes_out=" << dut.stream_ddr_bytes_out << "\n";
 }
 
+void runSpiSelectionHold() {
+    Vstream_path_ddr_ring_tb_top dut;
+    DdrModel ddr;
+    reset(dut, ddr);
+    ddr.publishCtrl(0, true);
+    dut.ddr_stream_enable = 1;
+    for (int i = 0; i < 600; ++i) tick(dut, ddr);
+    const std::vector<uint8_t> bytes = {0, 0, 1, 0x67, 0x42, 0x11, 0x22, 0x33};
+    auto wr = ddr.writeRecord(0, EVENT_BEGIN, 0x3344, 0, 0);
+    wr = ddr.writeRecord(wr, EVENT_NAL, 0x3344, 0, 0x67, bytes);
+    ddr.publishCtrl(wr, true);
+    for (unsigned tail = 0; tail < 2; ++tail) {
+        bool found = false;
+        for (unsigned i = 0; i < 4000; ++i) {
+            tick(dut, ddr);
+            if (dut.reader_byte_valid && (!tail || dut.reader_last)) {
+                found = true;
+                break;
+            }
+        }
+        expect(found, "SPI selection case did not reach a held DDR byte");
+        if (!found) return;
+        const auto held_byte = dut.reader_byte;
+        const auto held_last = dut.reader_last;
+        const auto count = dut.stream_ddr_bytes_out;
+        dut.ioctl_download = 1;
+        dut.ioctl_wr = 0;
+        bool held = true;
+        for (unsigned i = 0; i < 200; ++i) {
+            tick(dut, ddr);
+            held &= dut.reader_backpressure && dut.reader_byte_valid &&
+                    dut.reader_byte == held_byte && dut.reader_last == held_last &&
+                    dut.stream_ddr_bytes_out == count && !dut.fifo_writer;
+        }
+        expect(held, "SPI selection falsely accepted/changed a pending DDR byte or last marker");
+        dut.ioctl_download = 0;
+    }
+    for (unsigned i = 0; i < 1000 && dut.stream_ddr_bytes_out < bytes.size(); ++i)
+        tick(dut, ddr);
+    expect(dut.stream_ddr_bytes_out == bytes.size(),
+           "DDR resume lost or duplicated bytes after SPI selection");
+}
+
 void runUnderrun() {
     Vstream_path_ddr_ring_tb_top dut;
     DdrModel ddr;
@@ -381,6 +424,7 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     runIoctlStillWorks();
     runWrapNormal();
+    runSpiSelectionHold();
     if (argc >= 2)
         runSharedFixture(argv[1]);
     runUnderrun();

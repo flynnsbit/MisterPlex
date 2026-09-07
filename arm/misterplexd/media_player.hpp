@@ -7,6 +7,7 @@
 #include "libmisterplex/present_bank.hpp"
 #include "libmisterplex/fabric_direct.hpp"
 #include "libmisterplex/library_browser.hpp"
+#include "libmisterplex/video_backend.hpp"
 
 namespace misterplex {
 
@@ -37,6 +38,8 @@ inline bool osdRetargetDecodeSizeFromPresented(int& outW, int& outH,
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/mraudio_status.hpp"
 #include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/fpga_terminal.hpp"
+#include "libmisterplex/fpga_av_trace.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -58,6 +61,7 @@ class AvInprocDecoder;
 struct PlaybackSummary {
     int64_t rawFrames = 0;
     int64_t presentedFrames = 0;
+    int64_t lastPresentedAudioSamples = -1;
     int64_t reconFrames = 0;
     int64_t totalBytes = 0;
     bool usedRawVideo = false;
@@ -68,6 +72,11 @@ struct PlaybackSummary {
     bool true480PipelineAborted = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
+    int codedWidth = 0, codedHeight = 0;
+    int visibleWidth = 0, visibleHeight = 0;
+    int macroblockColumns = 0, macroblockRows = 0;
+    int cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0;
+    SourceAspect sourceAspect{};
 
     int64_t deliveredFrames() const {
         return rawFrames > 0 ? rawFrames : (reconFrames > 0 ? reconFrames : presentedFrames);
@@ -80,6 +89,16 @@ public:
 
     using LogFn = std::function<void(const std::string&)>;
     using ProgressFn = std::function<void(const std::string& state, int64_t timeMs, int64_t durMs)>;
+    // Reporting-identity bind after retirement, before new worker progress.
+    using StartedFn = std::function<void()>;
+    struct StoppedPosition {
+        int64_t timeMs;
+        int64_t durationMs;
+    };
+    struct StartedPlayback {
+        uint64_t generation = 0;
+        uint64_t epoch = 0;
+    };
     // Fired when OSD content-resolution bits change (O[5:4]). Main uses this to
     // re-resolve the PMS weak ladder / restart the session at the same offset.
     using ContentResFn = std::function<void(const ContentResolution& res, bool playing)>;
@@ -89,6 +108,10 @@ public:
     using DisplayResFn = std::function<void(const ContentResolution& res)>;
     using LibraryFetchFn = std::function<std::string(const std::string& path)>;
     using LibraryPlayFn = std::function<void(const std::string& ratingKey)>;
+    using AudioSessionControl = FpgaSpi::AudioControl;
+    bool fpgaH264Backend() const { return backend_ == VideoBackend::FpgaH264; }
+    VideoBackend videoBackend() const { return backend_; }
+    int64_t consumedAudioSamples() const { return fpgaAudioConsumedSamples_.load(); }
 
     void setLog(LogFn f) { log_ = std::move(f); }
     void setProgress(ProgressFn f) { onProgress_ = std::move(f); }
@@ -227,7 +250,16 @@ public:
     int64_t droppedFrames() const { return droppedFrames_.load(); }
     void setDecodeSize(int w, int h);
     void setLiveGlass(LiveGlass glass) { liveGlass_ = glass; }
-    void setRbfPrefix8(std::string prefix8) { rbfPrefix8_ = std::move(prefix8); }
+    void setRbfPrefix8(std::string prefix8) {
+        if (fpgaH264Backend() && playing_.load() && prefix8 != rbfPrefix8_) {
+            std::lock_guard<std::mutex> lock(mu_);
+            playEpoch_.fetch_add(1);
+            stop_.store(true);
+            currentUrl_.clear();
+            currentHeaders_.clear();
+        }
+        rbfPrefix8_ = std::move(prefix8);
+    }
     LiveGlass liveGlass() const { return liveGlass_; }
     SourceAspect probeSourceAspect(const std::string& urlOrPath,
                                    const std::string& httpHeaders = {},
@@ -256,25 +288,34 @@ public:
     bool initPresent();
 
     bool play(const std::string& urlOrPath, int64_t startOffsetMs = 0,
-              const std::string& httpHeaders = {}, int64_t durationMs = 0);
+              const std::string& httpHeaders = {}, int64_t durationMs = 0,
+              uint64_t generation = 0);
     void pause();
     void resume();
-    void stop();
+    StoppedPosition stop();
     // On-screen playback overlay API for input/transport workers.
     // showPlaybackOverlay() only affects visual feedback: it latches the state,
     // progress and a short auto-hide timer. flashPlaybackSkip() adds transient
     // "<< Ns" / "Ns >>" feedback; callers still own the actual seek/skip.
     void showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs);
     void flashPlaybackSkip(int64_t deltaMs);
+    void setPlaybackTitle(std::string title);
     // Process-exit teardown: joins every worker thread without touching the FPGA
     // or reloading Main. A std::thread that is still joinable when ~MediaPlayer
     // runs calls std::terminate(), which is how the daemon used to abort on
     // SIGTERM whenever a session had ended on its own (thread finished but never
     // joined, because only stop()/play() join thr_).
     void shutdown();
-    void seekMs(int64_t ms);
+    void seekMs(int64_t ms, const StartedFn& started = {}, uint64_t generation = 0);
 
     bool playing() const { return playing_.load(); }
+    uint64_t playbackEpoch() const { return playEpoch_.load(); }
+    StartedPlayback startedPlayback() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (currentUrl_.empty() || startedPlayback_.epoch != playEpoch_.load())
+            return {};
+        return startedPlayback_;
+    }
     bool audioActive() const { return audioActive_.load(); }
     int64_t positionMs() const { return positionMs_.load(); }
     int64_t durationMs() const {
@@ -287,6 +328,15 @@ public:
     std::string currentUrl() const;
 
 private:
+    bool playInternal(const std::string&, int64_t, const std::string&, int64_t,
+                      uint64_t expectedEpoch, const StartedFn& started = {},
+                      uint64_t generation = 0);
+    void fpgaThreadMain(std::string url, int64_t startMs, std::string headers,
+                        int64_t durationMs, uint64_t epoch);
+    void fpgaAudioPump(MPX_AV_TRACE(std::shared_ptr<FpgaAvTrace> avTrace = {}));
+    bool controlFpgaAudio(uint64_t session, AudioSessionControl command);
+    void failFpgaSession(const std::string& error);
+    void interruptInproc();
     void threadMain(std::string url, int64_t startMs, std::string headers, int64_t durationMs);
     void audioPump(int afd);
     void streamPump(int sfd, bool allowF1Present);
@@ -300,6 +350,7 @@ private:
     void resetPlaybackPauseClock();
     void transitionPlaybackPause(bool paused, std::chrono::steady_clock::time_point now);
     int64_t playbackPausedUs(std::chrono::steady_clock::time_point now) const;
+    int64_t playbackActiveUs() const;
     // true when STREAM product path may omit heavy RGB video decode (audio + demux only)
     bool wantSkipRgbVideo() const;
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
@@ -410,6 +461,24 @@ private:
 
     FbPresent fb_;
     FpgaSpi fpga_;
+    VideoBackend backend_ = configuredVideoBackend();
+    std::atomic<uint64_t> playEpoch_{1};
+    std::atomic<uint64_t> fpgaSession_{0};
+    int fpgaAudioOutput_ = -1; // Retained through DMA Reset and failed-epoch recovery.
+    std::atomic<bool> fpgaVideoStarted_{false};
+    std::atomic<bool> fpgaAudioDone_{true};
+    std::atomic<bool> fpgaAudioStarted_{false};
+    std::atomic<FpgaAudioExit> fpgaAudioExit_{FpgaAudioExit::NotStarted};
+    std::atomic<int> fpgaAudioProgress_{-1};
+    std::atomic<size_t> fpgaAudioHeldBytes_{0};
+    std::atomic<int64_t> fpgaFirstVideoPtsUs_{ddr_bitstream_ring::kNoTimestamp};
+    std::atomic<int64_t> fpgaVideoStartMonotonicUs_{0};
+    std::atomic<int64_t> fpgaVideoStartPauseUs_{0};
+    std::atomic<int64_t> fpgaAudioConsumedSamples_{-1};
+    std::atomic<int64_t> fpgaAudioClockChangedUs_{0};
+    std::atomic<int64_t> fpgaAudioStartRelativeUs_{0};
+    std::atomic<bool> fpgaHasConsumedClock_{false};
+    std::mutex inprocMu_;
     // 720p idle: process-lifetime fabric-direct arena (flag-on). Heap yuv is STUB.
     FabricDirectAlloc idleFabric_{};
     DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
@@ -461,6 +530,7 @@ private:
     std::atomic<bool> streamActive_{false};
     std::mutex pauseControlMu_;
     mutable std::mutex pauseClockMu_;
+    MPX_AV_TRACE(FpgaAvPauseClock tracePauseClock_;)
     int64_t pauseClockAccumulatedUs_ = 0;
     bool pauseClockHeld_ = false;
     std::chrono::steady_clock::time_point pauseClockStarted_{};
@@ -478,6 +548,10 @@ private:
     std::string lastError_;
     std::string currentUrl_;
     std::string currentHeaders_;
+    StartedPlayback startedPlayback_;
+    std::string playbackTitle_;
+    std::string fpgaOverlayTransport_;
+    std::chrono::steady_clock::time_point fpgaOverlayTransportUntil_{};
     int64_t durationMs_ = 0;
     int outW_ = 320;
     int outH_ = 240;

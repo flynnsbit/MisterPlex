@@ -1,4 +1,5 @@
 #include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/fpga_playback_overlay.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -42,6 +43,122 @@ static int fails = 0;
     } while (0)
 
 namespace {
+
+void checkFpgaPackets() {
+    namespace ui = misterplex::fpga_overlay;
+    ui::Model model;
+    model.state = ui::State::Paused;
+    model.title = "MiSTer Plex: Caf\xc3\xa9 \xf0\x9f\x8e\xac";
+    model.position_ms = 123456;
+    model.duration_ms = 246912;
+    const ui::Packet packet = ui::encode(7, 99, 1, model);
+    CHECK(ui::validate(packet.data(), packet.size(), 7, 99, 0));
+    CHECK(packet[28] & ui::AutoFit);
+    CHECK(ui::get16(packet.data() + 36) == 128);
+    CHECK(ui::displayText(model.title) == "MISTER PLEX: CAF   ");
+    CHECK(ui::displayText(std::string(100, 'a')).size() == 42);
+    CHECK(ui::displayText("\xe2\x82").size() == 1);
+    CHECK(ui::displayText("a\nb") == "A B");
+    for (char c = 'A'; c <= 'Z'; ++c) {
+        unsigned ink = 0;
+        for (unsigned row = 0; row != 7; ++row) ink |= ui::glyph(c)[row];
+        CHECK(ink != 0);
+    }
+    CHECK(ui::progressPixels(-1, 20) == 0);
+    CHECK(ui::progressPixels(20, 0) == 0);
+    CHECK(ui::progressPixels(40, 20) == 256);
+    CHECK(ui::progressPixels(INT64_MAX / 2, INT64_MAX) == 127);
+    CHECK(ui::progressPixels(INT64_MAX - 1, INT64_MAX) == 255);
+    for (unsigned width = 1; width <= 256; ++width)
+        for (int64_t duration = 1; duration < 30; ++duration)
+            for (int64_t position = 0; position <= duration; ++position)
+                CHECK(ui::progressPixels(position, duration, width) ==
+                      position * width / duration);
+    for (const auto geometry : {std::pair<unsigned, unsigned>{320, 212},
+                               {212, 320}, {128, 96}, {640, 424}, {6, 24}}) {
+        ui::Model fitted = model;
+        CHECK(ui::fitToViewport(fitted, geometry.first, geometry.second, 11, 5));
+        CHECK(!(fitted.flags & ui::AutoFit));
+        CHECK(fitted.x >= 11 && fitted.x + fitted.width * fitted.scale <=
+              11 + geometry.first);
+        CHECK(fitted.y >= 5 && fitted.y + ui::kPanelHeight * fitted.scale <=
+              5 + geometry.second);
+        const auto fit_packet = ui::encode(7, 99, 2, fitted);
+        CHECK(ui::validate(fit_packet.data(), fit_packet.size(), 7, 99, 1));
+        CHECK(ui::get16(fit_packet.data() + 36) == fitted.width / 2);
+    }
+    ui::Model too_small = model;
+    CHECK(!ui::fitToViewport(too_small, 320, 23));
+    CHECK(!(too_small.flags & ui::Visible));
+    CHECK(!ui::fitToViewport(too_small, 5, 24));
+    CHECK(!ui::fitToViewport(too_small, 320, 240, UINT32_MAX));
+    for (size_t n = 0; n < packet.size(); ++n)
+        CHECK(!ui::validate(packet.data(), n, 7, 99, 0));
+    CHECK(!ui::validate(nullptr, packet.size(), 7, 99, 0));
+    CHECK(!ui::validate(packet.data(), packet.size() + 1, 7, 99, 0));
+    CHECK(!ui::validate(packet.data(), packet.size(), 8, 99, 0));
+    CHECK(!ui::validate(packet.data(), packet.size(), 7, 98, 0));
+    CHECK(!ui::validate(packet.data(), packet.size(), 7, 99, 1));
+    for (size_t offset : {size_t(0), size_t(4), size_t(6), size_t(38),
+                          size_t(43), size_t(47), size_t(51), size_t(52),
+                          size_t(54), size_t(56), size_t(60)}) {
+        ui::Packet bad = packet;
+        bad[offset] ^= 0x80;
+        CHECK(!ui::validate(bad.data(), bad.size(), 7, 99, 0));
+    }
+    for (size_t offset : {size_t(29), size_t(30), size_t(31), size_t(33),
+                          size_t(35), size_t(37)}) {
+        ui::Packet bad = packet;
+        bad[offset] = 0xff;
+        CHECK(!ui::validate(bad.data(), bad.size(), 7, 99, 0));
+    }
+    for (unsigned width : {0u, 257u}) {
+        auto bad = packet;
+        ui::put16(bad.data() + 52, width);
+        CHECK(!ui::validate(bad.data(), bad.size(), 7, 99, 0));
+    }
+    model.x = UINT32_MAX; model.y = UINT32_MAX; model.scale = UINT32_MAX;
+    model.foreground = UINT32_MAX;
+    auto bounded = ui::encode(7, 99, 2, model);
+    CHECK(ui::validate(bounded.data(), bounded.size(), 7, 99, 1));
+    CHECK(ui::get16(bounded.data() + 32) == 2047);
+    CHECK(ui::get16(bounded.data() + 34) == 2047);
+    CHECK(bounded[31] == 4 && bounded[43] == 0);
+    model.state = ui::State::Hidden;
+    auto hidden = ui::encode(7, 99, 3, model);
+    CHECK(ui::get16(hidden.data() + 28) == 0);
+
+    struct Sender {
+        ui::Packet latest{};
+        bool success = false;
+        bool sendFileTx(const uint8_t* data, size_t length, uint8_t index) {
+            CHECK(length == ui::kPacketBytes && index == 6);
+            std::copy(data, data + length, latest.begin());
+            return success;
+        }
+    } sender;
+    uint32_t sequence = 0;
+    CHECK(!ui::send(sender, 7, 99, sequence, model));
+    CHECK(sequence == 0);
+    sender.success = true;
+    CHECK(ui::send(sender, 7, 99, sequence, model));
+    CHECK(sequence == 1 && ui::get32(sender.latest.data() + 24) == 1);
+    CHECK(!ui::send(sender, 7, 0, sequence, model));
+    sequence = UINT32_MAX;
+    CHECK(!ui::send(sender, 7, 99, sequence, model));
+
+    // The command-plane API has no pixel pointer; publishing UI cannot dirty a
+    // retained decoded I420 frame even while the same frame is paused/reused.
+    std::vector<uint8_t> reference(320 * 240 * 3 / 2, 0x67);
+    const auto before = reference;
+    sequence = 1;
+    for (auto state : {ui::State::Playing, ui::State::Paused, ui::State::Buffering,
+                       ui::State::Error, ui::State::Hidden}) {
+        model.state = state;
+        CHECK(ui::send(sender, 7, 99, sequence, model));
+    }
+    CHECK(reference == before);
+}
 
 constexpr int W = 320;
 constexpr int H = 240;
@@ -205,6 +322,7 @@ void checkGuardedProgress(int64_t elapsedMs, int64_t durationMs, int expectedKno
 
 int main() {
     using namespace misterplex;
+    checkFpgaPackets();
 
     // 1. Deterministic rendering: exact RGB565 frame hash plus readable pixel checks.
     const Golden golden = loadGolden();

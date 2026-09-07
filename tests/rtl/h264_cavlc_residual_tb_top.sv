@@ -2,26 +2,41 @@
 `default_nettype none
 
 module h264_cavlc_residual_tb_top #(
-    parameter int MAX_BYTES = 64
+    parameter int MAX_BYTES = 128,
+    parameter int BIT_W = $clog2(MAX_BYTES * 8 + 1)
 )(
     input  wire               clk,
     input  wire               reset,
     input  wire               start,
     input  wire [2:0]         coeff_token_table,
     input  wire [4:0]         max_coeff,
-    input  wire [9:0]         bit_offset_start,
-    input  wire [9:0]         bit_len,
+    input  wire [BIT_W-1:0]   bit_offset_start,
+    input  wire [BIT_W-1:0]   bit_len,
     input  wire [7:0]         rbsp [0:MAX_BYTES-1],
     output wire               busy,
     output wire               done,
     output wire               ok,
-    output wire [9:0]         bit_offset_end,
+    output wire [BIT_W-1:0]   bit_offset_end,
     output wire [4:0]         total_coeff,
     output wire [1:0]         trailing_ones,
     output wire [3:0]         total_zeros,
     output wire signed [15:0] coeff [0:15],
     output wire signed [15:0] level_dbg [0:15],
     output wire [3:0]         run_dbg [0:15],
+    output reg               datapath_equivalent,
+    input  wire [31:0]       probe_window,
+    input  wire [2:0]        probe_suffix_length,
+    input  wire [1:0]        probe_t1,
+    input  wire [31:0]       probe_level_code,
+    output wire signed [15:0] probe_level,
+    output wire [5:0]        probe_prefix,
+    output wire [2:0]        probe_suffix_first,
+    output wire [2:0]        probe_suffix_next,
+    input  wire [5:0]        probe_consumed,
+    input  wire [4:0]        probe_suffix_bits,
+    input  wire              probe_first,
+    output wire [15:0]       probe_inline_suffix,
+    output wire [15:0]       probe_inline_code,
 `ifdef CAVLC_CYCLE_PROBE
     output wire [15:0]        cy_token,
     output wire [15:0]        cy_sign,
@@ -82,6 +97,58 @@ module h264_cavlc_residual_tb_top #(
         .cy_total(cy_total)
 `endif
     );
+
+    assign probe_prefix = u_residual.clz32(probe_window);
+    assign probe_level = u_residual.level_from_code(probe_level_code);
+`ifdef CAVLC_TIMING_BASELINE
+    // The frozen pre-timing RTL has level-valued helper arguments instead.
+    assign probe_suffix_first = 3'd0;
+    assign probe_suffix_next = 3'd0;
+    assign probe_inline_suffix = 16'd0;
+    assign probe_inline_code = 16'd0;
+`else
+    assign probe_suffix_first =
+        u_residual.suffix_next_first(probe_prefix, probe_suffix_length, probe_t1);
+    assign probe_suffix_next =
+        u_residual.suffix_next(probe_suffix_length, probe_prefix);
+    assign probe_inline_suffix =
+        u_residual.inline_suffix(probe_window, probe_consumed, probe_suffix_bits);
+    assign probe_inline_code =
+        u_residual.decode_inline_level_code(probe_prefix, probe_suffix_length,
+                                           probe_inline_suffix, probe_first, probe_t1);
+`endif
+
+    // Test-only reference equations for the factored combinational networks.
+    // Keep arbitrary-bit reads and ordered scatter out of product RTL.
+    reg [95:0] reference_window;
+    reg signed [15:0] reference_coeff [0:15];
+    reg reference_bad;
+    always @* begin : reference_datapath
+        integer k, p, pi;
+        reg signed [5:0] cnum;
+        reference_window = 96'd0;
+        for (k = 0; k < 96; k = k + 1) begin
+            p = u_residual.bit_pos + k;
+            if (p < bit_len && (p >> 3) < MAX_BYTES)
+                reference_window[95-k] = rbsp[p >> 3][7-(p & 7)];
+        end
+        for (k = 0; k < 16; k = k + 1) reference_coeff[k] = 16'sd0;
+        cnum = -6'sd1;
+        reference_bad = 1'b0;
+        for (pi = 16; pi >= 1; pi = pi - 1) begin
+            if (pi <= u_residual.tc_r && !reference_bad) begin
+                cnum = cnum + {2'd0, run_dbg[pi-1]} + 6'sd1;
+                if (cnum >= 0 && cnum < $signed({1'b0, max_coeff}))
+                    reference_coeff[cnum[3:0]] = level_dbg[pi-1];
+                else reference_bad = 1'b1;
+            end
+        end
+        datapath_equivalent = (reference_window === u_residual.stream_window) &&
+                              (reference_bad === u_residual.place_bad);
+        for (k = 0; k < 16; k = k + 1)
+            datapath_equivalent = datapath_equivalent &&
+                                  (reference_coeff[k] === u_residual.placed_coeff[k]);
+    end
 
     genvar i;
     generate

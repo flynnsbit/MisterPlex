@@ -96,6 +96,61 @@ constexpr uint32_t kPlxjMagic = 0x504C584Au; // "PLXJ"
 constexpr uint32_t kPlxbAddr  = 0x30140000u;
 constexpr uint32_t kPlxbMagic = 0x504C5842u; // "PLXB"
 
+// FPGA-video capabilities are published only in response to a fresh Probe
+// record. The nonce and final publication word bind the reply to this boot.
+constexpr uint16_t kFpgaVideoAbiVersion = 2;
+constexpr uint16_t kFpgaVideoLayoutId = 1;
+constexpr uint32_t kVideoCapsAddr = 0x30140050u;
+constexpr uint32_t kVideoCapsMagic = 0x4D504330u; // "MPC0"
+constexpr uint32_t kVideoFeaturesAddr = 0x30140058u;
+constexpr uint32_t kVideoFeaturesMagic = 0x4D504331u;
+constexpr uint32_t kVideoDimensionsAddr = 0x30140060u;
+constexpr uint32_t kVideoDimensionsMagic = 0x4D504332u;
+constexpr uint32_t kVideoAuLimitAddr = 0x30140068u;
+constexpr uint32_t kVideoAuLimitMagic = 0x4D504333u;
+constexpr uint32_t kVideoBuildAddr = 0x30140070u;
+constexpr uint32_t kVideoBuildMagic = 0x4D504334u;
+constexpr uint32_t kVideoNonceLowAddr = 0x30140078u;
+constexpr uint32_t kVideoNonceLowMagic = 0x4D504335u;
+constexpr uint32_t kVideoNonceHighAddr = 0x30140080u;
+constexpr uint32_t kVideoNonceHighMagic = 0x4D504336u;
+constexpr uint32_t kVideoCapsCommitAddr = 0x30140088u;
+constexpr uint32_t kVideoCapsCommitMagic = 0x4D504337u;
+constexpr uint32_t kVideoPresentationAddr = 0x30140090u;
+constexpr uint32_t kVideoPresentationMagic = 0x4D565053u; // "MVPS"
+constexpr uint32_t kVideoPresentationCommitAddr = 0x301400D0u;
+constexpr uint32_t kVideoPresentationCommitMagic = 0x4D565043u; // "MVPC"
+constexpr unsigned kVideoPresentationBytes = 72;
+static_assert(kVideoPresentationCommitAddr + 8 ==
+                  kVideoPresentationAddr + kVideoPresentationBytes,
+              "presentation commit is the final qword");
+static_assert(kVideoPresentationAddr >= kVideoCapsCommitAddr + 8,
+              "presentation feedback cannot overlap capabilities");
+
+// Independent DMA-audio control remains reachable when video ingress is paused.
+// Request: header(version16/opcode8/reserved8), epoch, Probe nonce, token,
+// expected producer byte pointer (low32, high32 zero), publication32/magic32.
+// The pointer comes from the quiesced kernel producer; MrAudio only publishes
+// SPI metadata on write(), so Begin/Reset cannot demand a later SPI update.
+// Publish invalid commit first, valid last.
+constexpr uint16_t kAudioSessionAbiVersion = 2;
+constexpr uint32_t kAudioControlAddr = 0x30140100u;
+constexpr uint32_t kAudioControlMagic = 0x4D414354u; // "MACT"
+constexpr uint32_t kAudioControlCommitAddr = 0x30140128u;
+constexpr uint32_t kAudioControlCommitMagic = 0x4D414343u; // "MACC"
+constexpr unsigned kAudioControlBytes = 48;
+// Status: header(error8/opcode8/flags8/version8), current epoch, current nonce,
+// ACK token, consumed stereo pairs, ACK epoch, ACK nonce, publication/commit.
+constexpr uint32_t kAudioStatusAddr = 0x30140140u;
+constexpr uint32_t kAudioStatusMagic = 0x4D415354u; // "MAST"
+constexpr uint32_t kAudioStatusCommitAddr = 0x30140178u;
+constexpr uint32_t kAudioStatusCommitMagic = 0x4D415343u; // "MASC"
+constexpr unsigned kAudioStatusBytes = 64;
+static_assert(kAudioControlAddr >= kVideoPresentationAddr + kVideoPresentationBytes);
+static_assert(kAudioControlCommitAddr + 8 == kAudioControlAddr + kAudioControlBytes);
+static_assert(kAudioStatusAddr >= kAudioControlAddr + kAudioControlBytes);
+static_assert(kAudioStatusCommitAddr + 8 == kAudioStatusAddr + kAudioStatusBytes);
+
 // ---- All magics (for collision detection) ----
 // Every PLX-prefixed magic in the system. Gate rejects duplicates.
 struct MagicEntry {
@@ -103,7 +158,7 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 8> kAllMagics = {{
+constexpr std::array<MagicEntry, 22> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -112,11 +167,25 @@ constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXD", kPlxdMagic},
     {"PLXJ", kPlxjMagic},
     {"PLXB", kPlxbMagic},
+    {"MPC0", kVideoCapsMagic},
+    {"MPC1", kVideoFeaturesMagic},
+    {"MPC2", kVideoDimensionsMagic},
+    {"MPC3", kVideoAuLimitMagic},
+    {"MPC4", kVideoBuildMagic},
+    {"MPC5", kVideoNonceLowMagic},
+    {"MPC6", kVideoNonceHighMagic},
+    {"MPC7", kVideoCapsCommitMagic},
+    {"MVPS", kVideoPresentationMagic},
+    {"MVPC", kVideoPresentationCommitMagic},
+    {"MACT", kAudioControlMagic},
+    {"MACC", kAudioControlCommitMagic},
+    {"MAST", kAudioStatusMagic},
+    {"MASC", kAudioStatusCommitMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 20> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -126,6 +195,20 @@ constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
     {"PLXJ", kPlxjAddr,     kPlxjMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
+    {"MPC0", kVideoCapsAddr, kVideoCapsMagic, 8, "fpga_to_arm", true},
+    {"MPC1", kVideoFeaturesAddr, kVideoFeaturesMagic, 8, "fpga_to_arm", true},
+    {"MPC2", kVideoDimensionsAddr, kVideoDimensionsMagic, 8, "fpga_to_arm", true},
+    {"MPC3", kVideoAuLimitAddr, kVideoAuLimitMagic, 8, "fpga_to_arm", true},
+    {"MPC4", kVideoBuildAddr, kVideoBuildMagic, 8, "fpga_to_arm", true},
+    {"MPC5", kVideoNonceLowAddr, kVideoNonceLowMagic, 8, "fpga_to_arm", true},
+    {"MPC6", kVideoNonceHighAddr, kVideoNonceHighMagic, 8, "fpga_to_arm", true},
+    {"MPC7", kVideoCapsCommitAddr, kVideoCapsCommitMagic, 8, "fpga_to_arm", true},
+    {"MVPS", kVideoPresentationAddr, kVideoPresentationMagic,
+     kVideoPresentationBytes, "fpga_to_arm", true},
+    {"MACT", kAudioControlAddr, kAudioControlMagic,
+     kAudioControlBytes, "arm_to_fpga", true},
+    {"MAST", kAudioStatusAddr, kAudioStatusMagic,
+     kAudioStatusBytes, "fpga_to_arm", true},
 }};
 
 // ---- Bitstream ring additional magics (not address-mapped; in-band) ----

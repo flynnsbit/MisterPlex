@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-pl330-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools glass-baseline glass-baseline-policy v3-stable-320 v3-stable-320-policy
+.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-plexd-daemon arm-plexd-tools arm-ffmpeg arm-ffmpeg-static-check arm-ddr-bench arm-pl330-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools glass-baseline glass-baseline-policy v3-stable-320 v3-stable-320-policy
 
 all: unit
 
@@ -19,7 +19,7 @@ help:
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
-	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
+	@echo "  make pms-baseline-check - live PMS profile, AU, syntax and cadence guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-nal-stats      - live PMS NAL size/jitter probe (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make glass-baseline-policy - offline glass floor pair.json + artifact md5s"
 	@echo "  make glass-baseline - live HDMI floor (pin v0.2.0 pair unless GLASS_CANDIDATE=1)"
@@ -27,7 +27,10 @@ help:
 	@echo "  make v3-stable-320 - isolated v0.3@320 deploy + chevron/B6 (not product H5)"
 	@echo "  make h264-golden-tools - build shared H.264 golden fixture extractor"
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
-	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
+	@echo "  make arm-plexd-daemon - build only ARM_PLEXD_OUTPUT, without auxiliary binaries"
+	@echo "  make arm-ffmpeg - build static-safe ARM libav from existing FFmpeg 8.1.2 source"
+	@echo "  make arm-ffmpeg-static-check - reject iconv/module loaders or missing media support"
+	@echo "  make build-rbf  - build Plex.rbf via scripts/build_rbf.sh (long)"
 	@echo "  make test       - alias for unit"
 	@echo "  make package    - dist tarball (ARM + conf + docs + named RBF pairs)"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
@@ -48,6 +51,8 @@ unit:
 unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_av_480p_policy $(ROOT)/build/test_p720_audio_keepup $(ROOT)/build/test_p720_transcode_vf $(ROOT)/build/test_spi_txn_complete $(ROOT)/build/test_idle_poll_budget $(ROOT)/build/test_p720_e2e_budget $(ROOT)/build/test_pl330_encode $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_gdm_filter
 	$(ROOT)/tests/unit/test_cast_http_ready_policy.sh
+	python3 $(ROOT)/tests/unit/test_candidate_deploy.py
+	python3 $(ROOT)/tests/unit/test_arm_ffmpeg_static.py
 	$(ROOT)/build/test_spi_txn_complete
 	$(ROOT)/build/test_idle_poll_budget
 	$(ROOT)/build/test_p720_e2e_budget
@@ -67,8 +72,14 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_a
 	$(ROOT)/build/test_cast_av_480p_policy
 	bash $(ROOT)/tests/unit/test_cast_av_480p_policy.sh
 	$(ROOT)/build/test_mraudio_status
+	bash $(ROOT)/tests/unit/test_audio_session_host.sh
+	bash $(ROOT)/tests/unit/test_audio_session.sh
+	python3 $(ROOT)/tests/unit/test_fpga_audio_routing.py
+	bash $(ROOT)/tests/unit/test_ddr_bitstream_reader_transport.sh
+	bash $(ROOT)/tests/unit/test_fpga_video_audio_feedback.sh
 	$(ROOT)/build/test_osd_menu
 	$(ROOT)/build/test_playback_overlay
+	bash $(ROOT)/tests/unit/test_fpga_playback_overlay.sh
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
@@ -76,7 +87,12 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_a
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_pms_timeline
 	$(ROOT)/build/test_companion_plant_seek
+	$(ROOT)/build/test_companion_natural_eof
+	$(ROOT)/build/test_fpga_av_trace
+	$(ROOT)/build/test_fpga_av_trace_off
 	$(ROOT)/tests/unit/test_pms_baseline_gate.sh
+	bash $(ROOT)/tests/unit/test_pms_baseline_live_gate.sh
+	bash $(ROOT)/tests/unit/test_pms_nal_stats_gate.sh
 	$(ROOT)/build/test_h264_bitstream_source
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_frame_store_sdram_sim
@@ -145,6 +161,7 @@ unit-unlocked: preflight $(ROOT)/build/test_gdm_filter $(ROOT)/build/test_cast_a
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	python3 $(ROOT)/tests/unit/test_rtl_lint_stubs.py
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
@@ -169,6 +186,7 @@ rtl-sim:
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 
 rtl-lint:
+	python3 $(ROOT)/tests/unit/test_rtl_lint_stubs.py
 	$(ROOT)/scripts/rtl_lint.py
 
 quartus-sv-subset:
@@ -200,6 +218,8 @@ h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_na
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/host/libmisterplex/audio_session.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
 		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
 		$(ROOT)/host/libmisterplex/status_telemetry.hpp \
 		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp \
@@ -345,6 +365,9 @@ $(ROOT)/build/test_cast_av_480p_policy: $(ROOT)/tests/unit/test_cast_av_480p_pol
 
 $(ROOT)/build/test_main_guard: $(ROOT)/tests/unit/test_main_guard.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/host/libmisterplex/audio_session.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
@@ -362,7 +385,8 @@ $(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_osd_menu.cpp
 
 $(ROOT)/build/test_playback_overlay: $(ROOT)/tests/unit/test_playback_overlay.cpp \
-		$(ROOT)/host/libmisterplex/playback_overlay.hpp
+		$(ROOT)/host/libmisterplex/playback_overlay.hpp \
+		$(ROOT)/host/libmisterplex/fpga_playback_overlay.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_playback_overlay.cpp
 
@@ -378,23 +402,33 @@ $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 
 $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
-		$(ROOT)/arm/misterplexd/plex_resolve.hpp
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/video_backend.hpp \
+		$(ROOT)/assets/plex-profiles/fpga_profile.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
 		$(ROOT)/tests/unit/test_resolve.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
 
 $(ROOT)/build/pms_baseline_probe: $(ROOT)/tools/pms_baseline_probe.cpp \
-		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
-		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/assets/plex-profiles/fpga_profile.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
+		$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
+		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp \
 		$(ROOT)/host/libmisterplex/h264_nal.hpp \
 		$(ROOT)/host/libmisterplex/h264_sps.hpp
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm -I$(ROOT)/arm/misterplexd -o $@ \
-		$(ROOT)/tools/pms_baseline_probe.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/pms_baseline_probe.cpp
 
 $(ROOT)/build/pms_nal_stats: $(ROOT)/tools/pms_nal_stats.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/video_backend.hpp \
+		$(ROOT)/assets/plex-profiles/fpga_profile.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
 		$(ROOT)/host/libmisterplex/h264_bitstream_transport.hpp \
 		$(ROOT)/host/libmisterplex/h264_nal_dispatch.hpp
 	@mkdir -p $(ROOT)/build
@@ -419,7 +453,34 @@ $(ROOT)/build/test_companion_plant_seek: $(ROOT)/tests/unit/test_companion_plant
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -pthread -o $@ \
 		$(ROOT)/tests/unit/test_companion_plant_seek.cpp $(ROOT)/arm/misterplexd/companion.cpp
 
+unit-unlocked: $(ROOT)/build/test_companion_natural_eof
+unit-unlocked: $(ROOT)/build/test_fpga_av_trace $(ROOT)/build/test_fpga_av_trace_off
+
+$(ROOT)/build/test_fpga_av_trace: $(ROOT)/tests/unit/test_fpga_av_trace.cpp \
+		$(ROOT)/host/libmisterplex/fpga_av_trace.hpp $(ROOT)/host/libmisterplex/fpga_terminal.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -DMPX_FPGA_AV_TRACE=1 -pthread -o $@ $<
+
+$(ROOT)/build/test_fpga_av_trace_off: $(ROOT)/tests/unit/test_fpga_av_trace.cpp \
+		$(ROOT)/host/libmisterplex/fpga_av_trace.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -pthread -o $@ $<
+
+$(ROOT)/build/test_companion_natural_eof: $(ROOT)/tests/unit/test_companion_natural_eof.cpp \
+		$(ROOT)/arm/misterplexd/companion.cpp \
+		$(ROOT)/arm/misterplexd/companion.hpp $(ROOT)/arm/misterplexd/natural_eof.hpp \
+		$(ROOT)/arm/misterplexd/playback_controls.hpp $(ROOT)/arm/misterplexd/pms_timeline.cpp \
+		$(ROOT)/arm/misterplexd/pms_timeline.hpp $(ROOT)/arm/misterplexd/plex_resolve.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
+		$(ROOT)/tests/unit/test_companion_natural_eof.cpp $(ROOT)/arm/misterplexd/companion.cpp \
+		$(ROOT)/arm/misterplexd/pms_timeline.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp \
+		-Wl,--wrap=send -Wl,--wrap=pthread_mutex_unlock
+
 $(ROOT)/build/test_h264_bitstream_source: $(ROOT)/tests/unit/test_h264_bitstream_source.cpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
 		$(ROOT)/host/libmisterplex/h264_bitstream_transport.hpp \
 		$(ROOT)/host/libmisterplex/h264_nal_dispatch.hpp \
 		$(ROOT)/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264
@@ -438,6 +499,18 @@ MPLEX_SRC := \
 MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
 # Host recon headers (Phase 3.3i STREAM path)
 MPLEX_HDR := \
+	$(ROOT)/arm/misterplexd/natural_eof.hpp \
+	$(ROOT)/arm/misterplexd/playback_controls.hpp \
+	$(ROOT)/host/libmisterplex/video_backend.hpp \
+	$(ROOT)/host/libmisterplex/av_clock.hpp \
+	$(ROOT)/host/libmisterplex/av_inproc_decode.hpp \
+	$(ROOT)/host/libmisterplex/fpga_av_trace.hpp \
+	$(ROOT)/assets/plex-profiles/fpga_profile.hpp \
+	$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
+	$(ROOT)/host/libmisterplex/audio_session.hpp \
+	$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
+	$(ROOT)/host/libmisterplex/h264_bitstream_transport.hpp \
+	$(ROOT)/host/libmisterplex/h264_nal_dispatch.hpp \
 	$(ROOT)/host/libmisterplex/h264_recon.hpp \
 	$(ROOT)/host/libmisterplex/h264_slice_walk.hpp \
 	$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
@@ -451,6 +524,7 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
+	$(ROOT)/host/libmisterplex/fpga_playback_overlay.hpp \
 	$(ROOT)/host/libmisterplex/pixel_format.hpp
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
@@ -468,7 +542,10 @@ plexd: $(ROOT)/build/misterplexd
 
 # Standalone: push one RGB565 file to Plex frame_store via SPI ioctl
 $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
-		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/host/libmisterplex/audio_session.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -o $@ \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
@@ -499,12 +576,26 @@ ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || comman
 
 # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
 # whole-archive pthread required for std::thread under -static.
-# ARM libav (parent-built FFmpeg 8.1.2 static): misterplexd link only.
-ARM_FFMPEG_PREFIX ?= /tmp/ffmpeg-arm-u1/prefix
+# Static iconv can load incompatible device gconv DSOs even without an ELF interpreter.
+ARM_FFMPEG_PREFIX ?= $(ROOT)/build/deps/ffmpeg-arm-static-safe
+ARM_NM ?= $(patsubst %g++,%nm,$(ARM_CXX))
+ARM_PLEXD_OUTPUT ?= $(ROOT)/build/arm/misterplexd
+ARM_PLEXD_AV_TRACE ?= 0
+ifneq ($(ARM_PLEXD_AV_TRACE),0)
+ifneq ($(ARM_PLEXD_AV_TRACE),1)
+$(error ARM_PLEXD_AV_TRACE must be 0 or 1)
+endif
+endif
 ARM_FFMPEG_CFLAGS ?= -I$(ARM_FFMPEG_PREFIX)/include
-ARM_FFMPEG_LIBS   ?= -L$(ARM_FFMPEG_PREFIX)/lib -Wl,--start-group -lavformat -lavcodec -lavutil -Wl,--end-group -pthread -lm -latomic
+ARM_FFMPEG_LIBS   ?= -L$(ARM_FFMPEG_PREFIX)/lib -Wl,--start-group -lavformat -lavcodec -lswresample -lavutil -Wl,--end-group -pthread -lm -latomic
 MPX_LIBAV_PREFIX ?= $(ARM_FFMPEG_PREFIX)
-MPX_LIBAV_HAVE := $(and $(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavcodec.a),$(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavformat.a),$(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavutil.a))
+MPX_LIBAV_HAVE := $(and $(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavcodec.a),$(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavformat.a),$(wildcard $(ARM_FFMPEG_PREFIX)/lib/libswresample.a),$(wildcard $(ARM_FFMPEG_PREFIX)/lib/libavutil.a))
+
+arm-ffmpeg:
+	@ARM_FFMPEG_PREFIX="$(ARM_FFMPEG_PREFIX)" bash $(ROOT)/scripts/build_arm_ffmpeg.sh
+
+arm-ffmpeg-static-check:
+	@python3 $(ROOT)/scripts/check_arm_ffmpeg_static.py --prefix "$(ARM_FFMPEG_PREFIX)" --nm "$(ARM_NM)"
 
 arm-ddr-bench:
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
@@ -545,22 +636,32 @@ arm-kmod:
 	$(MAKE) -C $(ROOT)/kmod/mplex_ddr KDIR=$(KDIR_MISTER) CROSS_COMPILE=$(ARM_CROSS) ARCH=arm
 	@file $(ROOT)/kmod/mplex_ddr/mplex_ddr.ko
 
-arm-plexd: $(MPLEX_HDR) arm-ddr-bench
+arm-plexd: arm-plexd-daemon arm-ddr-bench arm-plexd-tools
+
+arm-plexd-daemon: $(MPLEX_HDR)
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
-	@mkdir -p $(ROOT)/build/arm
+	@mkdir -p "$(dir $(ARM_PLEXD_OUTPUT))"
 ifneq ($(MPX_LIBAV_HAVE),)
+	@python3 $(ROOT)/scripts/check_arm_ffmpeg_static.py --prefix "$(ARM_FFMPEG_PREFIX)" --nm "$(ARM_NM)"
 	$(ARM_CXX) -std=c++17 -O2 -Wall -static $(MPLEX_INC) -DMPX_HAVE_LIBAV $(ARM_FFMPEG_CFLAGS) \
-		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
+		-DMPX_FPGA_AV_TRACE=$(ARM_PLEXD_AV_TRACE) \
+		-o "$(ARM_PLEXD_OUTPUT)" $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/av_inproc_decode.cpp \
 		$(ARM_FFMPEG_LIBS) \
 		-Wl,--whole-archive -lpthread -Wl,--no-whole-archive
 	@echo MPX_HAVE_LIBAV=YES prefix=$(ARM_FFMPEG_PREFIX)
 else
 	@echo MPX_HAVE_LIBAV=NO prefix=$(ARM_FFMPEG_PREFIX)
-	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
-		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
+	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) -DMPX_FPGA_AV_TRACE=$(ARM_PLEXD_AV_TRACE) \
+		-o "$(ARM_PLEXD_OUTPUT)" $(MPLEX_SRC) \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
 endif
+	@file "$(ARM_PLEXD_OUTPUT)"
+	@echo "Built $(ARM_PLEXD_OUTPUT)"
+
+arm-plexd-tools:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/push_frame \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
@@ -573,8 +674,8 @@ endif
 		-o $(ROOT)/build/arm/input_mailbox_probe \
 		$(ROOT)/tools/input_mailbox_probe.cpp \
 		-static
-	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status $(ROOT)/build/arm/input_mailbox_probe
-	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe"
+	@file $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status $(ROOT)/build/arm/input_mailbox_probe
+	@echo "Built push_frame + set_status + input_mailbox_probe"
 
 $(ROOT)/build/arm/input_mailbox_probe: $(ROOT)/tools/input_mailbox_probe.cpp \
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp

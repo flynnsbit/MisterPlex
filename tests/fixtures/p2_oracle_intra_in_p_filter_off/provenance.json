@@ -1,0 +1,9 @@
+{
+  "annexb_sha256": "a3ea72a2fee68f2ffa6325e27aebe4d7fa0cfd916f115d412ed26f77d420a703",
+  "required_disable_deblocking_filter_idc": 1,
+  "provided_by": "a66461c3-035c-4bbc-936d-40ec4468359b",
+  "provided_artifact": "build/p2-intra-controller/intra-in-p.264",
+  "kind": "original procedural local controller I/P fixture, not PMS",
+  "producer_recipe_reference": "tests/unit/test_p2_intra_controller.sh: nullsrc/geq 320x240:24, baseline QP20, no-deblock=1, ref1, CAVLC, P16/skip inter partitions",
+  "provenance_limit": "Exact delivered encoded bytes frozen; encoder recipe is producer-supplied."
+}

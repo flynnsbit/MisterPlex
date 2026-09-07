@@ -8,13 +8,20 @@
 `default_nettype none
 
 module h264_iq_idct_4x4 (
+	input wire clk, reset, start,
+	input wire use_dc,
+	input wire signed [31:0] dc_value,
 	input  wire signed [15:0] coeff    [0:15],
 	input  wire        [4:0]  max_coeff,
 	input  wire        [5:0]  qp,
 	input  wire        [7:0]  pred     [0:15],
-	output wire signed [28:0] dequant  [0:15],
-	output wire signed [28:0] idct     [0:15],
-	output wire        [7:0]  recon    [0:15]
+	output wire signed [31:0] dequant  [0:15],
+	output wire signed [31:0] idct     [0:15],
+	output wire        [7:0]  recon    [0:15],
+	output wire [7:0] serial_recon [0:15],
+	output wire serial_done, serial_ok,
+	output wire dc_done,
+	output wire signed [31:0] dc_out [0:15]
 );
 	// Product RTL now takes full 16-bit signed coefficients.
 	wire signed [15:0] coeff16 [0:15];
@@ -41,6 +48,16 @@ module h264_iq_idct_4x4 (
 		.pred(pred),
 		.residual(idct),
 		.recon(recon)
+	);
+	h264_recon serial (
+		.clk(clk),.reset(reset),.start(start),.cavlc_coeff(coeff),
+		.qp(qp),.max_coeff(max_coeff),.pred(pred),
+		.use_dc(use_dc),.dc_value(dc_value),
+		.recon(serial_recon),.done(serial_done),.ok(serial_ok)
+	);
+	h264_i16_dc_hadamard hdc (
+		.clk(clk),.reset(reset),.start(start),.coeff_scan(coeff),.qp(qp),
+		.dc_out(dc_out),.done(dc_done)
 	);
 endmodule
 

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+python3 "$ROOT/tests/unit/test_rbf_build.py"
+python3 "$ROOT/tests/unit/test_quartus_fit_hierarchy.py"
+python3 "$ROOT/tests/unit/test_quartus_timing.py"
+if [[ "${1:-}" == "--build-wrappers-only" ]]; then
+  exit 0
+fi
+python3 "$ROOT/tests/unit/test_audio_mailbox_registry.py"
 python3 "$ROOT/tests/unit/test_rtl_invariants.py"
 
 FAULT_DIR="$ROOT/build/rtl_invariants_quartus_subset"

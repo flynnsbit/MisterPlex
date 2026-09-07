@@ -24,7 +24,7 @@ set_global_assignment -name MIN_CORE_JUNCTION_TEMP "-40"
 set_global_assignment -name MAX_CORE_JUNCTION_TEMP 100
 set_global_assignment -name POWER_PRESET_COOLING_SOLUTION "23 MM HEAT SINK WITH 200 LFPM AIRFLOW"
 set_global_assignment -name POWER_BOARD_THERMAL_MODEL "NONE (CONSERVATIVE)"
-set_global_assignment -name TIMEQUEST_MULTICORNER_ANALYSIS OFF
+set_global_assignment -name TIMEQUEST_MULTICORNER_ANALYSIS ON
 set_global_assignment -name OPTIMIZE_POWER_DURING_FITTING OFF
 set_global_assignment -name FINAL_PLACEMENT_OPTIMIZATION ALWAYS
 set_global_assignment -name FITTER_EFFORT "STANDARD FIT"
@@ -82,6 +82,12 @@ set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
 set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
+# Explicit experimental FPGA decode/publish configuration; default remains off.
+# Forces maximum 320x240 coded bounds and fixed storage, with FPGA AU presentation.
+# Cannot be combined with PLEX_PRESENT_720P_L4; requires DDR_FRAME_STORE.
+# Candidate: static IDR/filter-off, modern64KiB, native picture lease; capability mask0.
+# FPGA_VIDEO_BUILD_ID is supplied only by the granted immutable build snapshot.
+#set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"
 # Default 8 line buffers for 640×480 FOAR (STA-closed). FRAME_LINES_16 failed
 # product480-lines16 / l16b with setup general[2] ≈ −1.6 ns — do not re-enable
 # without a timing plan. Glass crawl on multi-yuv bak RBFs is a separate residual.

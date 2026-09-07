@@ -25,6 +25,7 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
 fi
 
 RTL_IQ="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+RTL_COEFF="$ROOT/fpga/Plex_MiSTer/rtl/h264_coeff_sat9.sv"
 RTL_DECODE="$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
 RTL_INTER="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
 RTL_DEBLOCK="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
@@ -40,7 +41,7 @@ BUILD_IQ="$BUILD_ROOT/h264_iq_idct_4x4"
 BUILD_DECODE="$BUILD_ROOT/decode_stub_recon"
 BUILD_DECODE_FAULT="$BUILD_ROOT/decode_stub_recon_pred_only"
 
-for f in "$RTL_IQ" "$RTL_DECODE" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$QIP" "$TB_IQ" "$TOP_IQ" "$TB_DECODE" "$TOP_DECODE" "$FIXTURE"; do
+for f in "$RTL_IQ" "$RTL_COEFF" "$RTL_DECODE" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$QIP" "$TB_IQ" "$TOP_IQ" "$TB_DECODE" "$TOP_DECODE" "$FIXTURE"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -52,27 +53,31 @@ if ! grep -q 'rtl/h264_iq_idct_4x4.sv' "$QIP" || ! grep -q 'rtl/decode_stub.sv' 
 fi
 
 mkdir -p "$BUILD_IQ" "$BUILD_DECODE" "$BUILD_DECODE_FAULT"
+mkdir -p "$BUILD_IQ/compiler-scratch"
+export TMPDIR="$BUILD_IQ/compiler-scratch"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -j 2 \
   --Mdir "$BUILD_IQ" \
   --top-module h264_iq_idct_4x4 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP_IQ" "$RTL_IQ" "$TB_IQ"
+  "$TOP_IQ" "$RTL_IQ" "$ROOT/fpga/Plex_MiSTer/rtl/h264_recon.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv" "$TB_IQ"
 "$BUILD_IQ/Vh264_iq_idct_4x4" "$FIXTURE"
+if [[ "${P2_IQ_ONLY:-0}" == "1" ]]; then exit 0; fi
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -j 2 \
   --Mdir "$BUILD_DECODE" \
   --top-module decode_stub_recon_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_COEFF" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
 "$BUILD_DECODE/Vdecode_stub_recon_tb" "$FIXTURE"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -j 2 \
   --Mdir "$BUILD_DECODE_FAULT" \
   --top-module decode_stub_recon_tb -GFAULT_PRED_ONLY=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_COEFF" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
 set +e
 FAULT_OUT="$($BUILD_DECODE_FAULT/Vdecode_stub_recon_tb "$FIXTURE" 2>&1)"
 FAULT_RC=$?

@@ -156,6 +156,12 @@ struct I420DirtyBackup {
 
 class PlaybackOverlay {
 public:
+    // Shared by the command-plane renderer; the legacy rasterizer is unchanged.
+    static const uint8_t* fontGlyph(char ch) { return glyph(ch); }
+    static void formatTimestamp(int64_t ms, char (&out)[32]) {
+        formatTime(std::max<int64_t>(0, ms), out);
+    }
+
     static constexpr int64_t kVisibleMs = 3000;
     static constexpr int64_t kFadeMs = 500;
     static constexpr int64_t kSkipVisibleMs = 1200;

@@ -16,6 +16,15 @@
 module emu
 (
 	`include "sys/emu_ports.vh"
+`ifdef FPGA_VIDEO_320
+	,output wire         MPX_AUDIO_RESET
+	,output wire         MPX_AUDIO_CTRL_TOGGLE
+	,output wire [216:0] MPX_AUDIO_CTRL_DATA
+	,input  wire         MPX_AUDIO_CTRL_ACK_TOGGLE
+	,output wire         MPX_AUDIO_SNAPSHOT_TOGGLE
+	,input  wire         MPX_AUDIO_SNAPSHOT_ACK_TOGGLE
+	,input  wire [447:0] MPX_AUDIO_SNAPSHOT_DATA
+`endif
 );
 
 ///////// Defaults for unused ports /////////
@@ -42,10 +51,34 @@ assign BUTTONS = 0;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+wire [11:0] source_aspect_x, source_aspect_y;
+wire source_aspect_active = FPGA320_CONFIG && has_frame &&
+                           source_aspect_x != 0 && source_aspect_y != 0;
+assign VIDEO_ARX = (!ar) ? (source_aspect_active ? source_aspect_x : 12'd4) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? (source_aspect_active ? source_aspect_y : 12'd3) : 12'd0;
 
 `include "build_id.v"
+`ifdef FPGA_VIDEO_320
+localparam bit FPGA320_CONFIG = `FPGA_VIDEO_320;
+initial if (!FPGA320_CONFIG) $fatal(1, "FPGA_VIDEO_320 must be 1; omit it for baseline");
+`ifdef MISTER_DISABLE_ALSA
+initial $fatal(1, "FPGA_VIDEO_320 requires the real ALSA DMA consumer");
+`endif
+`ifndef DDR_FRAME_STORE
+initial $fatal(1, "FPGA_VIDEO_320 requires DDR_FRAME_STORE");
+`endif
+`ifdef PLEX_PRESENT_720P_L4
+initial $fatal(1, "FPGA_VIDEO_320 cannot use the 720p L4 configuration");
+`endif
+`ifdef PRESENT_BEAM_960
+initial $fatal(1, "FPGA_VIDEO_320 cannot use the 960 HD beam");
+`endif
+`ifdef PRESENT_MULTI_PIXEL
+initial $fatal(1, "FPGA_VIDEO_320 cannot use the multi-pixel HD beam");
+`endif
+`else
+localparam bit FPGA320_CONFIG = 1'b0;
+`endif
 localparam CONF_STR = {
 	"Plex;;",
 	"-;",
@@ -59,9 +92,17 @@ localparam CONF_STR = {
 	// O[5:4] CONTENT resolution → PMS weak ladder / DECODE (misterplexd).
 	// O[15:14] DISPLAY resolution → FPGA present bank (may differ for lab A/V).
 	// 0=240p (320x240), 1=480p (640x480 bank), 2/3=720p (1280x720).
+`ifdef FPGA_VIDEO_320
+	"O[5:4],FPGA decode,320x240,320x240,320x240,320x240;",
+`else
 	"O[5:4],Content resolution,240p,480p,720p,720p;",
+`endif
 	// 0=Follow content (v8-safe default); 1/2/3 force present bank independent of PMS.
+`ifdef FPGA_VIDEO_320
+	"O[15:14],Frame store,320x240,320x240,320x240,320x240;",
+`else
 	"O[15:14],Display resolution,Follow content,240p,480p,720p;",
+`endif
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
@@ -99,7 +140,9 @@ wire [15:0] ioctl_index;
 wire is_frame_dl = (ioctl_index[5:0] == 6'd1);
 wire fs_wr_ready;
 wire sdram_startup_busy;
-wire ioctl_wait = is_frame_dl && (sdram_startup_busy || !fs_wr_ready);
+wire overlay_ioctl_wait;
+wire ioctl_wait = (is_frame_dl && (sdram_startup_busy || !fs_wr_ready)) ||
+                  overlay_ioctl_wait;
 
 // Core→HPS status (UIO_GET_STATUS / 0x29). See docs/phase3-decode.md layout.
 wire [127:0] status_in;
@@ -115,12 +158,14 @@ wire [4:0]   residual_tc;
 wire [1:0]   residual_t1;
 wire signed [7:0] residual_dc;
 wire [7:0]   residual_csum;
-wire signed [15:0] residual_coeff [0:15];
+wire signed [8:0] residual_coeff [0:15];
 wire         residual_place_pulse;
 wire [7:0]   recon_sig;
 wire [7:0]   recon_dbg;
 wire         recon_dbg_valid;
 wire         recon_valid;
+wire [15:0]  frames_out;
+wire         product_recon_ok;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [31:0]  wr_count;
@@ -227,6 +272,9 @@ pll pll
 );
 
 wire reset = RESET | status[0] | buttons[1];
+`ifdef FPGA_VIDEO_320
+assign MPX_AUDIO_RESET = reset;
+`endif
 
 // O[5:4] CONTENT (PMS/DECODE) — misterplexd OSD mailbox.
 // O[15:14] DISPLAY present bank (v9+). Glass geometry follows display; content
@@ -243,9 +291,9 @@ wire        content_res_640x480 = (content_res_sel == 2'd1);
 wire        content_res_720p    = (content_res_sel >= 2'd2);
 wire        display_res_640x480 = (display_res_sel == 2'd1);
 wire        display_res_720p    = (display_res_sel >= 2'd2);
-wire [10:0] content_width       = display_res_720p ? 11'd1280 :
+wire [10:0] content_width       = FPGA320_CONFIG ? 11'd320 : display_res_720p ? 11'd1280 :
                                   (display_res_640x480 ? 11'd640 : 11'd320);
-wire [10:0] content_height      = display_res_720p ? 11'd720 :
+wire [10:0] content_height      = FPGA320_CONFIG ? 11'd240 : display_res_720p ? 11'd720 :
                                   (display_res_640x480 ? 11'd480 : 11'd240);
 
 // ---------------------------------------------------------------------------
@@ -413,10 +461,10 @@ localparam int SDRAM_REFRESH_CYCLES = 780;
 `ifndef FRAME_H
 `define FRAME_H 240
 `endif
-localparam int FRAME_W = `FRAME_W;
-localparam int FRAME_H = `FRAME_H;
+localparam int FRAME_W = FPGA320_CONFIG ? 320 : `FRAME_W;
+localparam int FRAME_H = FPGA320_CONFIG ? 240 : `FRAME_H;
 `ifdef FRAME_STRIDE
-localparam int FRAME_STRIDE = `FRAME_STRIDE;
+localparam int FRAME_STRIDE = FPGA320_CONFIG ? 320 : `FRAME_STRIDE;
 `else
 localparam int FRAME_STRIDE = FRAME_W;
 `endif
@@ -717,6 +765,39 @@ wire        stream_ddr_rd;
 wire [63:0] stream_ddr_din;
 wire  [7:0] stream_ddr_be;
 wire        stream_ddr_we;
+`ifdef FPGA_VIDEO_AU_PROTOCOL
+localparam bit STREAM_AU_PROTOCOL = FPGA320_CONFIG || `FPGA_VIDEO_AU_PROTOCOL;
+`else
+localparam bit STREAM_AU_PROTOCOL = FPGA320_CONFIG;
+`endif
+// AU-only diagnostics lack the native publisher. A dropped diagnostic write
+// must not become a successful Drain/End fence in that configuration.
+reg decoder_write_uncommitted;
+always @(posedge clk_sys) begin
+	if (reset)
+		decoder_write_uncommitted <= 1'b0;
+	else if (STREAM_AU_PROTOCOL && (stub_wr_en || stub_wr_reset || stub_swap))
+		decoder_write_uncommitted <= 1'b1;
+end
+wire publish_idle, publish_error, publish_frame_valid, publish_frame_ready, publish_frame_bank;
+wire publish_mem_rd, publish_mem_ready, publish_mem_valid;
+wire [17:0] publish_mem_addr;
+wire [7:0] publish_mem_data;
+wire [63:0] stream_video_nonce, stream_video_session, frame_session;
+wire stream_video_clear, stream_reset_pending;
+wire audio_clock_valid, audio_consumer_quiescent;
+wire [63:0] audio_clock_epoch, audio_clock_nonce, audio_samples_consumed;
+wire [31:0] frame_seq, frame_num, frame_den;
+wire [15:0] frame_coded_width, frame_coded_height;
+wire [15:0] frame_crop_left, frame_crop_right, frame_crop_top, frame_crop_bottom;
+wire [15:0] publish_coded_width, publish_coded_height;
+wire [15:0] publish_crop_left, publish_crop_right, publish_crop_top, publish_crop_bottom;
+wire signed [63:0] frame_pts;
+wire publish_swap_toggle, publish_swap_bank;
+wire publish_want, publish_rd, publish_we, publish_busy, publish_dout_ready;
+wire [28:0] publish_addr;
+wire [63:0] publish_din, publish_dout;
+wire [31:0] publish_count;
 `ifdef DDR_FRAME_STORE
 wire        stream_ddr_enable = 1'b1;
 `else
@@ -734,8 +815,18 @@ assign stream_ddr_dout_ready = 1'b0;
 // 13.99 MHz. Product (macro off) still instantiates it.
 `ifndef PLEX_PRESENT_720P_L4
 stream_path #(
-	.FRAME_W(FRAME_W),
-	.FRAME_H(FRAME_H)
+	.FRAME_W(320),
+	.FRAME_H(240),
+	.ENABLE_AU_PROTOCOL(STREAM_AU_PROTOCOL),
+	.ENABLE_PICTURE_PUBLISH(FPGA320_CONFIG),
+	// Compile the bounded IDR candidate without advertising unqualified features.
+	.IDR_ONLY_PROFILE(FPGA320_CONFIG),
+	.VIDEO_FEATURES(32'd0),
+`ifdef FPGA_VIDEO_BUILD_ID
+	.VIDEO_BUILD_ID(`FPGA_VIDEO_BUILD_ID)
+`else
+	.VIDEO_BUILD_ID(32'd0)
+`endif
 ) spath (
 	.clk(clk_sys),
 	.reset(reset),
@@ -799,10 +890,43 @@ stream_path #(
 	.recon_dbg(recon_dbg),
 	.recon_dbg_valid(recon_dbg_valid),
 	.recon_valid(recon_valid),
+	.frames_out(frames_out),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
-	.fs_swap(stub_swap)
+	.fs_swap(stub_swap),
+	.fs_wr_ready(fs_wr_ready),
+	.fs_present_sel(FPGA320_CONFIG || stub_allow),
+	.fs_writes_idle(FPGA320_CONFIG ?
+		(publish_idle && (!stream_reset_pending || audio_consumer_quiescent)) :
+		!decoder_write_uncommitted),
+	.decoder_idle(),
+	.next_vcl_ready(),
+	.current_au_valid(),
+	.current_au_session_id(frame_session),
+	.current_au_seq(frame_seq),
+	.current_au_pts(frame_pts),
+	.current_au_duration(),
+	.current_au_timebase_num(frame_num),
+	.current_au_timebase_den(frame_den),
+	.current_au_flags(),
+	.video_nonce(stream_video_nonce),
+	.video_session_id(stream_video_session),
+	.video_reset_pending(stream_reset_pending),
+	.transport_quiescent(),
+	.video_clear(stream_video_clear),
+	.picture_valid(publish_frame_valid),
+	.picture_ready(publish_frame_ready),
+	.picture_bank(publish_frame_bank),
+	.picture_coded_width(frame_coded_width), .picture_coded_height(frame_coded_height),
+	.picture_crop_left(frame_crop_left), .picture_crop_right(frame_crop_right),
+	.picture_crop_top(frame_crop_top), .picture_crop_bottom(frame_crop_bottom),
+	.pub_mem_rd(publish_mem_rd),
+	.pub_mem_addr(publish_mem_addr),
+	.pub_mem_ready(publish_mem_ready),
+	.pub_mem_data(publish_mem_data),
+	.pub_mem_valid(publish_mem_valid),
+	.product_recon_ok(product_recon_ok)
 );
 `else
 assign has_stream = 1'b0;
@@ -855,6 +979,25 @@ assign recon_sig = 8'd0;
 assign recon_dbg = 8'd0;
 assign recon_dbg_valid = 1'b0;
 assign recon_valid = 1'b0;
+assign frames_out = 16'd0;
+assign product_recon_ok = 1'b0;
+assign stream_video_nonce = 64'd0;
+assign stream_video_session = 64'd0;
+assign stream_reset_pending = 1'b0;
+assign stream_video_clear = reset;
+assign frame_coded_width = 0; assign frame_coded_height = 0;
+assign frame_crop_left = 0; assign frame_crop_right = 0;
+assign frame_crop_top = 0; assign frame_crop_bottom = 0;
+assign frame_session = 64'd0;
+assign frame_seq = 32'd0;
+assign frame_pts = 64'sd0;
+assign frame_num = 32'd0;
+assign frame_den = 32'd0;
+assign publish_frame_valid = 1'b0;
+assign publish_frame_bank = 1'b0;
+assign publish_mem_ready = 1'b0;
+assign publish_mem_valid = 1'b0;
+assign publish_mem_data = 8'd0;
 assign stub_wr_en = 1'b0;
 assign stub_wr_pixel = 16'd0;
 assign stub_wr_reset = 1'b0;
@@ -862,7 +1005,7 @@ assign stub_swap = 1'b0;
 genvar sp_i;
 generate
 	for (sp_i = 0; sp_i < 16; sp_i = sp_i + 1) begin : g_l4_res_coeff
-		assign residual_coeff[sp_i] = 16'sd0;
+		assign residual_coeff[sp_i] = 9'sd0;
 	end
 endgenerate
 `endif
@@ -891,11 +1034,12 @@ wire        fs_wr_reset = f1_wr_reset | ddr_wr_reset | (stub_wr_reset & stub_all
 wire        fs_swap     = f1_swap | ddr_swap | (stub_swap & stub_allow);
 wire        _host_wr_unused = host_wr;
 
-wire ce_pix, HBlank, HSync, VBlank, VSync;
+wire ce_pix, native_de, HBlank, HSync, VBlank, VSync;
 wire [7:0] r, g, b;
 wire [15:0] al, ar_audio;
 wire [31:0] disp_i, cont_i;
 wire advance;
+wire display_generation_idle;
 // swap_pending declared above (fed back into ddram_frame_rd hold-off)
 
 `ifdef DDR_FRAME_STORE
@@ -914,6 +1058,7 @@ present_core #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H),
 	.FRAME_STRIDE(FRAME_STRIDE),
+	.FPGA_DECODE_320(FPGA320_CONFIG),
 	.SDRAM_REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
 ) present (
 	.clk(clk_sys),
@@ -959,6 +1104,10 @@ present_core #(
 	.fs_wr_reset(fs_wr_reset),
 	.fs_swap(fs_swap),
 	.fs_wr_ready(fs_wr_ready),
+	.generation_clear(FPGA320_CONFIG && stream_video_clear),
+	.generation_idle(display_generation_idle),
+	.source_aspect_x(source_aspect_x),
+	.source_aspect_y(source_aspect_y),
 	.sdram_dout(sdram_dout),
 	.sdram_ready(sdram_ready),
 	.sdram_sel(frame_sdram_sel),
@@ -969,8 +1118,11 @@ present_core #(
 	.sdram_bs(frame_sdram_bs),
 	.sdram_refresh(frame_sdram_refresh),
 `ifdef DDR_FRAME_STORE
-	.ddr_start_req(status[12]),
-	.ddr_bank_sel(status[13]),
+	.ddr_start_req(FPGA320_CONFIG ? publish_swap_toggle : status[12]),
+	.ddr_bank_sel(FPGA320_CONFIG ? publish_swap_bank : status[13]),
+	.ddr_coded_width(publish_coded_width), .ddr_coded_height(publish_coded_height),
+	.ddr_crop_left(publish_crop_left), .ddr_crop_right(publish_crop_right),
+	.ddr_crop_top(publish_crop_top), .ddr_crop_bottom(publish_crop_bottom),
 	.ddr_status_osd(status[15:0]),
 	.ddr_input_cmd_valid(playback_cmd_valid),
 	.ddr_input_cmd(playback_cmd),
@@ -997,6 +1149,7 @@ present_core #(
 	.af_wr_flush(af_wr_flush | status[10]),
 	.ce_pix(ce_pix),
 	.HBlank(HBlank),
+	.de_pix(native_de),
 	.HSync(HSync),
 	.VBlank(VBlank),
 	.VSync(VSync),
@@ -1018,11 +1171,134 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
-ddr_bus_arbiter ddr_arb (
+generate
+if (FPGA320_CONFIG) begin : g_fpga_publish
+	fpga_video_publish #(.ENABLE_AUDIO_CLOCK(1'b1), .RUNTIME_GEOMETRY(1'b1)) publisher (
+		.clk(clk_sys), .reset(reset), .clear(stream_video_clear), .video_nonce(stream_video_nonce),
+		.frame_valid(publish_frame_valid), .frame_ready(publish_frame_ready),
+		.frame_bank(publish_frame_bank), .frame_session_id(frame_session),
+		.frame_seq(frame_seq), .frame_pts(frame_pts),
+		.frame_timebase_num(frame_num), .frame_timebase_den(frame_den),
+		.frame_coded_width(frame_coded_width), .frame_coded_height(frame_coded_height),
+		.frame_crop_left(frame_crop_left), .frame_crop_right(frame_crop_right),
+		.frame_crop_top(frame_crop_top), .frame_crop_bottom(frame_crop_bottom),
+		.display_coded_width(publish_coded_width), .display_coded_height(publish_coded_height),
+		.display_crop_left(publish_crop_left), .display_crop_right(publish_crop_right),
+		.display_crop_top(publish_crop_top), .display_crop_bottom(publish_crop_bottom),
+		.mem_rd(publish_mem_rd), .mem_addr(publish_mem_addr),
+		.mem_ready(publish_mem_ready), .mem_data(publish_mem_data),
+		.mem_valid(publish_mem_valid),
+		.swap_toggle(publish_swap_toggle), .swap_bank(publish_swap_bank),
+		.display_has_frame(has_frame), .display_frames_done(ddr_frames),
+		.display_swap_pending(swap_pending),
+		.display_clear_idle(display_generation_idle),
+		.audio_clock_valid(audio_clock_valid),
+		.audio_clock_epoch(audio_clock_epoch), .audio_clock_nonce(audio_clock_nonce),
+		.audio_samples_consumed(audio_samples_consumed),
+		.idle(publish_idle), .error(publish_error), .presentation_count(publish_count),
+		.bus_want(publish_want), .bus_rd(publish_rd), .bus_we(publish_we),
+		.bus_addr(publish_addr), .bus_din(publish_din), .bus_busy(publish_busy),
+		.bus_dout(publish_dout), .bus_dout_ready(publish_dout_ready)
+	);
+end else begin : g_no_fpga_publish
+	assign publish_idle = 1'b1;
+	assign publish_error = 1'b0;
+	assign publish_count = 32'd0;
+	assign publish_frame_ready = 1'b0;
+	assign publish_mem_rd = 1'b0;
+	assign publish_mem_addr = 18'd0;
+	assign publish_swap_toggle = 1'b0;
+	assign publish_swap_bank = 1'b0;
+	assign publish_want = 1'b0;
+	assign publish_rd = 1'b0;
+	assign publish_we = 1'b0;
+	assign publish_addr = 29'd0;
+	assign publish_din = 64'd0;
+	assign publish_coded_width = 16'd320; assign publish_coded_height = 16'd240;
+	assign publish_crop_left = 0; assign publish_crop_right = 0;
+	assign publish_crop_top = 0; assign publish_crop_bottom = 0;
+end
+endgenerate
+wire ingress_want, ingress_rd, ingress_we, ingress_busy, ingress_dout_ready;
+wire [28:0] ingress_addr;
+wire [63:0] ingress_din, ingress_dout;
+wire [7:0] ingress_be;
+`ifdef FPGA_VIDEO_320
+wire audio_ddr_want, audio_ddr_rd, audio_ddr_we, audio_ddr_busy, audio_ddr_dout_ready;
+wire [28:0] audio_ddr_addr;
+wire [63:0] audio_ddr_din, audio_ddr_dout;
+audio_session_mailbox #(.ENABLE(1'b1)) audio_session (
+	.clk(clk_sys), .reset(reset),
+	.session_epoch(stream_video_session), .probe_nonce(stream_video_nonce),
+	.session_active(stream_ddr_active && !stream_reset_pending),
+	.supported(),
+	.ddr_want(audio_ddr_want), .ddr_busy(audio_ddr_busy),
+	.ddr_addr(audio_ddr_addr), .ddr_rd(audio_ddr_rd), .ddr_we(audio_ddr_we),
+	.ddr_din(audio_ddr_din), .ddr_dout(audio_ddr_dout),
+	.ddr_dout_ready(audio_ddr_dout_ready),
+	.audio_ctrl_toggle(MPX_AUDIO_CTRL_TOGGLE), .audio_ctrl_data(MPX_AUDIO_CTRL_DATA),
+	.audio_ctrl_ack_toggle(MPX_AUDIO_CTRL_ACK_TOGGLE),
+	.audio_snapshot_toggle(MPX_AUDIO_SNAPSHOT_TOGGLE),
+	.audio_snapshot_ack_toggle(MPX_AUDIO_SNAPSHOT_ACK_TOGGLE),
+	.audio_snapshot_data(MPX_AUDIO_SNAPSHOT_DATA),
+	.clock_epoch(audio_clock_epoch), .clock_nonce(audio_clock_nonce),
+	.samples_consumed(audio_samples_consumed), .clock_valid(audio_clock_valid),
+	.clock_active(), .clock_paused(), .consumer_quiescent(audio_consumer_quiescent)
+);
+audio_session_ddr_mux audio_ingress_mux (
+	.clk(clk_sys), .reset(reset),
+	.video_addr(stream_ddr_addr), .video_rd(stream_ddr_rd), .video_we(stream_ddr_we),
+	.video_din(stream_ddr_din), .video_busy(stream_ddr_busy),
+	.video_dout(stream_ddr_dout), .video_dout_ready(stream_ddr_dout_ready),
+	.audio_addr(audio_ddr_addr), .audio_rd(audio_ddr_rd), .audio_we(audio_ddr_we),
+	.audio_din(audio_ddr_din), .audio_busy(audio_ddr_busy),
+	.audio_dout(audio_ddr_dout), .audio_dout_ready(audio_ddr_dout_ready),
+	.ddr_want(ingress_want), .ddr_addr(ingress_addr),
+	.ddr_rd(ingress_rd), .ddr_we(ingress_we), .ddr_din(ingress_din),
+	.ddr_busy(ingress_busy), .ddr_dout(ingress_dout),
+	.ddr_dout_ready(ingress_dout_ready)
+);
+assign ingress_be = 8'hff;
+`else
+assign ingress_want = stream_ddr_bus_want;
+assign ingress_rd = stream_ddr_rd;
+assign ingress_we = stream_ddr_we;
+assign ingress_addr = stream_ddr_addr;
+assign ingress_din = stream_ddr_din;
+assign ingress_be = stream_ddr_be;
+assign stream_ddr_busy = ingress_busy;
+assign stream_ddr_dout = ingress_dout;
+assign stream_ddr_dout_ready = ingress_dout_ready;
+assign audio_clock_valid = 1'b0;
+assign audio_clock_epoch = 64'd0;
+assign audio_clock_nonce = 64'd0;
+assign audio_samples_consumed = 64'd0;
+assign audio_consumer_quiescent = 1'b1;
+`endif
+wire transport_want, transport_rd, transport_we, transport_busy, transport_dout_ready;
+wire [28:0] transport_addr;
+wire [63:0] transport_din, transport_dout;
+wire [7:0] transport_be;
+ddr_transport_mux transport_mux (
+	.clk(clk_sys), .reset(reset),
+	.a_want(ingress_want), .a_rd(ingress_rd), .a_we(ingress_we),
+	.a_addr(ingress_addr), .a_din(ingress_din), .a_be(ingress_be),
+	.a_busy(ingress_busy), .a_dout(ingress_dout), .a_dout_ready(ingress_dout_ready),
+	.b_want(publish_want), .b_rd(publish_rd), .b_we(publish_we),
+	.b_addr(publish_addr), .b_din(publish_din), .b_be(8'hff),
+	.b_busy(publish_busy), .b_dout(publish_dout), .b_dout_ready(publish_dout_ready),
+	.want(transport_want), .rd(transport_rd), .we(transport_we),
+	.addr(transport_addr), .din(transport_din), .be(transport_be),
+	.busy(transport_busy), .dout(transport_dout), .dout_ready(transport_dout_ready)
+);
+ddr_bus_arbiter #(
+	.M1_HELD_REQUESTS(1'b1),
+	.M1_BLOCK_RAM(FPGA320_CONFIG)
+) ddr_arb (
 	.clk(clk_ddr),
 	.clk_m1(clk_sys),
 	.reset(reset),
-	.m1_want(stream_ddr_bus_want),
+	.m1_want(transport_want),
 	.m0_busy(present_ddr_busy),
 	.m0_burstcnt(present_ddr_burstcnt),
 	.m0_addr(present_ddr_addr),
@@ -1032,15 +1308,15 @@ ddr_bus_arbiter ddr_arb (
 	.m0_din(present_ddr_din),
 	.m0_be(present_ddr_be),
 	.m0_we(present_ddr_we),
-	.m1_busy(stream_ddr_busy),
-	.m1_burstcnt(stream_ddr_burstcnt),
-	.m1_addr(stream_ddr_addr),
-	.m1_dout(stream_ddr_dout),
-	.m1_dout_ready(stream_ddr_dout_ready),
-	.m1_rd(stream_ddr_rd),
-	.m1_din(stream_ddr_din),
-	.m1_be(stream_ddr_be),
-	.m1_we(stream_ddr_we),
+	.m1_busy(transport_busy),
+	.m1_burstcnt(8'd1),
+	.m1_addr(transport_addr),
+	.m1_dout(transport_dout),
+	.m1_dout_ready(transport_dout_ready),
+	.m1_rd(transport_rd),
+	.m1_din(transport_din),
+	.m1_be(transport_be),
+	.m1_we(transport_we),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
 	.DDRAM_ADDR(DDRAM_ADDR),
@@ -1054,18 +1330,36 @@ ddr_bus_arbiter ddr_arb (
 `endif
 
 assign CLK_VIDEO = clk_sys;
+`ifdef FPGA_VIDEO_320
+playback_overlay_plane playback_overlay (
+	.clk_sys(clk_sys), .reset(reset),
+	.session_active(stream_ddr_active && !stream_reset_pending && !stream_video_clear),
+	.session_epoch(stream_video_session), .session_nonce(stream_video_nonce),
+	.ioctl_download(ioctl_download), .ioctl_index(ioctl_index),
+	.ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout),
+	.ioctl_wait(overlay_ioctl_wait), .accepted_sequence(), .rejected_packets(),
+	.clk_pix(clk_sys), .ce_in(ce_pix),
+	.r_in(r), .g_in(g), .b_in(b),
+	.hs_in(HSync), .vs_in(VSync), .de_in(native_de),
+	.ce_out(CE_PIXEL), .r_out(VGA_R), .g_out(VGA_G), .b_out(VGA_B),
+	.hs_out(VGA_HS), .vs_out(VGA_VS), .de_out(VGA_DE), .visible()
+);
+`else
+assign overlay_ioctl_wait = 1'b0;
 assign CE_PIXEL  = ce_pix;
-assign VGA_DE = ~(HBlank | VBlank);
+assign VGA_DE = native_de;
 assign VGA_HS = HSync;
 assign VGA_VS = VSync;
 assign VGA_R  = r;
 assign VGA_G  = g;
 assign VGA_B  = b;
+`endif
 
 // Signed audio samples
 assign AUDIO_S = 1;
-assign AUDIO_L = al;
-assign AUDIO_R = ar_audio;
+// New-mode PCM comes only from the framework's session-controlled ALSA DMA.
+assign AUDIO_L = FPGA320_CONFIG ? 16'd0 : al;
+assign AUDIO_R = FPGA320_CONFIG ? 16'd0 : ar_audio;
 
 // Heartbeat LED; faster blink with audio; very fast when bitstream NALs seen.
 reg [26:0] act_cnt;

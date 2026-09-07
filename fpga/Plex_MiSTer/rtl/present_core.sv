@@ -26,6 +26,7 @@ module present_core #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
 	parameter int FRAME_STRIDE = FRAME_W,
+	parameter bit FPGA_DECODE_320 = 1'b0,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 	// Template/FBAR paint window (colorbars DE). Defaults reproduce v0.3.0 /
 	// G-VID1 exactly: H_DE=529, V_STORE=240, scale ref 320×240, mul 39647.
@@ -99,6 +100,10 @@ module present_core #(
 	input  wire        fs_wr_reset,
 	input  wire        fs_swap,
 	output wire        fs_wr_ready,
+	input  wire        generation_clear,
+	output wire        generation_idle,
+	output wire [11:0] source_aspect_x,
+	output wire [11:0] source_aspect_y,
 
 	// SDRAM-backed frame_store port
 	input  wire [15:0] sdram_dout,
@@ -114,6 +119,9 @@ module present_core #(
 `ifdef DDR_FRAME_STORE
 	input  wire        ddr_start_req,
 	input  wire        ddr_bank_sel,
+	input  wire [15:0] ddr_coded_width, ddr_coded_height,
+	input  wire [15:0] ddr_crop_left, ddr_crop_right,
+	input  wire [15:0] ddr_crop_top, ddr_crop_bottom,
 	input  wire [15:0] ddr_status_osd,
 	input  wire        ddr_input_cmd_valid,
 	input  wire  [7:0] ddr_input_cmd,
@@ -145,6 +153,7 @@ module present_core #(
 	input  wire        af_wr_flush,
 
 	output wire        ce_pix,
+	output wire        de_pix,
 	output wire        HBlank,
 	output wire        HSync,
 	output wire        VBlank,
@@ -482,7 +491,10 @@ module present_core #(
 		(vc11 >= 11'(FRAME_H)) ? FRAME_LAST_Y : FRAME_Y_W'(vc11);
 	wire _unused_beam_store_y_clamped = |store_y_clamped;
 `else
-	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
+	// FPGA content validity follows the same counters as its read coordinates,
+	// then travels with RGB. Delayed Template blanks belong to the legacy path.
+	wire in_content = (hc < H_DE) && (py < V_STORE) &&
+		(FPGA_DECODE_320 || (~hb && ~vb));
 
 	// store_x = floor(hc * TPL_SCALE_REF_W / TPL_H_DE)
 	//   ≈ (hc * TPL_STORE_X_MUL) >> 16  (default 39647/65536 ≈ 320/529)
@@ -533,6 +545,7 @@ module present_core #(
 	end
 
 	wire [7:0] fr, fg, fb;
+	wire frame_de;
 	wire       has_frame;
 	wire       swap_pending;
 	wire [31:0] wr_count;
@@ -571,13 +584,13 @@ module present_core #(
 	localparam int FS_BANK_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
 	localparam [31:0] FS_DOORBELL = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
 `else
-	localparam int FS_CODED_W     = DDR_FRAME_CODED_WIDTH;
-	localparam int FS_CODED_H     = DDR_FRAME_CODED_HEIGHT;
-	localparam int FS_DISPLAY_W   = DDR_FRAME_DISPLAY_WIDTH;
-	localparam int FS_DISPLAY_H   = DDR_FRAME_DISPLAY_HEIGHT;
+	localparam int FS_CODED_W     = FPGA_DECODE_320 ? 320 : DDR_FRAME_CODED_WIDTH;
+	localparam int FS_CODED_H     = FPGA_DECODE_320 ? 240 : DDR_FRAME_CODED_HEIGHT;
+	localparam int FS_DISPLAY_W   = FPGA_DECODE_320 ? 320 : DDR_FRAME_DISPLAY_WIDTH;
+	localparam int FS_DISPLAY_H   = FPGA_DECODE_320 ? 240 : DDR_FRAME_DISPLAY_HEIGHT;
 	localparam int FS_CROP_LEFT   = DDR_FRAME_CROP_LEFT;
 	localparam int FS_CROP_TOP    = DDR_FRAME_CROP_TOP;
-	localparam int FS_PRESENT_X   = DDR_FRAME_PILLARBOX_LEFT;
+	localparam int FS_PRESENT_X   = FPGA_DECODE_320 ? 0 : DDR_FRAME_PILLARBOX_LEFT;
 	localparam int FS_PRESENT_Y   = 0;
 	localparam [31:0] FS_PHYS_BASE = 32'h3000_0000;
 	localparam int FS_BANK_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
@@ -606,6 +619,11 @@ module present_core #(
 		.PHYS_BASE(FS_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES(FS_BANK_STRIDE),
 		.DOORBELL_PHYS(FS_DOORBELL),
+		.STRICT_YUV_DOORBELL(!FPGA_DECODE_320),
+		.FPGA_PUBLISH_ONLY(FPGA_DECODE_320),
+		.RUNTIME_GEOMETRY(FPGA_DECODE_320),
+		.LIMITED_BT601(FPGA_DECODE_320),
+		.DDR_BURST_MAX(FPGA_DECODE_320 ? 64 : 128),
 `ifdef PLEX_PRESENT_720P_L4
 		.MAILBOX_PHYS(FS_DOORBELL + 32'h100),
 		.INPUT_MAILBOX_PHYS(FS_DOORBELL + 32'h108),
@@ -621,14 +639,20 @@ module present_core #(
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
+		.generation_clear(generation_clear),
+		.generation_idle(generation_idle),
 		.rd_x(store_x),
 		.rd_y(store_y),
 		.rd_active(de_r),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.rd_de(frame_de),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
+		.picture_coded_width(ddr_coded_width), .picture_coded_height(ddr_coded_height),
+		.picture_crop_left(ddr_crop_left), .picture_crop_right(ddr_crop_right),
+		.picture_crop_top(ddr_crop_top), .picture_crop_bottom(ddr_crop_bottom),
 		.status_osd(ddr_status_osd),
 		.input_cmd_valid(ddr_input_cmd_valid),
 		.input_cmd(ddr_input_cmd),
@@ -636,6 +660,8 @@ module present_core #(
 		.ioctl_wr(ioctl_wr),
 		.ioctl_dout(ioctl_dout),
 		.ioctl_index(ioctl_index),
+		.source_aspect_x(source_aspect_x),
+		.source_aspect_y(source_aspect_y),
 		.sdram_test_state(ddr_sdram_test_state),
 		.sdram_size_code(ddr_sdram_size_code),
 		.sdram_error_count(ddr_sdram_error_count),
@@ -658,6 +684,10 @@ module present_core #(
 		.debug_state(frame_sdram_state)
 	);
 `else
+	assign generation_idle = 1'b1;
+	assign frame_de = 1'b0;
+	assign source_aspect_x = 12'd0;
+	assign source_aspect_y = 12'd0;
 	frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -740,7 +770,7 @@ module present_core #(
 	wire vs_d = vs;
 
 	// Gate the frame pixels with EXACTLY the delayed signal that drives VGA_DE.
-	wire de_out = ~hb_d & ~vb_d;
+	wire de_out = (FPGA_DECODE_320 && use_ext) ? frame_de : (~hb_d & ~vb_d);
 	wire [7:0] leg_r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
 	wire [7:0] leg_g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
 	wire [7:0] leg_b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
@@ -918,6 +948,7 @@ module present_core #(
 	assign g = mp_out_g;
 	assign b = mp_out_b;
 	assign ce_pix = mp_out_ce;
+	assign de_pix = ~mp_out_hb & ~mp_out_vb;
 	assign HBlank = mp_out_hb;
 	assign HSync  = mp_out_hs;
 	assign VBlank = mp_out_vb;
@@ -929,6 +960,7 @@ module present_core #(
 	assign g = leg_g;
 	assign b = leg_b;
 	assign ce_pix = ce_pix_i;
+	assign de_pix = de_out;
 	assign HBlank = hb_d;
 	assign HSync  = hs_d;
 	assign VBlank = vb_d;

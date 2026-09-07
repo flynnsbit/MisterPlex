@@ -1,5 +1,7 @@
 #include <pthread.h>
 #include "media_player.hpp"
+#include "log_redact.hpp"
+#include <sstream>
 
 #include "libmisterplex/cached_src_phys.hpp"
 #include "libmisterplex/ddr_frame_layout.hpp"
@@ -17,6 +19,7 @@
 #include "libmisterplex/p720_audio_keepup.hpp"
 #include "libmisterplex/present_bank.hpp"
 #include "libmisterplex/source_aspect.hpp"
+#include "libmisterplex/fpga_playback_overlay.hpp"
 #include "plex_resolve.hpp"
 #include <algorithm>
 #include <array>
@@ -59,6 +62,49 @@
 
 namespace misterplex {
 namespace {
+
+#if MPX_FPGA_AV_TRACE && defined(MPX_HAVE_LIBAV)
+using AvTraceSpan = FpgaAvTrace::Span;
+struct AvTraceRelease {
+    AvTraceSpan& span;
+    ~AvTraceRelease() { span.released(); }
+};
+
+void tracePressure(AvTraceSpan& span, const AvCompressedPressure& before,
+                   const AvCompressedPressure& after) {
+    span.flags(FpgaAvRecord::ApproximatePressure);
+    if (before.available) span.uvalue(2, before.pcmBytes);
+    if (!after.available) return;
+    span.uvalue(3, after.pcmBytes);
+    span.uvalue(4, after.queuedPackets);
+    span.uvalue(5, after.queuedBytes);
+    span.value(6, static_cast<int>(after.blocked));
+    span.value(7, after.inputEof);
+    span.value(8, after.audioEof);
+    span.value(9, after.reservedVideo);
+}
+
+void traceMast(AvTraceSpan& span, bool ok, const FpgaSpi::AudioSessionStatus& status,
+               int64_t written, int64_t held, bool paused, bool approximateWritten) {
+    span.value(0, ok);
+    span.value(7, written);
+    span.value(9, held);
+    span.value(10, paused);
+    if (approximateWritten) span.flags(FpgaAvRecord::ApproximateWritten);
+    if (!ok) { span.force(); return; }
+    span.uvalue(1, status.session_id);
+    span.uvalue(2, status.nonce);
+    span.uvalue(3, status.publication);
+    span.uvalue(4, status.samples_consumed);
+    span.value(5, unsigned(status.active) | (unsigned(status.paused) << 1) |
+        (unsigned(status.read_pending) << 2) | (unsigned(status.prefetched) << 3));
+    span.value(6, status.error);
+    if (written >= 0 &&
+        status.samples_consumed <= uint64_t(std::numeric_limits<int64_t>::max() / 4))
+        span.value(8, written - static_cast<int64_t>(status.samples_consumed) * 4);
+    if (!status.active || status.error) span.force();
+}
+#endif
 
 // PMS universal already bakes offset= (seconds). Applying FFmpeg -ss again double-seeks
 // and breaks resume / mid-play scrub on STREAM=0 cast. Timeline still uses startMs.
@@ -1200,6 +1246,8 @@ void MediaPlayer::applyDisplayRaster(const ContentResolution& display, bool forc
 }
 
 void MediaPlayer::paintIdle() {
+    if (backend_ != VideoBackend::LegacySoftware)
+        return; // FPGA picture/reference memory is never an ARM UI scratch bank.
     const IdleMode m = idleMode();
     bool libVis = false;
     {
@@ -1346,6 +1394,8 @@ void MediaPlayer::paintIdle() {
 // called from the companion thread at the next play(); without this mutex the two
 // can move-assign and join the same std::thread object and std::terminate.
 void MediaPlayer::startIdle() {
+    if (backend_ != VideoBackend::LegacySoftware)
+        return;
     std::lock_guard<std::mutex> lk(idleMu_);
     if (shuttingDown_.load() || idleRun_.exchange(true))
         return;
@@ -1391,6 +1441,11 @@ void MediaPlayer::stopIdle() {
 }
 
 void MediaPlayer::setDecodeSize(int w, int h) {
+    if (fpgaH264Backend()) {
+        outW_ = 320;
+        outH_ = 240;
+        return;
+    }
     if (w < 160)
         w = 160;
     if (h < 120)
@@ -1413,11 +1468,21 @@ SourceAspect MediaPlayer::probeSourceAspect(const std::string& urlOrPath,
                                             int* codedH,
                                             int* fpsNum,
                                             int* fpsDen) const {
+    if (fpgaH264Backend()) {
+        if (failDetail)
+            *failDetail = "source aspect deferred to the sole compressed demux";
+        return {};
+    }
     return ffmpegSourceAspect(ffmpeg_, urlOrPath, httpHeaders, failDetail, codedW,
                               codedH, fpsNum, fpsDen);
 }
 
 bool MediaPlayer::setSourceAspect(const SourceAspect& aspect) {
+    if (fpgaH264Backend()) {
+        std::lock_guard<std::mutex> present(presentMu_);
+        sourceAspect_ = aspect;
+        return true; // Published with a matching core session, before its first AU.
+    }
     if (!aspect.valid) {
         log("ERROR media: refusing playback with unknown source display aspect");
         return false;
@@ -1470,6 +1535,19 @@ bool MediaPlayer::wantSkipRgbVideo() const {
 }
 
 bool MediaPlayer::initPresent() {
+    if (backend_ == VideoBackend::Unselected) {
+        std::lock_guard<std::mutex> lock(mu_);
+        lastError_ = "MPX_VIDEO_BACKEND must explicitly select fpga-h264 or legacy-software";
+        return false;
+    }
+    if (fpgaH264Backend())
+        return presentMode_ == "fpga" && (fpga_.ok() || fpga_.open());
+    if (presentMode_ != "none" &&
+        !matchedLegacyVideoCore(rbfPrefix8_, std::getenv("MPX_LEGACY_CORE_PREFIX"))) {
+        std::lock_guard<std::mutex> lock(mu_);
+        lastError_ = "legacy presentation requires an explicitly matched OLD baseline core";
+        return false;
+    }
     if (presentMode_ == "none") {
         log("media: PRESENT=none decode-only path (test/lab; no fb0 or FPGA writes)");
         return true;
@@ -1571,6 +1649,8 @@ void MediaPlayer::signalChildren(int sig) {
 }
 
 void MediaPlayer::killChildren() {
+    if (fpgaH264Backend())
+        return;
     signalChildren(SIGTERM);
     // Close PCM fds before any wait: O_RDWR self-writer / blocking waitpid
     // used to leave audioPump in pipe_read and freeze Play.
@@ -1622,11 +1702,14 @@ void MediaPlayer::shutdown() {
     shuttingDown_.store(true);
     {
         std::lock_guard<std::mutex> life(lifeMu_);
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            playEpoch_.fetch_add(1);
+            currentUrl_.clear();
+            currentHeaders_.clear();
+        }
         stop_.store(true);
-#ifdef MPX_HAVE_LIBAV
-        if (inprocPcm_)
-            inprocPcm_->requestStop();
-#endif
+        interruptInproc();
         killChildren();
         if (thr_.joinable())
             thr_.join();
@@ -1648,18 +1731,25 @@ void MediaPlayer::shutdown() {
     stopInputPoll();
     stopOsdPoll();
     stopIdle();
+    if (fpgaAudioOutput_ >= 0) {
+        ::close(fpgaAudioOutput_);
+        fpgaAudioOutput_ = -1;
+    }
     releaseFabricDirectAlloc(idleFabric_);
 }
 
-void MediaPlayer::stop() {
+MediaPlayer::StoppedPosition MediaPlayer::stop() {
     // Only join thr_ here. threadMain owns audioThr_/streamThr_ joins at session end.
     // Joining helpers from both thr_ and stop() races and can hang the companion HTTP thread.
     std::lock_guard<std::mutex> life(lifeMu_);
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        playEpoch_.fetch_add(1);
+        currentUrl_.clear();
+        currentHeaders_.clear();
+    }
     stop_.store(true);
-#ifdef MPX_HAVE_LIBAV
-    if (inprocPcm_)
-        inprocPcm_->requestStop();
-#endif
+    interruptInproc();
     killChildren();
     if (thr_.joinable())
         thr_.join();
@@ -1701,14 +1791,17 @@ void MediaPlayer::stop() {
     paintIdle();
     startIdle();
     startOsdPoll();
+    return {finalPos, finalDur};
 }
 
 void MediaPlayer::resetPlaybackPauseClock() {
     std::lock_guard<std::mutex> lk(pauseClockMu_);
+    MPX_AV_TRACE(tracePauseClock_.beginUpdate();)
     paused_.store(false);
     pauseClockAccumulatedUs_ = 0;
     pauseClockHeld_ = false;
     pauseClockStarted_ = {};
+    MPX_AV_TRACE(tracePauseClock_.endUpdate(0, 0, false);)
 }
 
 void MediaPlayer::transitionPlaybackPause(
@@ -1716,6 +1809,7 @@ void MediaPlayer::transitionPlaybackPause(
     std::lock_guard<std::mutex> lk(pauseClockMu_);
     if (paused_.load() == paused)
         return;
+    MPX_AV_TRACE(tracePauseClock_.beginUpdate();)
     paused_.store(paused);
     if (paused && !pauseClockHeld_) {
         pauseClockHeld_ = true;
@@ -1727,6 +1821,9 @@ void MediaPlayer::transitionPlaybackPause(
                 .count();
         pauseClockHeld_ = false;
     }
+    MPX_AV_TRACE(tracePauseClock_.endUpdate(pauseClockAccumulatedUs_,
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            pauseClockStarted_.time_since_epoch()).count(), pauseClockHeld_);)
 }
 
 int64_t MediaPlayer::playbackPausedUs(
@@ -1741,9 +1838,32 @@ int64_t MediaPlayer::playbackPausedUs(
     return pausedUs;
 }
 
+int64_t MediaPlayer::playbackActiveUs() const {
+    const auto now = std::chrono::steady_clock::now();
+    return activePlaybackClockUs(
+        std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count(),
+        playbackPausedUs(now));
+}
+
 void MediaPlayer::pause() {
     std::lock_guard<std::mutex> control(pauseControlMu_);
+    if (fpgaH264Backend() && (!playing_.load() || stop_.load() || paused_.load()))
+        return;
+    // Close producer admission before publishing Pause. Any in-flight AU
+    // finishes under presentMu_ ahead of Pause; none can occupy Resume's room.
     transitionPlaybackPause(true, std::chrono::steady_clock::now());
+    if (fpgaH264Backend() && fpgaSession_.load()) {
+        std::lock_guard<std::mutex> present(presentMu_);
+        if (!fpga_.pauseBitstreamSession(fpgaSession_.load(), 500)) {
+            failFpgaSession("pause ACK failed; references cannot be resumed safely");
+            return;
+        }
+        if (audioEnabled_ && sourceHasAudio_ &&
+            !controlFpgaAudio(fpgaSession_.load(), AudioSessionControl::Pause)) {
+            failFpgaSession("audio pause ACK failed");
+            return;
+        }
+    }
     signalChildren(SIGSTOP);
     showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
     if (onProgress_)
@@ -1752,11 +1872,26 @@ void MediaPlayer::pause() {
 
 void MediaPlayer::resume() {
     std::lock_guard<std::mutex> control(pauseControlMu_);
+    if (fpgaH264Backend() && (!playing_.load() || stop_.load() || !paused_.load()))
+        return;
+    if (fpgaH264Backend() && fpgaSession_.load()) {
+        std::lock_guard<std::mutex> present(presentMu_);
+        if (!fpga_.resumeBitstreamSession(fpgaSession_.load(), 500)) {
+            failFpgaSession("resume ACK failed");
+            return;
+        }
+        if (audioEnabled_ && sourceHasAudio_ && fpgaAudioStarted_.load() &&
+            !controlFpgaAudio(fpgaSession_.load(), AudioSessionControl::Resume)) {
+            failFpgaSession("audio resume ACK failed");
+            return;
+        }
+    }
     transitionPlaybackPause(false, std::chrono::steady_clock::now());
     signalChildren(SIGCONT);
     showPlaybackOverlay(PlaybackOverlayState::Playing, positionMs_.load(), durationMs());
     if (onProgress_)
-        onProgress_("playing", positionMs_.load(), durationMs_);
+        onProgress_(fpgaH264Backend() && !fpgaVideoStarted_.load() ? "buffering" : "playing",
+                    positionMs_.load(), durationMs_);
 }
 
 void MediaPlayer::showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs,
@@ -1766,19 +1901,36 @@ void MediaPlayer::showPlaybackOverlay(PlaybackOverlayState state, int64_t positi
 
 void MediaPlayer::flashPlaybackSkip(int64_t deltaMs) {
     overlay_.flashSkip(deltaMs, positionMs_.load(), durationMs());
+    if (fpgaH264Backend()) {
+        std::lock_guard<std::mutex> lock(mu_);
+        const int64_t seconds = deltaMs / 1000;
+        fpgaOverlayTransport_ = deltaMs >= 0 ? ">> " : "<< ";
+        fpgaOverlayTransport_ += std::to_string(seconds >= 0 ? seconds : -seconds) + "S";
+        fpgaOverlayTransportUntil_ = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(PlaybackOverlay::kSkipVisibleMs);
+    }
 }
 
-void MediaPlayer::seekMs(int64_t ms) {
+void MediaPlayer::setPlaybackTitle(std::string title) {
+    std::lock_guard<std::mutex> lock(mu_);
+    playbackTitle_ = title.substr(0, 512);
+    fpgaOverlayTransport_.clear();
+    fpgaOverlayTransportUntil_ = {};
+}
+
+void MediaPlayer::seekMs(int64_t ms, const StartedFn& started, uint64_t generation) {
     if (ms < 0)
         ms = 0;
     const int64_t fromMs = positionMs_.load();
     std::string url, headers;
     int64_t dur = 0;
+    uint64_t epoch = 0;
     {
         std::lock_guard<std::mutex> lock(mu_);
         url = currentUrl_;
         headers = currentHeaders_;
         dur = durationMs_;
+        epoch = playEpoch_.load();
     }
     // Clamp into known duration so scrubber/step edges cannot overshoot EOF.
     if (dur > 0 && ms > dur)
@@ -1792,16 +1944,29 @@ void MediaPlayer::seekMs(int64_t ms) {
     // (companion already ACK-only gates; belt-and-suspenders for step/skip paths).
     if (playing_.load() && !stop_.load() && positionMs_.load() == ms) {
         log("media: seek same-pos " + std::to_string(ms) + " (no-op)");
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            startedPlayback_ = {generation, epoch};
+        }
+        if (started)
+            started();
         return;
     }
     if (onProgress_)
         onProgress_("buffering", ms, dur);
     // Full restart: both RGB/audio and STREAM demux re-spawn at new offset (multi-IDR clean).
-    play(withUniversalOffset(url, ms), ms, headers, dur);
+    playInternal(withUniversalOffset(url, ms), ms, headers, dur, epoch, started, generation);
 }
 
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
-                       const std::string& httpHeaders, int64_t durationMs) {
+                       const std::string& httpHeaders, int64_t durationMs, uint64_t generation) {
+    return playInternal(urlOrPath, startOffsetMs, httpHeaders, durationMs, 0, {}, generation);
+}
+
+bool MediaPlayer::playInternal(const std::string& urlOrPath, int64_t startOffsetMs,
+                               const std::string& httpHeaders, int64_t durationMs,
+                               uint64_t expectedEpoch, const StartedFn& started,
+                               uint64_t generation) {
     {
         std::lock_guard<std::mutex> lk(libraryMu_);
         library_.hide();
@@ -1810,11 +1975,34 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
     stopIdle();
     {
         std::lock_guard<std::mutex> life(lifeMu_);
+        if (expectedEpoch && expectedEpoch != playEpoch_.load())
+            return false;
+        uint64_t epoch = 0;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            epoch = playEpoch_.fetch_add(1) + 1;
+            currentUrl_.clear();
+            currentHeaders_.clear();
+        }
         stop_.store(true);
+        interruptInproc();
         killChildren();
         if (thr_.joinable())
             thr_.join();
 
+        if (backend_ == VideoBackend::Unselected) {
+            std::lock_guard<std::mutex> lock(mu_);
+            lastError_ = "select MPX_VIDEO_BACKEND=fpga-h264 or explicit legacy-software";
+            return false;
+        }
+        if (backend_ == VideoBackend::LegacySoftware && presentMode_ != "none") {
+            const char* matched = std::getenv("MPX_LEGACY_CORE_PREFIX");
+            if (!matchedLegacyVideoCore(rbfPrefix8_, matched) || streamEnabled_) {
+                std::lock_guard<std::mutex> lock(mu_);
+                lastError_ = "legacy-software requires an explicitly matched OLD baseline core";
+                return false;
+            }
+        }
         if (!fb_.ok() && !initPresent())
             return false;
 
@@ -1823,12 +2011,14 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
             currentUrl_ = urlOrPath;
             currentHeaders_ = httpHeaders;
             durationMs_ = durationMs;
+            lastError_.clear();
         }
         // Local / lab play-file: drop inherited PMS size unless this call already
         // probed the file (main --play-file sets sourceMedia via ffmpeg WxH).
         // Companion HTTP path calls setSourceMediaSize() after resolve, then
         // play(http) — not this branch.
-        if (!urlOrPath.empty() && urlOrPath[0] == '/' && urlOrPath.rfind("http", 0) != 0) {
+        if (!fpgaH264Backend() && !urlOrPath.empty() && urlOrPath[0] == '/' &&
+            urlOrPath.rfind("http", 0) != 0) {
             setSourceHasAudio(true);
             if (sourceMediaW_ <= 0 || sourceMediaH_ <= 0) {
                 int sw = 0, sh = 0;
@@ -1852,6 +2042,8 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         // Mark playing before thr_ starts so callers (e.g. lab --play-file) that
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
+        if (started)
+            started();
         playing_.store(true);
         // Re-arm the latched Display row only if HDMI is not already on it.
         // force=true rewrites video_mode every cast and renegotiates HDMI
@@ -1861,7 +2053,7 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         if (displayRasterLatched_)
             applyDisplayRaster(latchedDisplayRes_, /*force=*/kForceDisplayRasterOnPlay);
         showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
-        thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
+        thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs, epoch] {
 #if defined(__linux__)
         pthread_setname_np(pthread_self(), "mpx-play");
         // Dual-A9: pin the play/reader thread to CPU0. Isolated ffmpeg needs
@@ -1886,7 +2078,10 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
             setMisterNice(19, log_);
 #endif
             try {
-                threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
+                if (fpgaH264Backend())
+                    fpgaThreadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs, epoch);
+                else
+                    threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
             } catch (const std::exception& ex) {
                 log(std::string("media: threadMain exception: ") + ex.what());
                 playing_.store(false);
@@ -1895,8 +2090,1123 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                 playing_.store(false);
             }
         });
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            startedPlayback_ = {generation, epoch};
+        }
     }
     return true;
+}
+
+void MediaPlayer::interruptInproc() {
+#ifdef MPX_HAVE_LIBAV
+    if (!fpgaH264Backend())
+        return;
+    std::lock_guard<std::mutex> lock(inprocMu_);
+    if (inprocPcm_)
+        inprocPcm_->requestStop();
+#endif
+}
+
+void MediaPlayer::failFpgaSession(const std::string& error) {
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        lastError_ = "FPGA H.264: " + error;
+    }
+    log("ERROR FPGA H.264: " + error);
+    stop_.store(true);
+}
+
+bool MediaPlayer::controlFpgaAudio(uint64_t session, AudioSessionControl command) {
+    return fpga_.controlAudioSession(session, command, 1000);
+}
+
+void MediaPlayer::fpgaAudioPump(MPX_AV_TRACE(std::shared_ptr<FpgaAvTrace> avTrace)) {
+#ifdef MPX_HAVE_LIBAV
+    MPX_AV_TRACE(FpgaAvTrace::Writer traceWriter(avTrace.get(), FpgaAvLane::Audio);)
+    FpgaAudioExit exit = FpgaAudioExit::Running;
+    fpgaAudioExit_.store(exit);
+    auto audioFailure = [&](const std::string& error) {
+        exit = FpgaAudioExit::Error;
+        fpgaAudioExit_.store(exit);
+        failFpgaSession(error);
+    };
+    AvInprocDecoder* demux = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(inprocMu_);
+        demux = inprocPcm_;
+    }
+    int output = fpgaAudioOutput_;
+    int64_t written = 0;
+    bool aligned = false;
+    int64_t trimBytes = 0;
+    int64_t audioAnchorPausedUs = 0;
+    auto due = std::chrono::steady_clock::now();
+    MPX_AV_TRACE(auto traceWait = [&](FpgaAvWait reason, int64_t queued = -1,
+                                     int64_t dueUs = -1, int64_t lateUs = 0) {
+        AvTraceSpan span(traceWriter, FpgaAvEvent::AudioWait, tracePauseClock_);
+        span.value(0, static_cast<int>(reason));
+        if (queued >= 0) span.value(1, queued);
+        if (dueUs >= 0) { span.value(2, dueUs); span.value(3, lateUs); }
+        span.uvalue(4, fpgaAudioHeldBytes_.load());
+        span.value(5, written);
+        span.value(6, paused_.load());
+        span.value(7, stop_.load());
+        span.value(8, fpgaVideoStarted_.load());
+    };)
+    auto readClock = [&](int64_t& queued) -> bool {
+        FpgaSpi::AudioSessionStatus status;
+        MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::AudioClock, tracePauseClock_);
+                     AvTraceRelease release{span};)
+        // An older DMA read must not overwrite a newer combined presentation clock.
+        std::lock_guard<std::mutex> present(presentMu_);
+        MPX_AV_TRACE(span.acquired(); span.serviceBegin();)
+        const bool clockRead = fpga_.readAudioSessionStatus(fpgaSession_.load(), status);
+        MPX_AV_TRACE(span.serviceEnd();
+            traceMast(span, clockRead, status, written, fpgaAudioHeldBytes_.load(),
+                      paused_.load(), false);)
+        if (!clockRead)
+            return false;
+        if (!status.active || status.error ||
+            status.samples_consumed > static_cast<uint64_t>(written / 4)) {
+            audioFailure("audio DMA epoch/error/consumed counter does not match submitted PCM");
+            return false;
+        }
+        const int64_t consumed = static_cast<int64_t>(status.samples_consumed);
+        queued = written - consumed * 4;
+        fpgaHasConsumedClock_.store(true);
+        if (fpgaAudioConsumedSamples_.exchange(consumed) != consumed)
+            fpgaAudioClockChangedUs_.store(playbackActiveUs());
+        audioQueuedBytes_.store(queued);
+        return true;
+    };
+    uint8_t pcm[3840];
+    while (demux && !stop_.load()) {
+        if (paused_.load() || !fpgaVideoStarted_.load()) {
+            MPX_AV_TRACE(traceWait(paused_.load() ? FpgaAvWait::Paused : FpgaAvWait::VideoNotStarted);)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        int count;
+        MPX_AV_TRACE({
+            AvTraceSpan span(traceWriter, FpgaAvEvent::AudioDrain, tracePauseClock_);
+            const auto pressure = demux->compressedPressure();
+            span.serviceBegin();)
+        count = demux->drainPcm(pcm, sizeof(pcm), false);
+        MPX_AV_TRACE(span.serviceEnd(); span.value(0, count); span.value(1, sizeof(pcm));
+            tracePressure(span, pressure, demux->compressedPressure());
+            span.value(10, written); span.value(11, paused_.load());
+        })
+        fpgaAudioHeldBytes_.store(count);
+        if (!count) {
+            bool atEof;
+            MPX_AV_TRACE({
+                AvTraceSpan span(traceWriter, FpgaAvEvent::AudioEof, tracePauseClock_);
+                span.serviceBegin();)
+            atEof = demux->audioEof();
+            MPX_AV_TRACE(span.serviceEnd(); span.value(0, atEof); })
+            if (atEof) { exit = FpgaAudioExit::Eof; break; }
+            MPX_AV_TRACE(traceWait(FpgaAvWait::PcmEmpty);)
+            std::string error;
+            AvAudioProgress progress;
+            try {
+                MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::AudioAdvance, tracePauseClock_);
+                    const auto pressure = demux->compressedPressure();)
+                fpgaAudioProgress_.store(-2);
+                MPX_AV_TRACE(span.serviceBegin();)
+                progress = demux->advanceCompressedAudio(error);
+                MPX_AV_TRACE(span.serviceEnd(); span.value(0, static_cast<int>(progress));
+                    tracePressure(span, pressure, demux->compressedPressure());
+                    if (progress == AvAudioProgress::Error) span.force();)
+            } catch (...) {
+                audioFailure("compressed audio progress exception");
+                break;
+            }
+            fpgaAudioProgress_.store(static_cast<int>(progress));
+            if (progress == AvAudioProgress::Error) {
+                audioFailure(error);
+                break;
+            }
+            if (progress == AvAudioProgress::Cancelled) {
+                exit = FpgaAudioExit::Cancelled;
+                break;
+            }
+            if (progress != AvAudioProgress::Ready)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+        if (!aligned) {
+            const int64_t audioPts = demux->firstAudioPtsUs();
+            if (audioPts == ddr_bitstream_ring::kNoTimestamp) {
+                audioFailure("decoded audio has no original timestamp");
+                break;
+            }
+            const long double timestampDelta =
+                static_cast<long double>(audioPts) - fpgaFirstVideoPtsUs_.load();
+            if (timestampDelta < -2000000 || timestampDelta > 2000000) {
+                audioFailure("initial audio/video timestamp gap exceeds two seconds");
+                break;
+            }
+            const int64_t delta = static_cast<int64_t>(timestampDelta);
+            fpgaAudioStartRelativeUs_.store(std::max<int64_t>(0, delta));
+            trimBytes = delta < 0 ? ((-delta * 48000) / 1000000) * 4 : 0;
+            due = std::chrono::steady_clock::time_point(
+                std::chrono::microseconds(fpgaVideoStartMonotonicUs_.load() +
+                                          std::max<int64_t>(0, delta)));
+            audioAnchorPausedUs = fpgaVideoStartPauseUs_.load();
+            aligned = true;
+        }
+        const size_t skipped = static_cast<size_t>(std::min<int64_t>(trimBytes, count));
+        trimBytes -= skipped;
+        if (skipped == static_cast<size_t>(count)) continue;
+        if (output < 0) {
+            // open() leaves the kernel cursor unchanged; only write() publishes PCM/metadata.
+            MPX_AV_TRACE({
+                AvTraceSpan span(traceWriter, FpgaAvEvent::AudioOpen, tracePauseClock_);
+                span.serviceBegin();)
+            output = ::open(audioDev_.c_str(), O_WRONLY | O_NONBLOCK);
+            MPX_AV_TRACE(span.serviceEnd(); span.value(0, output);
+                span.value(1, output < 0 ? errno : 0); span.force(); })
+            if (output < 0) {
+                audioFailure("MrAudio open failed (no silent audio fallback)");
+                break;
+            }
+            fpgaAudioOutput_ = output;
+        }
+        size_t offset = skipped;
+        fpgaAudioHeldBytes_.store(static_cast<size_t>(count) - offset);
+        const int64_t deadline = playbackActiveUs() + 2000000;
+        while (offset < static_cast<size_t>(count) && !stop_.load()) {
+            if (paused_.load()) {
+                MPX_AV_TRACE(traceWait(FpgaAvWait::Paused);)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+            }
+            if (playbackActiveUs() >= deadline) {
+                audioFailure("PCM DMA clock/backpressure timeout");
+                break;
+            }
+            int64_t queued = 0;
+            if (!readClock(queued)) {
+                MPX_AV_TRACE(traceWait(FpgaAvWait::ClockUnavailable);)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            const auto audibleDue = due + std::chrono::microseconds(
+                playbackPausedUs(now) - audioAnchorPausedUs);
+            if (queued > kMrAudioBytesPerSec / 5 || now < audibleDue) {
+                MPX_AV_TRACE(const auto dueUs =
+                    std::chrono::duration_cast<std::chrono::microseconds>(audibleDue.time_since_epoch()).count();
+                    const auto nowUs =
+                    std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+                    traceWait(queued > kMrAudioBytesPerSec / 5 ? FpgaAvWait::QueueHigh :
+                              FpgaAvWait::AudibleDue, queued, dueUs, nowUs - dueUs);)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
+            MPX_AV_TRACE(AvTraceSpan writeSpan(traceWriter, FpgaAvEvent::AudioWrite, tracePauseClock_);
+                AvTraceRelease writeRelease{writeSpan};
+                writeSpan.value(1, count - offset); writeSpan.value(2, written);
+                writeSpan.value(3, queued);
+                const auto dueUs =
+                    std::chrono::duration_cast<std::chrono::microseconds>(audibleDue.time_since_epoch()).count();
+                writeSpan.value(4, dueUs);
+                writeSpan.value(5, std::chrono::duration_cast<std::chrono::microseconds>(
+                    now.time_since_epoch()).count() - dueUs);)
+            std::lock_guard<std::mutex> control(pauseControlMu_);
+            MPX_AV_TRACE(writeSpan.acquired(); writeSpan.value(9, paused_.load());
+                writeSpan.value(10, stop_.load());)
+            if (paused_.load() || stop_.load()) continue;
+            MPX_AV_TRACE(writeSpan.serviceBegin();)
+            const ssize_t accepted = ::write(output, pcm + offset, count - offset);
+            MPX_AV_TRACE(writeSpan.serviceEnd(); writeSpan.value(0, accepted);
+                writeSpan.value(6, accepted < 0 ? errno : 0);
+                if (accepted <= 0) writeSpan.force();)
+            if (accepted < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+                continue;
+            if (accepted <= 0) {
+                audioFailure("MrAudio write failed");
+                break;
+            }
+            offset += static_cast<size_t>(accepted);
+            fpgaAudioHeldBytes_.store(static_cast<size_t>(count) - offset);
+            written += accepted;
+            audioBytes_.store(written);
+            MPX_AV_TRACE(writeSpan.value(7, written);
+                writeSpan.value(8, static_cast<size_t>(count) - offset);)
+            if (!fpgaAudioStarted_.load()) {
+                std::lock_guard<std::mutex> present(presentMu_);
+                if (!controlFpgaAudio(fpgaSession_.load(), AudioSessionControl::Resume)) {
+                    audioFailure("primed audio DMA Resume ACK failed");
+                    break;
+                }
+                fpgaAudioStarted_.store(true);
+            }
+            audioActive_.store(true);
+            due += std::chrono::microseconds(accepted * 1000000LL / kMrAudioBytesPerSec);
+        }
+    }
+    if (output >= 0 && !stop_.load()) {
+        if (exit == FpgaAudioExit::Eof) fpgaAudioExit_.store(FpgaAudioExit::EofDraining);
+        const int64_t deadline = playbackActiveUs() + 2000000;
+        while (!stop_.load()) {
+            int64_t queued = 0;
+            if (readClock(queued) && queued == 0) break;
+            if (!paused_.load() && playbackActiveUs() >= deadline) {
+                audioFailure("audio EOF drain timeout");
+                break;
+            }
+            MPX_AV_TRACE(traceWait(FpgaAvWait::EofDrain);)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    if (exit != FpgaAudioExit::Error && stop_.load()) exit = FpgaAudioExit::Cancelled;
+    if (!demux && exit == FpgaAudioExit::Running) exit = FpgaAudioExit::NoSource;
+    MPX_AV_TRACE({
+        AvTraceSpan span(traceWriter, FpgaAvEvent::AudioExit, tracePauseClock_);
+        span.value(0, static_cast<int>(exit)); span.value(1, written);
+        span.uvalue(2, fpgaAudioHeldBytes_.load()); span.value(3, stop_.load());
+        span.force();
+    })
+    fpgaAudioExit_.store(exit);
+#endif
+    audioActive_.store(false);
+    fpgaAudioDone_.store(true);
+    fpgaAudioStarted_.store(false);
+}
+
+void MediaPlayer::fpgaThreadMain(std::string url, int64_t startMs, std::string headers,
+                                 int64_t durationMs, uint64_t epoch) {
+    PlaybackTerminalState terminal = PlaybackTerminalState::Stopped;
+    positionMs_.store(startMs);
+    fpgaVideoStarted_.store(false);
+    fpgaAudioDone_.store(true);
+    fpgaAudioStarted_.store(false);
+    fpgaAudioExit_.store(FpgaAudioExit::NotStarted);
+    fpgaAudioProgress_.store(-1);
+    fpgaAudioHeldBytes_.store(0);
+    fpgaAudioConsumedSamples_.store(-1);
+    fpgaAudioClockChangedUs_.store(playbackActiveUs());
+    fpgaHasConsumedClock_.store(false);
+    fpgaFirstVideoPtsUs_.store(ddr_bitstream_ring::kNoTimestamp);
+    audioBytes_.store(0);
+    presentCount_.store(0);
+#ifndef MPX_HAVE_LIBAV
+    (void)url; (void)headers; (void)epoch;
+    failFpgaSession("binary lacks libav demux/audio; software video fallback forbidden");
+    terminal = finishFpgaPlayback({}, [] { return std::string("demux=unavailable audio=unavailable mast=unavailable"); },
+        [] {}, [] { return true; }, [&] { return playEpoch_.load() == epoch; },
+        [&] { return stop_.load(); },
+        [&](const FpgaTerminalReceipt& receipt) { log(formatFpgaTerminal(receipt)); });
+#else
+    const uint64_t session =
+        (static_cast<uint64_t>(::getpid()) << 48) ^
+        static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) ^ epoch;
+    MPX_AV_TRACE(std::shared_ptr<FpgaAvTrace> avTrace;
+        const int traceSavedErrno = errno;
+        try { avTrace = std::make_shared<FpgaAvTrace>(epoch, session); } catch (...) {}
+        errno = traceSavedErrno;
+        FpgaAvTrace::Writer traceWriter(avTrace.get(), FpgaAvLane::Video);
+        uint64_t traceReadCalls = 0;)
+    bool begun = false, audioBegun = false, eof = false, fullyDrained = false;
+    bool demuxOpened = false, drainAttempted = false;
+    std::optional<bool> drainAck;
+    std::optional<bool> releaseAudioReset, releaseFlush, releaseEnd, releaseAbort;
+    bool resetAttempted = false, flushAttempted = false;
+    bool endAttempted = false, abortAttempted = false;
+    std::optional<int> demuxReturn;
+    const char* demuxReturnKind = "not-called";
+    std::string demuxError;
+    uint32_t sequence = 0;
+    uint64_t bytes = 0;
+    AvInprocDecoder demux;
+    auto current = [&] { return !stop_.load() && playEpoch_.load() == epoch; };
+    struct PendingPicture {
+        uint32_t sequence;
+        int64_t pts;
+        uint32_t num, den;
+    };
+    std::deque<PendingPicture> pending;
+    std::thread overlayThread;
+    std::atomic<bool> stopOverlay{false};
+    uint64_t overlayNonce = 0;
+    uint32_t overlaySequence = 0;
+    auto startOverlay = [&](uint64_t nonce) {
+        overlayNonce = nonce;
+        overlayThread = std::thread([&, nonce MPX_AV_TRACE(, avTrace)] {
+            MPX_AV_TRACE(FpgaAvTrace::Writer overlayWriter(avTrace.get(), FpgaAvLane::Overlay);)
+            unsigned failedTransfers = 0;
+            try {
+                while (current() && !stopOverlay.load()) {
+                    // AutoFit measures native DE in FPGA; never substitute decoded/HDMI geometry.
+                    fpga_overlay::Model model;
+                    const bool presented = fpgaVideoStarted_.load();
+                    model.state = paused_.load() ? fpga_overlay::State::Paused :
+                        presented ? fpga_overlay::State::Playing : fpga_overlay::State::Buffering;
+                    model.position_ms = presented ? positionMs_.load() : 0;
+                    model.duration_ms = durationMs;
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        model.title = playbackTitle_.empty() ? "MiSTerPlex" : playbackTitle_;
+                        if (std::chrono::steady_clock::now() < fpgaOverlayTransportUntil_)
+                            model.transport = fpgaOverlayTransport_;
+                    }
+                    if (presented && !paused_.load() && !overlay_.visible()) {
+                        model.state = fpga_overlay::State::Hidden;
+                        model.flags = 0;
+                    }
+                    bool sent = false;
+                    {
+                        MPX_AV_TRACE(AvTraceSpan span(overlayWriter, FpgaAvEvent::OverlaySend, tracePauseClock_);
+                            AvTraceRelease release{span};
+                            span.value(1, static_cast<int>(model.state));
+                            span.uvalue(2, overlaySequence);
+                            span.value(3, model.position_ms);
+                            span.value(4, paused_.load());)
+                        std::lock_guard<std::mutex> present(presentMu_);
+                        MPX_AV_TRACE(span.acquired();)
+                        if (!current() || stopOverlay.load()) break;
+                        MPX_AV_TRACE(span.serviceBegin();)
+                        sent = fpga_overlay::send(fpga_, session, nonce, overlaySequence, model);
+                        MPX_AV_TRACE(span.serviceEnd(); span.value(0, sent);
+                            if (!sent) span.force();)
+                    }
+                    if (sent) failedTransfers = 0;
+                    else if (++failedTransfers >= 5) {
+                        failFpgaSession("native overlay SPI transport failed repeatedly");
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                }
+            } catch (...) {
+                failFpgaSession("native overlay publisher failed");
+            }
+        });
+    };
+    int64_t firstPtsUs = ddr_bitstream_ring::kNoTimestamp;
+    int64_t firstSubmittedPtsUs = ddr_bitstream_ring::kNoTimestamp;
+    int64_t anchorPausedUs = 0;
+    int64_t lastCommitActiveUs = playbackActiveUs();
+    int64_t heldPts = ddr_bitstream_ring::kNoTimestamp;
+    uint32_t heldTimebaseNum = 0, heldTimebaseDen = 0;
+    const char* waitReason = "opening";
+    MPX_AV_TRACE(auto traceVideoWait = [&](FpgaAvWait reason) {
+        AvTraceSpan span(traceWriter, FpgaAvEvent::VideoWait, tracePauseClock_);
+        span.value(0, static_cast<int>(reason)); span.uvalue(1, pending.size());
+        span.uvalue(2, sequence); span.uvalue(3, presentCount_.load());
+        if (heldPts != ddr_bitstream_ring::kNoTimestamp) {
+            span.value(4, heldPts); span.uvalue(5, heldTimebaseNum); span.uvalue(6, heldTimebaseDen);
+        }
+        span.value(7, paused_.load()); span.value(8, stop_.load());
+    };)
+    auto collectPresentation = [&]() -> bool {
+        FpgaSpi::VideoPresentation picture;
+        MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::VideoPresentation, tracePauseClock_);)
+        {
+            MPX_AV_TRACE(AvTraceRelease release{span};)
+            std::lock_guard<std::mutex> present(presentMu_);
+            MPX_AV_TRACE(span.acquired(); span.serviceBegin();)
+            const bool pictureRead = fpga_.readVideoPresentation(session, picture);
+            MPX_AV_TRACE(span.serviceEnd(); span.value(0, pictureRead);
+                if (pictureRead) {
+                    span.value(1, picture.active); span.value(2, picture.error);
+                    span.value(3, picture.error_code); span.value(4, picture.has_frame);
+                    span.uvalue(5, picture.presentation_count);
+                    if (picture.has_frame) {
+                        span.uvalue(6, picture.seq); span.value(7, picture.pts);
+                        span.uvalue(8, picture.timebase_num); span.uvalue(9, picture.timebase_den);
+                    }
+                    if (picture.has_audio_clock) span.uvalue(12, picture.audio_samples_consumed);
+                } else span.force();
+                span.uvalue(10, pending.size()); span.uvalue(11, sequence);)
+            MPX_AV_TRACE(span.value(13, paused_.load());)
+            if (!pictureRead)
+                return true;
+            if (picture.error || !picture.active) {
+                failFpgaSession("core presentation/epoch error " + std::to_string(picture.error_code));
+                return false;
+            }
+            if (picture.has_audio_clock) {
+                if (picture.audio_samples_consumed >
+                    static_cast<uint64_t>(std::numeric_limits<int64_t>::max() / 1000000)) {
+                    failFpgaSession("consumed audio clock overflow");
+                    return false;
+                }
+            }
+            // MVPS freezes audio at the display boundary; pacing needs current MAST.
+            if (audioBegun) {
+                FpgaSpi::AudioSessionStatus audio;
+                MPX_AV_TRACE(AvTraceSpan audioSpan(traceWriter, FpgaAvEvent::VideoClock, tracePauseClock_);
+                    audioSpan.serviceBegin();)
+                const bool audioRead = fpga_.readAudioSessionStatus(session, audio);
+                MPX_AV_TRACE(audioSpan.serviceEnd();
+                    traceMast(audioSpan, audioRead, audio, audioBytes_.load(),
+                              fpgaAudioHeldBytes_.load(), paused_.load(), true);)
+                if (audioRead) {
+                    if (!audio.active || audio.error ||
+                        audio.samples_consumed >
+                            static_cast<uint64_t>(std::numeric_limits<int64_t>::max() / 1000000)) {
+                        failFpgaSession("current DMA audio clock lost its active epoch");
+                        return false;
+                    }
+                    fpgaHasConsumedClock_.store(true);
+                    const auto consumed = static_cast<int64_t>(audio.samples_consumed);
+                    if (fpgaAudioConsumedSamples_.exchange(consumed) != consumed)
+                        fpgaAudioClockChangedUs_.store(playbackActiveUs());
+                }
+            }
+            if (!picture.has_frame) return true;
+        }
+        if (picture.session_id != session)
+            return true; // A stale mailbox publication never starts this epoch.
+        if (picture.presentation_count <= presentCount_.load())
+            return true;
+        auto it = std::find_if(pending.begin(), pending.end(), [&](const PendingPicture& p) {
+            return p.sequence == picture.seq;
+        });
+        if (it == pending.end()) {
+            failFpgaSession("new presentation count references an unsubmitted AU");
+            return false;
+        }
+        if (picture.pts != it->pts || picture.timebase_num != it->num ||
+            picture.timebase_den != it->den || !picture.timebase_den ||
+            picture.presentation_count !=
+                presentCount_.load() + std::distance(pending.begin(), it) + 1) {
+            failFpgaSession("presentation ACK does not match queued AU timestamp");
+            return false;
+        }
+        const int64_t us = static_cast<int64_t>(
+            static_cast<long double>(picture.pts) * picture.timebase_num * 1000000 /
+            picture.timebase_den);
+        const bool firstPresentation = firstPtsUs == ddr_bitstream_ring::kNoTimestamp;
+        if (firstPresentation) {
+            firstPtsUs = us;
+            fpgaFirstVideoPtsUs_.store(us);
+            fpgaVideoStartMonotonicUs_.store(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+            anchorPausedUs = playbackPausedUs(std::chrono::steady_clock::now());
+            fpgaVideoStartPauseUs_.store(anchorPausedUs);
+        }
+        presentCount_.fetch_add(std::distance(pending.begin(), it) + 1);
+        {
+            std::lock_guard<std::mutex> lock(summaryMu_);
+            lastSummary_.lastPresentedAudioSamples = picture.has_audio_clock
+                ? static_cast<int64_t>(picture.audio_samples_consumed) : -1;
+        }
+        pending.erase(pending.begin(), std::next(it));
+        lastCommitActiveUs = playbackActiveUs();
+        fpgaVideoStarted_.store(true);
+        positionMs_.store(startMs + std::max<int64_t>(0, (us - firstSubmittedPtsUs) / 1000));
+        MPX_AV_TRACE({
+            AvTraceSpan commit(traceWriter, FpgaAvEvent::VideoCommit, tracePauseClock_);
+            commit.uvalue(0, picture.presentation_count); commit.uvalue(1, picture.seq);
+            commit.value(2, picture.pts); commit.uvalue(3, picture.timebase_num);
+            commit.uvalue(4, picture.timebase_den); commit.uvalue(5, pending.size());
+            commit.value(6, positionMs_.load()); commit.value(7, paused_.load());
+        })
+        if (firstPresentation)
+            showPlaybackOverlay(paused_.load() ? PlaybackOverlayState::Paused :
+                                PlaybackOverlayState::Playing, positionMs_.load(), durationMs);
+        if (onProgress_ && current())
+            onProgress_(paused_.load() ? "paused" : "playing", positionMs_.load(), durationMs);
+        return true;
+    };
+    try {
+        do {
+            if (onProgress_) onProgress_("buffering", startMs, durationMs);
+            FpgaSpi::VideoCapabilities caps;
+            const char* prototype = std::getenv("MPX_H264_PROTOTYPE");
+            const char* filtering = std::getenv("MPX_H264_FILTER");
+            const std::string selectedPrototype = prototype ? prototype : "ip";
+            const std::string selectedFilter = filtering ? filtering : "on";
+            {
+                std::lock_guard<std::mutex> control(pauseControlMu_);
+                std::lock_guard<std::mutex> present(presentMu_);
+                const uint64_t retained = fpgaSession_.load();
+                if (retained != 0) {
+                    if (!fpga_.abortFpgaVideoSession(retained, 2000)) {
+                        failFpgaSession("prior epoch still owns an unacknowledged reset fence");
+                        break;
+                    }
+                    fpgaSession_.store(0);
+                    if (fpgaAudioOutput_ >= 0) {
+                        ::close(fpgaAudioOutput_);
+                        fpgaAudioOutput_ = -1;
+                    }
+                }
+                if (!fpga_.beginFpgaVideoSession(session, caps, 1000)) {
+                    if (fpga_.videoCapabilities().nonce != 0) {
+                        begun = true;
+                        fpgaSession_.store(session);
+                        MPX_AV_TRACE(if (avTrace) avTrace->bindNonce(caps.nonce);)
+                    }
+                    failFpgaSession("matching core capability/session ACK failed: " + fpga_.lastError());
+                    break;
+                }
+                begun = true;
+                fpgaSession_.store(session);
+                MPX_AV_TRACE(if (avTrace) avTrace->bindNonce(caps.nonce);)
+                if (!current()) break;
+                if (caps.max_width < 320 || caps.max_height < 240) {
+                    failFpgaSession("core does not support initial 320x240 tier");
+                    break;
+                }
+                if (!(caps.features & ddr_bitstream_ring::FencedReset)) {
+                    failFpgaSession("core lacks acknowledged ingress/DPB/display reset fencing");
+                    break;
+                }
+                if ((selectedPrototype != "ip" && selectedPrototype != "idr") ||
+                    (selectedFilter != "on" && selectedFilter != "off") ||
+                    (selectedPrototype == "ip" && !(caps.features & ddr_bitstream_ring::Inter)) ||
+                    (selectedFilter == "on" && !(caps.features & ddr_bitstream_ring::Deblock))) {
+                    failFpgaSession("selected IP/IDR/filter profile exceeds matching core capabilities");
+                    break;
+                }
+                if (audioEnabled_ && sourceHasAudio_) {
+                    constexpr uint32_t requiredAudio =
+                        ddr_bitstream_ring::ConsumedAudioClock | ddr_bitstream_ring::AudioSessionControl;
+                    if ((caps.features & requiredAudio) != requiredAudio) {
+                        failFpgaSession("core lacks real audio DMA lifecycle/consumed-clock capability");
+                        break;
+                    }
+                    audioBegun = true; // A timed-out Begin may still own an in-flight command.
+                    if (!controlFpgaAudio(session, AudioSessionControl::Begin)) {
+                        failFpgaSession("audio session reset ACK failed");
+                        break;
+                    }
+                }
+                if (paused_.load() &&
+                    (!fpga_.pauseBitstreamSession(session, 500) ||
+                     (audioBegun &&
+                      !controlFpgaAudio(session, AudioSessionControl::Pause)))) {
+                    failFpgaSession("initial paused-session ACK failed");
+                    break;
+                }
+            }
+            if (!current()) break;
+            AvInprocOpenOpts opts;
+            opts.compressedVideo = true;
+            opts.expectW = 320; opts.expectH = 240;
+            opts.maxAccessUnitBytes = caps.max_au_bytes;
+            // Current frontend RBSP RAM is 8192 bytes; the larger transport
+            // ring is not evidence that a larger VCL NAL can be decoded.
+            opts.maxVclRbspBytes = 8192;
+            opts.expectedFpsNum = fpsNum_;
+            opts.expectedFpsDen = fpsDen_;
+            opts.allowInter = selectedPrototype == "ip" &&
+                (caps.features & ddr_bitstream_ring::Inter) != 0;
+            opts.allowDeblock = selectedFilter == "on" &&
+                (caps.features & ddr_bitstream_ring::Deblock) != 0;
+            opts.requireAllIdr = selectedPrototype == "idr";
+            opts.decodeAudio = audioEnabled_ && sourceHasAudio_;
+            opts.cancelled = &stop_;
+            opts.paused = &paused_;
+            opts.headers = headers;
+            opts.startMs = urlHasUniversalOffset(url) ? 0 : startMs;
+            std::string error;
+            demuxReturnKind = "opening";
+            bool opened;
+            MPX_AV_TRACE({
+                AvTraceSpan span(traceWriter, FpgaAvEvent::VideoOpen, tracePauseClock_);
+                span.serviceBegin();)
+            opened = demux.open(url, opts, error);
+            MPX_AV_TRACE(span.serviceEnd(); span.value(0, opened); span.force(); })
+            if (!opened) {
+                demuxReturnKind = "open-error";
+                demuxError = error;
+                failFpgaSession(error);
+                break;
+            }
+            demuxOpened = true;
+            demuxReturnKind = "not-called";
+            {
+                std::lock_guard<std::mutex> lock(inprocMu_);
+                inprocPcm_ = &demux;
+            }
+            if (opts.decodeAudio) {
+                fpgaAudioDone_.store(false);
+                audioThr_ = std::thread([this MPX_AV_TRACE(, avTrace)] {
+                    try {
+                        fpgaAudioPump(MPX_AV_TRACE(avTrace));
+                    } catch (...) {
+                        fpgaAudioExit_.store(FpgaAudioExit::Error);
+                        audioActive_.store(false);
+                        fpgaAudioDone_.store(true);
+                        fpgaAudioStarted_.store(false);
+                        failFpgaSession("compressed audio worker exception");
+                    }
+                });
+            }
+            bool aspectSent = false;
+            bool firstAu = true;
+            auto nextStatus = std::chrono::steady_clock::now();
+            while (current()) {
+                if (std::chrono::steady_clock::now() >= nextStatus) {
+                    FpgaSpi::BitstreamStatus status;
+                    bool healthy = false;
+                    {
+                        MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::VideoStatus, tracePauseClock_);
+                            AvTraceRelease release{span};)
+                        std::lock_guard<std::mutex> present(presentMu_);
+                        MPX_AV_TRACE(span.acquired(); span.serviceBegin();)
+                        const bool statusRead = fpga_.readBitstreamStatus(status);
+                        MPX_AV_TRACE(span.serviceEnd(); span.value(0, statusRead);
+                            if (statusRead) {
+                                span.value(1, status.active); span.value(2, status.fatal);
+                                span.value(3, status.desync); span.uvalue(4, status.session_id);
+                            } else span.force();)
+                        healthy = statusRead && status.active &&
+                                  status.session_id == session && !status.fatal && !status.desync;
+                    }
+                    if (!healthy) {
+                        failFpgaSession("core changed or ingress epoch lost");
+                        break;
+                    }
+                    nextStatus = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+                }
+                if (paused_.load()) {
+                    MPX_AV_TRACE(traceVideoWait(FpgaAvWait::Paused);)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                }
+                if (!collectPresentation()) break;
+                if (pending.size() >= 4) {
+                    waitReason = "presentation-queue";
+                    MPX_AV_TRACE(traceVideoWait(FpgaAvWait::PresentationQueue);)
+                    if (playbackActiveUs() - lastCommitActiveUs > 2000000) {
+                        failFpgaSession("video presentation stalled (bounded buffering)");
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    continue;
+                }
+                AvCompressedAccessUnit packet;
+                waitReason = "demux";
+                demuxReturn.reset();
+                demuxReturnKind = "in-flight";
+                demuxError.clear();
+                int read;
+                MPX_AV_TRACE({
+                    AvTraceSpan span(traceWriter, FpgaAvEvent::VideoRead, tracePauseClock_);
+                    const auto pressure = demux.compressedPressure();
+                    span.uvalue(10, ++traceReadCalls); span.uvalue(11, sequence);
+                    span.uvalue(12, pending.size()); span.serviceBegin();)
+                read = demux.readAccessUnit(packet, error);
+                MPX_AV_TRACE(span.serviceEnd(); span.value(0, read);
+                    tracePressure(span, pressure, demux.compressedPressure());
+                    if (read > 0) {
+                        span.value(1, packet.pts); span.value(13, packet.duration);
+                        span.uvalue(14, packet.timebaseNum); span.uvalue(15, packet.timebaseDen);
+                    } else span.force();
+                })
+                demuxReturn = read;
+                demuxError = error;
+                demuxReturnKind = read > 0 ? "au" : read == 0 ? "eof" :
+                    current() ? "error" : "cancelled";
+                if (read < 0) { if (current()) failFpgaSession(error); break; }
+                if (!read) {
+                    if (opts.decodeAudio && !demux.hasAudio())
+                        failFpgaSession("expected audio stream was not delivered by the sole demux");
+                    else
+                        eof = true;
+                    break;
+                }
+                if (firstAu && !packet.keyframe) {
+                    failFpgaSession("session/seek must begin at an IDR");
+                    break;
+                }
+                firstAu = false;
+                heldPts = packet.pts;
+                heldTimebaseNum = packet.timebaseNum;
+                heldTimebaseDen = packet.timebaseDen;
+                if (!aspectSent) {
+                    std::lock_guard<std::mutex> present(presentMu_);
+                    const SourceAspect aspect = sourceAspect_.valid ? sourceAspect_ : demux.sourceAspect();
+                    const auto& geometry = packet.geometry;
+                    {
+                        std::lock_guard<std::mutex> lock(summaryMu_);
+                        lastSummary_.codedWidth = geometry.codedWidth;
+                        lastSummary_.codedHeight = geometry.codedHeight;
+                        lastSummary_.visibleWidth = geometry.visibleWidth;
+                        lastSummary_.visibleHeight = geometry.visibleHeight;
+                        lastSummary_.macroblockColumns = geometry.macroblockColumns;
+                        lastSummary_.macroblockRows = geometry.macroblockRows;
+                        lastSummary_.cropLeft = geometry.cropLeft;
+                        lastSummary_.cropRight = geometry.cropRight;
+                        lastSummary_.cropTop = geometry.cropTop;
+                        lastSummary_.cropBottom = geometry.cropBottom;
+                        lastSummary_.sourceAspect = aspect;
+                    }
+                    log("media: FPGA stream geometry coded=" +
+                        std::to_string(geometry.codedWidth) + "x" + std::to_string(geometry.codedHeight) +
+                        " visible=" + std::to_string(geometry.visibleWidth) + "x" +
+                        std::to_string(geometry.visibleHeight) + " mb=" +
+                        std::to_string(geometry.macroblockColumns) + "x" +
+                        std::to_string(geometry.macroblockRows) + " count=" +
+                        std::to_string(geometry.macroblockColumns * geometry.macroblockRows) +
+                        " crop_px=" + std::to_string(geometry.cropLeft) + "," +
+                        std::to_string(geometry.cropRight) + "," + std::to_string(geometry.cropTop) +
+                        "," + std::to_string(geometry.cropBottom) + " source_dar=" +
+                        std::to_string(aspect.x) + ":" + std::to_string(aspect.y) +
+                        " dar_source=" + (sourceAspect_.valid ? "provided" : "demux") +
+                        " full_range=" + std::to_string(geometry.fullRange) +
+                        " matrix_coefficients=" + std::to_string(geometry.matrixCoefficients) +
+                        " limited_bt601_signaling=" +
+                        std::to_string(geometry.limitedBt601Signaled()) +
+                        (geometry.matrixCoefficients == 2 ?
+                            " color_policy=ASSUMED_LIMITED_BT601_UNQUALIFIED" :
+                            " color_policy=SIGNALED_LIMITED_BT601") +
+                        " storage_stride=FPGA-owned/unreported (no ARM padding)");
+                    if (!aspect.valid || !fpga_.sendSourceAspect(aspect)) {
+                        failFpgaSession("source DAR unavailable or scaler ACK failed");
+                        break;
+                    }
+                    aspectSent = true;
+                    startOverlay(caps.nonce);
+                }
+                FpgaSpi::BitstreamAccessUnit au;
+                au.session_id = session; au.seq = sequence;
+                au.annexb = packet.annexb.data(); au.len = packet.annexb.size();
+                au.pts = packet.pts; au.duration = packet.duration;
+                au.timebase_num = packet.timebaseNum; au.timebase_den = packet.timebaseDen;
+                au.flags = packet.keyframe ? ddr_bitstream_ring::kAccessUnitKeyframe : 0;
+                // Timestamp pacing is distinct from decoding. No fps filter,
+                // frame duplication, or compressed P-picture discard is allowed.
+                if (fpgaVideoStarted_.load()) {
+                    waitReason = "video-pts";
+                    const long double targetUs =
+                        static_cast<long double>(packet.pts) * packet.timebaseNum *
+                        1000000 / packet.timebaseDen - firstPtsUs;
+                    MPX_AV_TRACE(AvTraceSpan pace(traceWriter, FpgaAvEvent::VideoPace, tracePauseClock_);
+                        pace.value(1, packet.pts); pace.value(2, packet.duration);
+                        pace.uvalue(3, packet.timebaseNum); pace.uvalue(4, packet.timebaseDen);
+                        pace.uvalue(5, pending.size()); pace.serviceBegin();)
+                    const auto paced = waitForCompressedAccessUnit(targetUs, current,
+                        collectPresentation, [&] {
+                            const auto now = std::chrono::steady_clock::now();
+                            const int64_t pausedUs = playbackPausedUs(now);
+                            const int64_t activeUs = activePlaybackClockUs(
+                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                    now.time_since_epoch()).count(), pausedUs);
+                            const int64_t wallUs = activeUs -
+                                fpgaVideoStartMonotonicUs_.load() + anchorPausedUs;
+                            const int64_t consumed = fpgaAudioConsumedSamples_.load();
+                            const int64_t clockUs = audioActive_.load() && consumed >= 0
+                                ? fpgaAudioStartRelativeUs_.load() +
+                                    consumed * 1000000LL / 48000 : wallUs;
+                            MPX_AV_TRACE({
+                                AvTraceSpan wait(traceWriter, FpgaAvEvent::VideoWait, tracePauseClock_);
+                                wait.value(0, static_cast<int>(FpgaAvWait::Pts));
+                                wait.uvalue(1, pending.size()); wait.uvalue(2, sequence);
+                                wait.uvalue(3, presentCount_.load()); wait.value(4, packet.pts);
+                                wait.uvalue(5, packet.timebaseNum); wait.uvalue(6, packet.timebaseDen);
+                                wait.value(7, paused_.load()); wait.value(8, stop_.load());
+                                wait.value(9, activeUs); wait.value(10, clockUs);
+                                wait.value(11, wallUs);
+                                if (targetUs >= std::numeric_limits<int64_t>::min() &&
+                                    targetUs <= std::numeric_limits<int64_t>::max())
+                                    wait.value(12, static_cast<int64_t>(targetUs));
+                                wait.value(13, audioActive_.load() && consumed >= 0);
+                            })
+                            return CompressedPacingSnapshot{
+                                paused_.load(), activeUs, lastCommitActiveUs, clockUs};
+                        }, [] { std::this_thread::sleep_for(std::chrono::milliseconds(2)); });
+                    MPX_AV_TRACE(pace.serviceEnd(); pace.value(0, static_cast<int>(paced));)
+                    if (paced == CompressedPacingResult::Stalled)
+                        failFpgaSession("presentation/audio clock stopped advancing");
+                    if (paced != CompressedPacingResult::Due) break;
+                }
+                const int64_t deadline = playbackActiveUs() + 2000000;
+                waitReason = "ring-capacity";
+                bool accepted = false;
+                while (current()) {
+                    if (paused_.load()) {
+                        MPX_AV_TRACE(traceVideoWait(FpgaAvWait::Paused);)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        continue;
+                    }
+                    FpgaSpi::BitstreamPushResult result;
+                    {
+                        MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::VideoSubmit, tracePauseClock_);
+                            AvTraceRelease release{span}; span.uvalue(1, sequence);
+                            span.value(2, au.pts); span.value(3, au.duration);
+                            span.uvalue(4, au.timebase_num); span.uvalue(5, au.timebase_den);
+                            span.uvalue(6, au.len); span.uvalue(7, pending.size());)
+                        std::lock_guard<std::mutex> present(presentMu_);
+                        MPX_AV_TRACE(span.acquired();)
+                        if (!current() || paused_.load()) continue;
+                        MPX_AV_TRACE(span.serviceBegin();)
+                        result = fpga_.pushBitstreamAccessUnit(au, 0);
+                        MPX_AV_TRACE(span.serviceEnd(); span.value(0, static_cast<int>(result));)
+                    }
+                    if (result == FpgaSpi::BitstreamPushResult::Ok) { accepted = true; break; }
+                    if (result != FpgaSpi::BitstreamPushResult::Full) {
+                        failFpgaSession("AU transport rejected sequence " + std::to_string(sequence));
+                        break;
+                    }
+                    MPX_AV_TRACE(traceVideoWait(FpgaAvWait::RingFull);)
+                    if (!collectPresentation()) break;
+                    if (!paused_.load() && playbackActiveUs() >= deadline) {
+                        failFpgaSession("compressed ring Full timeout; AU retained, never dropped");
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+                if (!accepted) break;
+                if (sequence == 0)
+                    firstSubmittedPtsUs = static_cast<int64_t>(
+                        static_cast<long double>(packet.pts) * packet.timebaseNum *
+                        1000000 / packet.timebaseDen);
+                pending.push_back({sequence++, packet.pts, packet.timebaseNum, packet.timebaseDen});
+                heldPts = ddr_bitstream_ring::kNoTimestamp;
+                bytes += packet.annexb.size();
+                if (sequence == 1) {
+                    waitReason = "first-presentation";
+                    const int64_t firstFrameDeadline = playbackActiveUs() + 2000000;
+                    while (current() && !fpgaVideoStarted_.load()) {
+                        MPX_AV_TRACE(traceVideoWait(FpgaAvWait::FirstPresentation);)
+                        if (!collectPresentation()) break;
+                        if (!paused_.load() && playbackActiveUs() >= firstFrameDeadline) {
+                            failFpgaSession("first decoded picture was not actually presented");
+                            break;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    }
+                }
+            }
+            if (eof && current()) {
+                waitReason = "eof-drain";
+                while (current()) {
+                    if (paused_.load()) {
+                        MPX_AV_TRACE(traceVideoWait(FpgaAvWait::Paused);)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                        continue;
+                    }
+                    MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::VideoDrain, tracePauseClock_);
+                        AvTraceRelease release{span};)
+                    std::lock_guard<std::mutex> control(pauseControlMu_);
+                    std::lock_guard<std::mutex> present(presentMu_);
+                    MPX_AV_TRACE(span.acquired();)
+                    if (paused_.load()) continue;
+                    drainAttempted = true;
+                    MPX_AV_TRACE(span.serviceBegin();)
+                    drainAck = fpga_.drainBitstreamSession(session, 2000);
+                    MPX_AV_TRACE(span.serviceEnd(); span.value(0, *drainAck); span.force();)
+                    if (!*drainAck)
+                        failFpgaSession("final access-unit drain ACK failed");
+                    break;
+                }
+                const int64_t deadline = playbackActiveUs() + 3000000;
+                while (current() && (!pending.empty() || !fpgaAudioDone_.load())) {
+                    MPX_AV_TRACE(traceVideoWait(FpgaAvWait::EofDrain);)
+                    if (!collectPresentation()) break;
+                    if (!paused_.load() && playbackActiveUs() >= deadline) {
+                        failFpgaSession("final video/audio presentation drain timeout");
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                fullyDrained = current() && pending.empty() && fpgaAudioDone_.load() &&
+                    sequence != 0 && presentCount_.load() == sequence;
+            }
+        } while (false);
+    } catch (const std::exception& ex) {
+        if (std::string(demuxReturnKind) == "in-flight" ||
+            std::string(demuxReturnKind) == "opening") {
+            demuxReturnKind = "exception";
+            demuxError = ex.what();
+        }
+        failFpgaSession(ex.what());
+    } catch (...) {
+        if (std::string(demuxReturnKind) == "in-flight" ||
+            std::string(demuxReturnKind) == "opening") {
+            demuxReturnKind = "exception";
+            demuxError = "non-standard demux exception";
+        }
+        failFpgaSession("unexpected compressed session exception");
+    }
+    auto captureTerminal = [&] {
+        const auto queued = demux.compressedDiagnostics();
+        FpgaSpi::AudioSessionStatus live{};
+        bool liveValid = false;
+        std::optional<int64_t> liveReadAtUs;
+        {
+            std::lock_guard<std::mutex> present(presentMu_);
+            if (audioBegun) {
+                liveValid = fpga_.readAudioSessionStatus(session, live);
+                if (liveValid) liveReadAtUs = playbackActiveUs();
+            }
+        }
+        int64_t frozenSamples = -1;
+        {
+            std::lock_guard<std::mutex> summary(summaryMu_);
+            frozenSamples = lastSummary_.lastPresentedAudioSamples;
+        }
+        std::ostringstream diagnostic;
+        auto field = [&](const char* name, auto value, bool known = true) {
+            diagnostic << ' ' << name << '=';
+            if (known) diagnostic << value;
+            else diagnostic << "unavailable";
+        };
+        diagnostic << "session=" << session << " wait=" << waitReason
+            << " retained_session=" << fpgaSession_.load()
+            << " snapshot_active_us=" << playbackActiveUs()
+            << " current=" << (playEpoch_.load() == epoch) << " stop=" << stop_.load()
+            << " source_opened=" << demuxOpened << " demux_return_kind=" << demuxReturnKind
+            << " demux_error=" << fpgaTerminalText(redactSensitive(demuxError))
+            << " player_error=" << fpgaTerminalText(redactSensitive(lastError()))
+            << ' ' << formatCompressedDiagnostics(queued)
+            << " pending_au=" << pending.size() << " submitted_au=" << sequence
+            << " presented_au=" << presentCount_.load()
+            << " drain_attempted=" << drainAttempted
+            << " audio_exit=" << fpgaAudioExitName(fpgaAudioExit_.load())
+            << " audio_done=" << fpgaAudioDone_.load();
+        field("demux_return", demuxReturn.value_or(0), demuxReturn.has_value());
+        field("held_pts", heldPts, heldPts != ddr_bitstream_ring::kNoTimestamp);
+        field("held_tb_num", heldTimebaseNum, heldPts != ddr_bitstream_ring::kNoTimestamp);
+        field("held_tb_den", heldTimebaseDen, heldPts != ddr_bitstream_ring::kNoTimestamp);
+        field("pending_first_pts", pending.empty() ? 0 : pending.front().pts, !pending.empty());
+        field("pending_last_pts", pending.empty() ? 0 : pending.back().pts, !pending.empty());
+        field("pending_tb_num", pending.empty() ? 0 : pending.front().num, !pending.empty());
+        field("pending_tb_den", pending.empty() ? 0 : pending.front().den, !pending.empty());
+        field("drain_ack", drainAck.value_or(false), drainAck.has_value());
+        const int audioProgress = fpgaAudioProgress_.load();
+        field("audio_progress", audioProgress, audioProgress >= 0);
+        diagnostic << " audio_progress_call=" <<
+            (audioProgress >= 0 ? "returned" : audioProgress == -2 ? "in-flight" : "not-called");
+        field("audio_unsubmitted_pcm", fpgaAudioHeldBytes_.load(), audioBegun);
+        field("submitted_pcm", audioBytes_.load(), audioBegun);
+        const auto dmaQueued = audioQueuedBytes_.load();
+        const auto cachedConsumed = fpgaAudioConsumedSamples_.load();
+        field("queued_dma_bytes", dmaQueued,
+              audioBegun && fpgaHasConsumedClock_.load() && dmaQueued >= 0);
+        field("cached_live_samples", cachedConsumed,
+              fpgaHasConsumedClock_.load() && cachedConsumed >= 0);
+        field("cached_clock_change_age_us", playbackActiveUs() - fpgaAudioClockChangedUs_.load(),
+              fpgaHasConsumedClock_.load());
+        field("presentation_age_us", playbackActiveUs() - lastCommitActiveUs,
+              fpgaVideoStarted_.load());
+        diagnostic << " mast_read=" << (liveValid ? "ok" : audioBegun ? "failed" : "not-started");
+        field("mast_read_active_us", liveReadAtUs.value_or(0), liveReadAtUs.has_value());
+        field("mast_age_us", playbackActiveUs() - liveReadAtUs.value_or(0),
+              liveReadAtUs.has_value());
+        field("mast_session", live.session_id, liveValid);
+        field("mast_nonce", live.nonce, liveValid);
+        field("mast_publication", live.publication, liveValid);
+        field("mast_consumed", live.samples_consumed, liveValid);
+        field("mast_active", live.active, liveValid);
+        field("mast_paused", live.paused, liveValid);
+        field("mast_read_pending", live.read_pending, liveValid);
+        field("mast_prefetched", live.prefetched, liveValid);
+        field("mast_error", unsigned(live.error), liveValid);
+        field("mvps_frozen_samples", frozenSamples, frozenSamples >= 0);
+        return diagnostic.str();
+    };
+    terminal = finishFpgaPlayback({begun, eof, fullyDrained, presentCount_.load() > 0},
+        captureTerminal, [&] {
+        MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::Quiesce, tracePauseClock_);
+            span.serviceBegin();)
+        demux.requestStop();
+        stopOverlay.store(true);
+        if (overlayThread.joinable()) overlayThread.join();
+        if (audioThr_.joinable()) audioThr_.join();
+        std::lock_guard<std::mutex> lock(inprocMu_);
+        inprocPcm_ = nullptr;
+        MPX_AV_TRACE(span.serviceEnd(); span.value(0, 1); span.force();)
+    }, [&] {
+        MPX_AV_TRACE(AvTraceSpan span(traceWriter, FpgaAvEvent::Release, tracePauseClock_);
+            AvTraceRelease release{span};)
+        std::lock_guard<std::mutex> control(pauseControlMu_);
+        std::lock_guard<std::mutex> present(presentMu_);
+        MPX_AV_TRACE(span.acquired(); span.serviceBegin();)
+        if (overlayNonce) {
+            fpga_overlay::Model hidden;
+            hidden.state = fpga_overlay::State::Hidden;
+            hidden.flags = 0;
+            bool hiddenSent;
+            MPX_AV_TRACE({
+                AvTraceSpan hiddenSpan(traceWriter, FpgaAvEvent::OverlaySend, tracePauseClock_);
+                hiddenSpan.value(1, static_cast<int>(hidden.state));
+                hiddenSpan.uvalue(2, overlaySequence); hiddenSpan.serviceBegin();)
+            hiddenSent = fpga_overlay::send(fpga_, session, overlayNonce, overlaySequence, hidden);
+            MPX_AV_TRACE(hiddenSpan.serviceEnd(); hiddenSpan.value(0, hiddenSent);
+                hiddenSpan.force(); })
+            if (!hiddenSent)
+                log("ERROR native overlay hide transfer failed; lifecycle fence must clear the plane");
+        }
+        bool released = !begun;
+        if (begun) {
+            bool audioReset = true;
+            if (audioBegun) {
+                resetAttempted = true;
+                audioReset = controlFpgaAudio(session, AudioSessionControl::Reset);
+                releaseAudioReset = audioReset;
+            }
+            flushAttempted = audioReset;
+            const bool flushed = audioReset && fpga_.flushBitstreamSession(session, 500);
+            if (audioReset) releaseFlush = flushed;
+            endAttempted = flushed;
+            const bool ended = flushed && fpga_.endBitstreamSession(session, 500);
+            if (flushed) releaseEnd = ended;
+            released = ended;
+            if (!ended) {
+                failFpgaSession("audio/DPB/display/ingress reset ACK failed; attempting fenced abort");
+                abortAttempted = true;
+                released = fpga_.abortFpgaVideoSession(session, 2000);
+                releaseAbort = released;
+                if (!released)
+                    log("ERROR FPGA H.264: reset ownership retained; new play must recover this epoch");
+            }
+        }
+        if (begun && released) {
+            fpgaSession_.store(0);
+            if (fpgaAudioOutput_ >= 0) {
+                ::close(fpgaAudioOutput_);
+                fpgaAudioOutput_ = -1;
+            }
+        }
+        MPX_AV_TRACE(span.serviceEnd(); span.value(0, released); span.force();)
+        return released;
+    }, [&] { return playEpoch_.load() == epoch; }, [&] { return stop_.load(); },
+        [&](const FpgaTerminalReceipt& receipt) {
+            auto ack = [](std::optional<bool> value, bool attempted) {
+                return !attempted ? "not-attempted" : !value ? "unavailable" :
+                       *value ? "ok" : "failed";
+            };
+            log(formatFpgaTerminal(receipt) + " reset_ack=" + ack(releaseAudioReset, resetAttempted) +
+                " flush_ack=" + ack(releaseFlush, flushAttempted) +
+                " end_ack=" + ack(releaseEnd, endAttempted) +
+                " abort_ack=" + ack(releaseAbort, abortAttempted) +
+                " audio_exit_final=" + fpgaAudioExitName(fpgaAudioExit_.load()));
+        });
+    {
+        std::lock_guard<std::mutex> lock(summaryMu_);
+        lastSummary_.streamEnabled = true;
+        lastSummary_.totalBytes = bytes;
+        lastSummary_.presentedFrames = presentCount_.load();
+        lastSummary_.videoEof = terminal == PlaybackTerminalState::Ended;
+    }
+#endif
+    if (onProgress_)
+        reportFpgaPlaybackTerminal(terminal, [&] { return playEpoch_.load() == epoch; },
+            [&] { return stop_.load(); }, onProgress_, positionMs_.load(), durationMs);
+    playing_.store(false);
+#if MPX_FPGA_AV_TRACE && defined(MPX_HAVE_LIBAV)
+    // Natural EOF is reported first. Explicit Stop still joins this worker;
+    // the bounded dump's measured cost is therefore visible in Stop latency.
+    traceWriter.finish();
+    try {
+        if (!avTrace)
+            log("FPGA_AV_TRACE_UNAVAILABLE allocation_failed=1");
+        else if (!avTrace->freeze())
+            log("FPGA_AV_TRACE_UNAVAILABLE producers_not_quiescent=1");
+        else
+            avTrace->dump([&](const std::string& chunk) { log(chunk); });
+    } catch (...) {
+        try { log("FPGA_AV_TRACE_UNAVAILABLE dump_failed=1"); } catch (...) {}
+    }
+#endif
 }
 
 pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd) {
@@ -3795,6 +5105,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 return;
             }
             AvInprocOpenOpts iopts;
+            iopts.cancelled = &stop_;
             iopts.threads = 2;
             iopts.startMs = startMs;
             iopts.headers = headers;

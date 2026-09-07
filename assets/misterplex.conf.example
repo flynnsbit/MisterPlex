@@ -12,6 +12,29 @@
 # Optional static token (cast often supplies transient X-Plex-Token)
 # PLEX_TOKEN=
 
+# --- Explicit video backend (integration build) ---
+# No implicit backend or video fallback. Choose one deliberately:
+# MPX_VIDEO_BACKEND=fpga-h264
+# Experimental FPGA mode: up to 320x240 CODED, actual 24/1 or 24000/1001.
+# SPS visible size/crop/DAR may differ; shorter frames do not contain 300 MBs.
+# Requires a matching nonce/ABI/capability handshake and presentation ACKs.
+# Current scanout uses limited BT.601; matrix 2 follows an explicitly UNQUALIFIED default.
+# Matrix 2 is not signaled BT.601. Full range/known non-601 matrices fail closed.
+# ARM never relabels/converts pixels; strict signaling assessment remains separate.
+# Sound requires coherent DMA lifecycle/consumed-clock capabilities and fresh
+# epoch/token ACKs. The built-in controller primes while paused, then resumes
+# after actual video presentation; failed fences retain ownership for recovery.
+# One libav input owns container/video packets/audio; only audio is decoded on ARM.
+# MPX_H264_PROTOTYPE=ip   # ip or idr; selects its per-client PMS XML
+# MPX_H264_FILTER=on     # on or off; actual stream syntax is checked
+# No ARM scaling, padding, FPS override, RGB fallback, or in-place overlay in this mode.
+#
+# OLD matched baseline pairs only:
+# MPX_VIDEO_BACKEND=legacy-software
+# MPX_LEGACY_CORE_PREFIX=07f54d9f  # must match the live, known-old pinned core
+# STREAM=0                       # old host-I-recon hybrid is not a product backend
+#
+# The settings below describe the legacy software/presentation path.
 # --- Decode / present (Phase 2 transitional ARM path) ---
 # Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
 # FFMPEG=/media/fat/misterplex/bin/ffmpeg

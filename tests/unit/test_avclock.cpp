@@ -12,6 +12,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 static int fails = 0;
 #define CHECK(cond)                                                                              \
@@ -115,6 +117,51 @@ int main() {
     CHECK(audioClockUs(192) == 1000);
     CHECK(audioClockUs(192000) == 1000000);
 
+    // Execute the production INNER AU wait; no outer-loop pause handler runs.
+    // Resume after three seconds while this AU is still outside its lead window.
+    int64_t wallUs = 0, pausedUs = 0;
+    bool paused = false, resumedWithFutureAu = false;
+    int waitCalls = 0;
+    const auto paced = waitForCompressedAccessUnit(80000, [] { return true; },
+        [] { return true; }, [&] {
+            const int64_t activeUs = activePlaybackClockUs(wallUs, pausedUs);
+            if (waitCalls == 3005)
+                resumedWithFutureAu = !paused && activeUs + 40000 < 80000;
+            return CompressedPacingSnapshot{paused, activeUs, 0, activeUs};
+        }, [&] {
+            ++waitCalls;
+            if (waitCalls == 5) paused = true;
+            wallUs += 1000;
+            if (paused) pausedUs += 1000;
+            if (waitCalls == 3005) paused = false;
+        });
+    CHECK(paced == CompressedPacingResult::Due);
+    CHECK(resumedWithFutureAu);
+    CHECK(pausedUs > 2000000);
+    CHECK(wallUs > 3000000);
+    CHECK(activePlaybackClockUs(wallUs, pausedUs) == 40000);
+
+    // An actually stalled audio/video clock still expires after two ACTIVE seconds.
+    wallUs = 0;
+    CHECK(waitForCompressedAccessUnit(80000, [] { return true; }, [] { return true; },
+        [&] { return CompressedPacingSnapshot{false, wallUs, 0, 0}; },
+        [&] { wallUs += 1000; }) == CompressedPacingResult::Stalled);
+    CHECK(wallUs == 2001000);
+    bool keepWaiting = true;
+    CHECK(waitForCompressedAccessUnit(80000, [&] { return keepWaiting; },
+        [] { return true; },
+        [] { return CompressedPacingSnapshot{true, 0, 0, 0}; },
+        [&] { keepWaiting = false; }) == CompressedPacingResult::Cancelled);
+    // A frozen frame's MVPS audio count must not freeze the current DMA master clock.
+    const int64_t frozenPresentationSamples = 0;
+    int64_t liveSamples = 0;
+    wallUs = 0;
+    CHECK(waitForCompressedAccessUnit(80000, [] { return true; }, [] { return true; },
+        [&] { return CompressedPacingSnapshot{
+            false, wallUs, 0, audioClockUs(liveSamples * 4)}; },
+        [&] { wallUs += 2000; liveSamples += 96; }) == CompressedPacingResult::Due);
+    CHECK(frozenPresentationSamples == 0 && liveSamples == 1920);
+
     // --- drift polarity ---
     // drift > 0 means the master clock is past this frame's content time → video behind.
     CHECK(avDriftMs(1000, 900) == 100);
@@ -162,6 +209,51 @@ int main() {
           PlaybackTerminalState::Stopped);
     CHECK(classifyPlaybackTerminalState(true, true, true) ==
           PlaybackTerminalState::None);
+    CHECK(classifyFpgaPlaybackTerminalState(true, false, true, true, true, true) ==
+          PlaybackTerminalState::Ended);
+    CHECK(classifyFpgaPlaybackTerminalState(true, false, true, false, true, true) ==
+          PlaybackTerminalState::Stopped);
+    CHECK(classifyFpgaPlaybackTerminalState(true, false, true, true, false, true) ==
+          PlaybackTerminalState::Stopped);
+    CHECK(classifyFpgaPlaybackTerminalState(true, true, true, true, true, true) ==
+          PlaybackTerminalState::Stopped);
+    CHECK(classifyFpgaPlaybackTerminalState(true, false, false, true, true, true) ==
+          PlaybackTerminalState::Stopped);
+    CHECK(classifyFpgaPlaybackTerminalState(true, false, true, true, true, false) ==
+          PlaybackTerminalState::Stopped);
+    CHECK(classifyFpgaPlaybackTerminalState(false, false, true, true, true, true) ==
+          PlaybackTerminalState::None);
+
+    // Execute the production FPGA callback adapter, not just terminal classification.
+    std::vector<std::string> terminalReports;
+    uint64_t generation = 11;
+    bool stopped = false;
+    const auto progress = [&](const std::string& state, int64_t position, int64_t duration) {
+        CHECK(position == 7958 && duration == 8000);
+        terminalReports.push_back(state);
+    };
+    const auto report = [&](PlaybackTerminalState terminal) {
+        reportFpgaPlaybackTerminal(terminal, [&] { return generation == 11; },
+            [&] { return stopped; }, progress, 7958, 8000);
+    };
+    report(classifyFpgaPlaybackTerminalState(true, false, true, true, true, true));
+    CHECK(terminalReports.size() == 1 && terminalReports.back() == "ended");
+    report(classifyFpgaPlaybackTerminalState(true, false, true, false, true, true));
+    CHECK(terminalReports.size() == 2 && terminalReports.back() == "stopped");
+    stopped = true;
+    report(PlaybackTerminalState::Ended);
+    CHECK(terminalReports.size() == 3 && terminalReports.back() == "stopped");
+    stopped = false;
+    report(PlaybackTerminalState::None);
+    CHECK(terminalReports.size() == 3);
+    generation = 12;
+    report(PlaybackTerminalState::Ended);
+    CHECK(terminalReports.size() == 3);
+    generation = 11;
+    reportFpgaPlaybackTerminal(PlaybackTerminalState::Ended,
+        [&] { return generation == 11; },
+        [&] { generation = 12; return false; }, progress, 7958, 8000);
+    CHECK(terminalReports.size() == 3);
 
     // Sustained lateness must alternate drop/present, never produce a burst.
     for (const auto& rate : rates) {

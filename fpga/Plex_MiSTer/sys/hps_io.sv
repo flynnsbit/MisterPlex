@@ -259,6 +259,16 @@ reg [31:0] ps2_key_raw = 0;
 wire       pressed  = (ps2_key_raw[15:8] != 8'hf0);
 wire       extended = (~pressed ? (ps2_key_raw[23:16] == 8'he0) : (ps2_key_raw[15:8] == 8'he0));
 
+// Shared by uio_block and the optional PS2 device instances.
+reg  [7:0] kbd_data;
+reg        kbd_we;
+wire [8:0] kbd_data_host;
+reg        kbd_rd;
+reg  [7:0] mouse_data;
+reg        mouse_we;
+wire [8:0] mouse_data_host;
+reg        mouse_rd;
+
 reg [MAX_W:0] byte_cnt;
 reg   [3:0] sdn_ack;
 wire [15:0] disk = 16'd1 << io_din[11:8];
@@ -559,11 +569,6 @@ generate
 			end
 		end
 
-		reg  [7:0] kbd_data;
-		reg        kbd_we;
-		wire [8:0] kbd_data_host;
-		reg        kbd_rd;
-
 		ps2_device keyboard
 		(
 			.clk_sys(clk_sys),
@@ -581,11 +586,6 @@ generate
 			.rdata(kbd_data_host),
 			.rd(kbd_rd)
 		);
-
-		reg  [7:0] mouse_data;
-		reg        mouse_we;
-		wire [8:0] mouse_data_host;
-		reg        mouse_rd;
 
 		ps2_device mouse
 		(

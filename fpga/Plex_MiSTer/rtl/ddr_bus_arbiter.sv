@@ -20,7 +20,10 @@
 // write on clk_ddr, auto-pop read on clk_m1.  Beat-conservation test
 // confirmed 7/10 drops WITHOUT the FIFO, 0/10 WITH it.
 
-module ddr_bus_arbiter (
+module ddr_bus_arbiter #(
+	parameter bit M1_HELD_REQUESTS = 1'b0,
+	parameter bit M1_BLOCK_RAM = 1'b1
+) (
 	input  wire        clk,      // DDR bridge clock (90 MHz)
 	input  wire        clk_m1,   // m1 consumer clock (20 MHz / clk_sys)
 	input  wire        reset,    // synchronous to clk_m1 domain
@@ -57,6 +60,124 @@ module ddr_bus_arbiter (
 	output wire  [7:0] DDRAM_BE,
 	output wire        DDRAM_WE
 );
+generate
+if (M1_HELD_REQUESTS) begin : g_held
+	// Functional reset must not erase ownership of accepted transactions.
+	// These FIFO resets run only at FPGA startup; the reader retires responses
+	// while reset/disable is pending. Master 0's old responses are discarded.
+	reg sys_started = 1'b0;
+	reg ddr_started = 1'b0;
+	reg reset_d1 = 1'b1, reset_d2 = 1'b1;
+	always @(posedge clk_m1)
+		if (!reset) sys_started <= 1'b1;
+	always @(posedge clk) begin
+		if (!reset) ddr_started <= 1'b1;
+		reset_d1 <= reset;
+		reset_d2 <= reset_d1;
+	end
+	wire sys_boot = !sys_started;
+	wire ddr_boot = !ddr_started;
+
+	wire cmd_full, cmd_empty, cmd_take;
+	wire [110:0] cmd_data;
+	wire cmd_rd, cmd_we;
+	wire [7:0] cmd_burst, cmd_be;
+	wire [28:0] cmd_addr;
+	wire [63:0] cmd_din;
+	assign {cmd_rd, cmd_we, cmd_burst, cmd_addr, cmd_din, cmd_be} = cmd_data;
+	// This mode is the single-beat ring transport, not a burst DMA channel.
+	wire bad_m1_command = (m1_rd && m1_we) ||
+	                      ((m1_rd || m1_we) && m1_burstcnt != 8'd1);
+	assign m1_busy = sys_boot || reset || cmd_full || bad_m1_command;
+	// Dedicated dual-clock storage avoids a fabric-register payload path between clocks.
+	async_fifo #(.WIDTH(111), .AW(2), .USE_BLOCK_RAM(M1_BLOCK_RAM)) m1_commands (
+		.wr_clk(clk_m1), .wr_reset(sys_boot),
+		.wr_en(m1_want && (m1_rd || m1_we) && !m1_busy),
+		.wr_data({m1_rd, m1_we, m1_burstcnt, m1_addr, m1_din, m1_be}),
+		.wr_full(cmd_full), .wr_almost_full(),
+		.rd_clk(clk), .rd_reset(ddr_boot),
+		.rd_en(cmd_take), .rd_data(cmd_data), .rd_empty(cmd_empty)
+	);
+
+	reg prefer_m1;
+	reg rsp_owner_m1;
+	reg [8:0] rsp_left;
+	reg discard_m0_response;
+	reg stalled, stalled_m1, stalled_discard;
+	reg [110:0] stalled_command;
+	wire rsp_active = (rsp_left != 9'd0);
+	wire choose_m1 = !cmd_empty &&
+	                 (prefer_m1 || !(m0_rd || m0_we) || reset_d2);
+	wire use_m1 = stalled ? stalled_m1 : choose_m1;
+	wire issue = !ddr_boot && !rsp_active && (use_m1 || !reset_d2);
+	assign m0_busy = DDRAM_BUSY || ddr_boot || reset_d2 || rsp_active || use_m1;
+	wire [110:0] chosen_command = use_m1 ? cmd_data :
+		{m0_rd, m0_we, m0_burstcnt, m0_addr, m0_din, m0_be};
+	wire selected_rd, selected_we;
+	assign {selected_rd, selected_we, DDRAM_BURSTCNT, DDRAM_ADDR,
+	        DDRAM_DIN, DDRAM_BE} = stalled ? stalled_command : chosen_command;
+	assign DDRAM_RD = (stalled || issue) && selected_rd;
+	assign DDRAM_WE = (stalled || issue) && selected_we;
+	wire accepted = !DDRAM_BUSY && (DDRAM_RD || DDRAM_WE);
+	wire accepted_read = !DDRAM_BUSY && DDRAM_RD;
+	assign cmd_take = accepted && use_m1;
+
+	// A zero-latency response belongs to the read accepted on this edge.
+	wire response_valid = DDRAM_DOUT_READY && (rsp_active || accepted_read);
+	wire response_m1 = rsp_active ? rsp_owner_m1 : use_m1;
+	wire response_discard = rsp_active ? discard_m0_response :
+	                       (reset_d2 || (stalled && stalled_discard));
+	assign m0_dout = DDRAM_DOUT;
+	assign m0_dout_ready = response_valid && !response_m1 &&
+	                      !response_discard && !reset_d2;
+	wire rsp_empty;
+	wire [63:0] rsp_data;
+	async_fifo #(.WIDTH(64), .AW(3), .USE_BLOCK_RAM(M1_BLOCK_RAM)) m1_responses (
+		.wr_clk(clk), .wr_reset(ddr_boot),
+		.wr_en(response_valid && response_m1), .wr_data(DDRAM_DOUT),
+		.wr_full(), .wr_almost_full(),
+		.rd_clk(clk_m1), .rd_reset(sys_boot),
+		.rd_en(!rsp_empty), .rd_data(rsp_data), .rd_empty(rsp_empty)
+	);
+	assign m1_dout = rsp_data;
+	assign m1_dout_ready = !rsp_empty && !sys_boot;
+
+	always @(posedge clk) begin
+		if (ddr_boot) begin
+			prefer_m1 <= 1'b0;
+			rsp_owner_m1 <= 1'b0;
+			rsp_left <= 9'd0;
+			discard_m0_response <= 1'b0;
+			stalled <= 1'b0;
+			stalled_m1 <= 1'b0;
+			stalled_discard <= 1'b0;
+			stalled_command <= 111'd0;
+		end else begin
+			if (!stalled && DDRAM_BUSY && (DDRAM_RD || DDRAM_WE)) begin
+				stalled <= 1'b1;
+				stalled_m1 <= use_m1;
+				stalled_discard <= reset_d2;
+				stalled_command <= chosen_command;
+			end
+			if (stalled && reset_d2)
+				stalled_discard <= 1'b1;
+			if (reset_d2 && rsp_active && !rsp_owner_m1)
+				discard_m0_response <= 1'b1;
+			if (response_valid && rsp_active)
+				rsp_left <= rsp_left - 9'd1;
+			if (accepted) begin
+				prefer_m1 <= !use_m1;
+				stalled <= 1'b0;
+			end
+			if (accepted_read) begin
+				rsp_owner_m1 <= use_m1;
+				rsp_left <= {1'b0, DDRAM_BURSTCNT} -
+				            (DDRAM_DOUT_READY ? 9'd1 : 9'd0);
+				discard_m0_response <= reset_d2 || (stalled && stalled_discard);
+			end
+		end
+	end
+end else begin : g_legacy
 	// Reset synchroniser (reset originates in clk_sys, we run on clk_ddr)
 	reg reset_s1, reset_s2;
 	always @(posedge clk or posedge reset) begin
@@ -188,4 +309,6 @@ module ddr_bus_arbiter (
 				grant_m1 <= 1'b0;
 		end
 	end
+end
+endgenerate
 endmodule

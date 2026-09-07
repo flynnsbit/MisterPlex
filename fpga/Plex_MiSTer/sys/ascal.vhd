@@ -543,6 +543,7 @@ ARCHITECTURE rtl OF ascal IS
 	SIGNAL o_hpixq : arr_pixq(2 TO 8);
 	ATTRIBUTE ramstyle OF o_hpixq : SIGNAL IS "logic"; -- avoid blockram shift register
 	SIGNAL o_vpixq, o_vpixq_pre : arr_pix(0 TO 3);
+	SIGNAL o_vpix_past, o_vpix_last : boolean;
 	SIGNAL o_vpix_outer : arr_pix(0 TO 2);
 	SIGNAL o_vpix_inner : arr_pix(0 TO 6);
 
@@ -1012,6 +1013,13 @@ ARCHITECTURE rtl OF ascal IS
 		t0, t1, t2, t3  : signed(17 DOWNTO 0);
 	END RECORD;
 
+	TYPE poly_phase_diff_t IS RECORD
+		t0, t1, t2, t3 : signed(10 DOWNTO 0);
+	END RECORD;
+	TYPE poly_phase_product_t IS RECORD
+		t0, t1, t2, t3 : signed(19 DOWNTO 0);
+	END RECORD;
+
 	-- 5.22
 	TYPE type_poly_t IS RECORD
 		r0,r1,b0,b1,g0,g1 : signed(26 DOWNTO 0);
@@ -1027,11 +1035,13 @@ ARCHITECTURE rtl OF ascal IS
 	SIGNAL o_h_poly_phase_a,o_h_poly_phase_a2,o_h_poly_phase_a3, o_h_poly_phase_a4, o_h_poly_phase_a5 : poly_phase_t;
 	SIGNAL o_v_poly_phase_a,o_v_poly_phase_a2,o_v_poly_phase_a3, o_v_poly_phase_a4, o_v_poly_phase_a5 : poly_phase_t;
 	SIGNAL o_poly_phase_a, o_poly_phase_a2, o_poly_phase_a3 : poly_phase_t;
-	SIGNAL o_poly_phase_b,o_poly_phase_b2,o_poly_phase_b3 : poly_phase_t;
-	SIGNAL o_v_poly_phase, o_v_poly_phase2, o_h_poly_phase, o_poly_phase, o_poly_phase1 : poly_phase_interp_t;
+	SIGNAL o_poly_phase_b : poly_phase_t;
+	SIGNAL o_poly_phase_diff : poly_phase_diff_t;
+	SIGNAL o_poly_phase_product : poly_phase_product_t;
+	SIGNAL o_v_poly_phase, o_v_poly_phase2, o_h_poly_phase, o_poly_phase1 : poly_phase_interp_t;
 	SIGNAL o_v_poly_pix, o_h_poly_pix, o_h_lum_pix, o_v_lum_pix : type_pix;
 	SIGNAL o_poly_lum, o_poly_lum1 : unsigned(7 DOWNTO 0);
-	SIGNAL o_poly_lerp_ta, o_poly_lerp_tb : signed(9 DOWNTO 0);
+	SIGNAL o_poly_lerp_t : signed(8 DOWNTO 0);
 	SIGNAL o_h_poly_t,o_h_poly_t2,o_v_poly_t   : type_poly_t;
 
 	SIGNAL o_v_poly_adaptive, o_h_poly_adaptive, o_v_poly_use_adaptive, o_h_poly_use_adaptive : std_logic;
@@ -1079,19 +1089,38 @@ ARCHITECTURE rtl OF ascal IS
 		RETURN p;
 	END FUNCTION;
 
-	-- 4 DSP 18*18 + 18*18
-	FUNCTION poly_lerp(a  : poly_phase_t;
-							 b  : poly_phase_t;
-							 ta : SIGNED(9 DOWNTO 0);
-							 tb : SIGNED(9 DOWNTO 0)) RETURN poly_phase_interp_t IS
+	FUNCTION poly_diff(a, b : poly_phase_t) RETURN poly_phase_diff_t IS
+		VARIABLE v : poly_phase_diff_t;
+	BEGIN
+		v.t0 := resize(b.t0,11) - resize(a.t0,11);
+		v.t1 := resize(b.t1,11) - resize(a.t1,11);
+		v.t2 := resize(b.t2,11) - resize(a.t2,11);
+		v.t3 := resize(b.t3,11) - resize(a.t3,11);
+		RETURN v;
+	END FUNCTION;
+
+	FUNCTION poly_product(d : poly_phase_diff_t;
+								 t : signed(8 DOWNTO 0)) RETURN poly_phase_product_t IS
+		VARIABLE v : poly_phase_product_t;
+	BEGIN
+		v.t0 := d.t0 * t;
+		v.t1 := d.t1 * t;
+		v.t2 := d.t2 * t;
+		v.t3 := d.t3 * t;
+		RETURN v;
+	END FUNCTION;
+
+	-- A*(256-luma) + B*luma = A*256 + (B-A)*luma.
+	-- Keep the original final slice: signed differences need all 11 bits.
+	FUNCTION poly_lerp(a : poly_phase_t;
+							 p : poly_phase_product_t) RETURN poly_phase_interp_t IS
 		VARIABLE v : poly_phase_interp_t;
 		VARIABLE t0,t1,t2,t3 : signed(19 DOWNTO 0);
 	BEGIN
-		-- 2.8 * 2.8 = 4.16
-		t0 := (a.t0 * ta) + (b.t0 * tb);
-		t1 := (a.t1 * ta) + (b.t1 * tb);
-		t2 := (a.t2 * ta) + (b.t2 * tb);
-		t3 := (a.t3 * ta) + (b.t3 * tb);
+		t0 := resize(a.t0 & "00000000",20) + p.t0;
+		t1 := resize(a.t1 & "00000000",20) + p.t1;
+		t2 := resize(a.t2 & "00000000",20) + p.t2;
+		t3 := resize(a.t3 & "00000000",20) + p.t3;
 
 		-- 4.16 -> 3.15
 		v.t0 := t0(18 DOWNTO 1);
@@ -2416,24 +2445,25 @@ BEGIN
 			o_poly_lum1<=o_poly_lum;
 
 			-- C5 / HC5 / VC6
-			o_poly_lerp_ta<=signed(to_unsigned(256,10) - resize(o_poly_lum1,10));
-			o_poly_lerp_tb<=signed(resize(o_poly_lum1,10));
-
-			o_poly_phase_b2<=o_poly_phase_b;
+			o_poly_lerp_t<=signed('0' & o_poly_lum1);
+			o_poly_phase_diff<=poly_diff(o_poly_phase_a, o_poly_phase_b);
 			o_poly_phase_a2<=o_poly_phase_a;
 
 			o_h_poly_phase_a3<=o_h_poly_phase_a2;
 			o_v_poly_phase_a3<=o_v_poly_phase_a2;
 
 			-- C6 / HC6 / VC7
-			o_poly_phase<=poly_lerp(o_poly_phase_a2, o_poly_phase_b2, o_poly_lerp_ta, o_poly_lerp_tb);
+			-- Four products instead of four sum-of-two-products DSP cones.
+			-- The former C7 delay now adds A*256; coefficient latency is unchanged.
+			o_poly_phase_product<=poly_product(o_poly_phase_diff, o_poly_lerp_t);
+			o_poly_phase_a3<=o_poly_phase_a2;
 			o_h_poly_phase_a4<=o_h_poly_phase_a3;
 			o_v_poly_phase_a4<=o_v_poly_phase_a3;
 
 			-- C7 / HC7 / VC8
 			o_h_poly_phase_a5<=o_h_poly_phase_a4;
 			o_v_poly_phase_a5<=o_v_poly_phase_a4;
-			o_poly_phase1<=o_poly_phase;
+			o_poly_phase1<=poly_lerp(o_poly_phase_a3, o_poly_phase_product);
 
 			-- C8 / HC8 / VC9
 			o_v_poly_phase<=poly_cvt(o_v_poly_phase_a5);
@@ -2895,28 +2925,27 @@ BEGIN
 				o_vpix_inner(1 TO 5)<=o_vpix_inner(0 TO 4);
 
 				-- CYCLE 8
-				IF to_integer(o_vacpt)>o_ivsize THEN
-					IF fracnn_v = '0' THEN
-						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_inner(5), o_vpix_inner(5), o_vpix_inner(5));
-					ELSE
-						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_outer(1), o_vpix_outer(1), o_vpix_outer(1));
-					END IF;
-				ELSIF to_integer(o_vacpt)=o_ivsize THEN
-					IF fracnn_v = '0' THEN
-						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_inner(5), o_vpix_outer(1), o_vpix_outer(1));
-					ELSE
-						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_outer(1), o_vpix_inner(5), o_vpix_inner(5));
-					END IF;
+				-- Register edge predicates with the unextended pixels, so the
+				-- wide comparison does not also drive the pixel mux this cycle.
+				o_vpix_past<=to_integer(o_vacpt)>o_ivsize;
+				o_vpix_last<=to_integer(o_vacpt)=o_ivsize;
+				IF fracnn_v = '0' THEN
+					o_vpixq_pre<=(o_vpix_outer(0), o_vpix_inner(5), o_vpix_outer(1), o_vpix_outer(2));
 				ELSE
-					IF fracnn_v = '0' THEN
-						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_inner(5), o_vpix_outer(1), o_vpix_outer(2));
-					ELSE
-						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_outer(1), o_vpix_inner(5), o_vpix_outer(2));
-					END IF;
+					o_vpixq_pre<=(o_vpix_outer(0), o_vpix_outer(1), o_vpix_inner(5), o_vpix_outer(2));
 				END IF;
 
 				-- CYCLE 9
-				o_vpixq<=o_vpixq_pre;
+				-- Extend the bottom edge in the existing delay stage. Both the
+				-- predicates and pixels hold together when o_ce is low.
+				pixq_v:=o_vpixq_pre;
+				IF o_vpix_past THEN
+					pixq_v(2):=o_vpixq_pre(1);
+					pixq_v(3):=o_vpixq_pre(1);
+				ELSIF o_vpix_last THEN
+					pixq_v(3):=o_vpixq_pre(2);
+				END IF;
+				o_vpixq<=pixq_v;
 
 				-- BILINEAR / SHARP BILINEAR -----------------------
 				-- C8 : Pre-calc Sharp Bilinear

@@ -5,7 +5,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 static int fails = 0;
@@ -39,6 +43,43 @@ int main() {
     CHECK(r.ok);
     CHECK(r.playable == "/media/fat/mistercast/test.mp4");
 
+    const bool hadBackend = std::getenv("MPX_VIDEO_BACKEND") != nullptr;
+    const std::string savedBackend = hadBackend ? std::getenv("MPX_VIDEO_BACKEND") : "";
+    const bool hadPath = std::getenv("PATH") != nullptr;
+    const std::string savedPath = hadPath ? std::getenv("PATH") : "";
+    const auto probeDir = std::filesystem::absolute(
+        "build/session/resolve-probe-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(probeDir);
+    const auto probe = probeDir / "ffmpeg";
+    const auto marker = probeDir / "ffmpeg.invoked";
+    {
+        std::ofstream script(probe);
+        script << "#!/bin/sh\nprintf invoked > \"$0.invoked\"\n"
+                  "printf '%s\\n' 'Stream #0:0: Video: h264, yuv420p, "
+                  "320x240 [SAR 1:1 DAR 4:3], 24 fps'\n";
+    }
+    CHECK(::chmod(probe.c_str(), 0700) == 0);
+    ::setenv("PATH", (probeDir.string() + ":" + savedPath).c_str(), 1);
+    if (::access("/media/fat/misterplex/bin/ffmpeg", X_OK) != 0) {
+        ::setenv("MPX_VIDEO_BACKEND", "legacy-software", 1);
+        CHECK(resolvePlayTarget("/missing-probe-control.mp4", "", "", 0, true).ok);
+        CHECK(std::filesystem::exists(marker));
+        std::filesystem::remove(marker);
+    }
+    ::setenv("MPX_VIDEO_BACKEND", "fpga-h264", 1);
+    const auto localFpga = resolvePlayTarget("/missing-fpga-local.mp4", "", "", 0, true);
+    CHECK(localFpga.ok && localFpga.playable == "/missing-fpga-local.mp4");
+    CHECK(!std::filesystem::exists(marker));
+    CHECK(localFpga.fpsNum == 0 && localFpga.fpsDen == 0);
+    CHECK(localFpga.mediaWidth == 0 && localFpga.mediaHeight == 0);
+    CHECK(!localFpga.sourceAspect.valid);
+    CHECK(localFpga.detail.find("sole compressed demux") != std::string::npos);
+    if (hadBackend) ::setenv("MPX_VIDEO_BACKEND", savedBackend.c_str(), 1);
+    else ::unsetenv("MPX_VIDEO_BACKEND");
+    if (hadPath) ::setenv("PATH", savedPath.c_str(), 1);
+    else ::unsetenv("PATH");
+    std::filesystem::remove_all(probeDir);
+
     // rk 40868 must not short-circuit to the identity cache file.
     auto fp = resolvePlayTarget("/media/fat/misterplex/cache/farpoint_1280x720.mp4",
                                 "http://127.0.0.1:32400", "tok", 0, true);
@@ -71,6 +112,82 @@ int main() {
     CHECK(w240.h264Profile == "baseline");
     CHECK(w240.h264Level == 30);
     CHECK(validateWeakLadder(w240));
+    WeakLadder fpgaProfile;
+    CHECK(applyFpgaPlexProfile(fpgaProfile, "ip", 24, 1, false));
+    CHECK(fpgaProfile.clientProfileName == "MiSTerPlex-FPGA-IP-240p-24-filter-on");
+    CHECK(fpgaProfile.videoResolution == "320x240");
+    CHECK(fpgaProfile.h264Profile == "baseline");
+    CHECK(validateWeakLadder(fpgaProfile));
+    CHECK(fitWeakLadderToAspect(fpgaProfile, {16, 9, true}).videoResolution == "320x240");
+    CHECK(fitWeakLadderToAspect(fpgaProfile, {9, 16, true}).videoResolution == "320x240");
+    CHECK(fitWeakLadderToAspect(w240, {16, 9, true}).videoResolution == "320x180");
+    const auto metadataDar = sourceAspectFromPlexMetadata(
+        R"(<Video><Media aspectRatio="1.66"><Part><Stream streamType="1" sar="1:1"/></Part></Media></Video>)",
+        320, 212);
+    CHECK(metadataDar.valid);
+    CHECK(metadataDar.x * 100 > metadataDar.y * 165);
+    CHECK(metadataDar.x * 100 < metadataDar.y * 167);
+    CHECK(fitWeakLadderToAspect(fpgaProfile, metadataDar).videoResolution == "320x240");
+    CHECK(applyFpgaPlexProfile(fpgaProfile, "idr", 24000, 1001, true));
+    CHECK(fpgaProfile.clientProfileName == "MiSTerPlex-FPGA-IDR-240p-23976-filter-off");
+    CHECK(!plexSendClientLadderCaps(fpgaProfile));
+    const auto fpgaStart = buildUniversalTranscodeUrl(
+        "http://pms.example:32400", "/library/metadata/3", "header-only-token",
+        "fpga-session", 0, fpgaProfile);
+    const auto fpgaDecision = buildUniversalDecisionUrl(
+        fpgaStart, "fpga-session", "header-only-token", fpgaProfile);
+    for (const auto& url : {fpgaStart, fpgaDecision}) {
+        CHECK(!url.empty());
+        CHECK(url.find("directPlay=0&directStream=0") != std::string::npos);
+        CHECK(url.find("container=mpegts") != std::string::npos);
+        CHECK(url.find("audioChannels=2") != std::string::npos);
+        CHECK(url.find("videoResolution=320x240") != std::string::npos);
+        CHECK(url.find("videoFrameRate=24000%2F1001") != std::string::npos);
+        CHECK(url.find("X-Plex-Token") == std::string::npos);
+        CHECK(url.find("header-only-token") == std::string::npos);
+    }
+    const auto fpgaHeaders = plexFfmpegHeaders("fpga-session", "header-only-token", fpgaProfile);
+    CHECK(fpgaHeaders.find("X-Plex-Token: header-only-token\r\n") != std::string::npos);
+    CHECK(fpgaHeaders.find("X-Plex-Client-Profile-Name: " + fpgaProfile.clientProfileName) !=
+          std::string::npos);
+    CHECK(fpgaHeaders.find("X-Plex-Client-Profile-Extra") == std::string::npos);
+    CHECK(fpgaHeaders.find("X-Plex-Client-Capabilities") == std::string::npos);
+    {
+        const auto curlDir = std::filesystem::absolute(
+            "build/session/resolve-profile-" + std::to_string(::getpid()));
+        std::filesystem::create_directories(curlDir);
+        const auto fakeCurl = curlDir / "curl";
+        {
+            std::ofstream script(fakeCurl);
+            script << "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n"
+                      "printf '%s\\n' '<MediaContainer transcodeDecisionCode=\"1001\"/>'\n";
+        }
+        CHECK(::chmod(fakeCurl.c_str(), 0700) == 0);
+        ::setenv("PATH", (curlDir.string() + ":" + savedPath).c_str(), 1);
+        WeakLadder generic;
+        generic.clientProfileName = "Generic";
+        for (const auto& selected : {fpgaProfile, WeakLadder{}, generic}) {
+            const auto start = buildUniversalTranscodeUrl(
+                "http://pms.example:32400", "/library/metadata/3", "fixture-token",
+                "profile-test", 0, selected);
+            CHECK(ensureUniversalDecision(start, "profile-test", "fixture-token", selected));
+            std::ifstream arguments(fakeCurl.string() + ".args");
+            std::string argument;
+            unsigned profilesSent = 0;
+            while (std::getline(arguments, argument)) {
+                if (argument.rfind("X-Plex-Client-Profile-Name:", 0) != 0)
+                    continue;
+                ++profilesSent;
+                CHECK(argument == "X-Plex-Client-Profile-Name: " + selected.clientProfileName);
+            }
+            CHECK(profilesSent == 1);
+        }
+        if (hadPath) ::setenv("PATH", savedPath.c_str(), 1);
+        else ::unsetenv("PATH");
+        std::filesystem::remove_all(curlDir);
+    }
+    CHECK(!applyFpgaPlexProfile(fpgaProfile, "ip", 30, 1, false));
+    CHECK(!applyFpgaPlexProfile(fpgaProfile, "auto", 24, 1, false));
 
     WeakLadder w480;
     CHECK(applyPlexTranscodeProfile("480p", w480));
@@ -273,6 +390,11 @@ int main() {
         CHECK(parseExactFps("", "23.976023", n, d) && n == 24000 && d == 1001);
         n = d = 0;
         CHECK(parseExactFps("", "24.000", n, d) && n == 24 && d == 1);
+        CHECK(parseExactFps("", "24000/1001", n, d) && n == 24000 && d == 1001);
+        CHECK(parseExactFps("", "48/2", n, d) && n == 24 && d == 1);
+        CHECK(!parseExactFps("", "24garbage", n, d));
+        CHECK(!parseExactFps("", "24000/1001junk", n, d));
+        CHECK(!parseExactFps("", "24/0", n, d));
         n = d = 0;
         CHECK(parseExactFps("", "29.97", n, d) && n == 30000 && d == 1001);
         n = d = 0;
@@ -285,7 +407,9 @@ int main() {
         CHECK(parseExactFps("NTSC", "", n, d) && n == 30000 && d == 1001);
         n = d = 0;
         // Fall back to the videoFrameRate bucket only when Stream@frameRate is absent.
-        CHECK(parseExactFps("24p", "", n, d) && n == 24 && d == 1);
+        // Preserve the shipping metadata-only NTSC-film fallback; numeric Stream
+        // frameRate still selects genuine 24/1 independently.
+        CHECK(parseExactFps("24p", "", n, d) && n == 24000 && d == 1001);
         n = d = 0;
         CHECK(parseExactFps("", "", n, d) == false && n == 0 && d == 0);
         n = d = 0;

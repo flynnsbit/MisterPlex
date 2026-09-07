@@ -10,6 +10,7 @@
 
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
+#include "libmisterplex/audio_session.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 #include "libmisterplex/source_aspect.hpp"
 #include "libmisterplex/spi_ack_wait.hpp"
@@ -202,6 +203,28 @@ public:
     using BitstreamNal = ddr_bitstream_ring::Nal;
     using BitstreamStatus = ddr_bitstream_ring::Status;
     using BitstreamPushResult = ddr_bitstream_ring::PushResult;
+    using BitstreamAccessUnit = ddr_bitstream_ring::AccessUnit;
+    using VideoCapabilities = ddr_bitstream_ring::VideoCapabilities;
+    using VideoPresentation = ddr_bitstream_ring::VideoPresentation;
+    bool beginFpgaVideoSession(uint64_t session_id, VideoCapabilities& capabilities,
+                               int timeout_ms = 1000);
+    BitstreamPushResult pushBitstreamAccessUnit(const BitstreamAccessUnit& au,
+                                               int timeout_ms = 250);
+    bool drainBitstreamSession(uint64_t session_id, int timeout_ms = 2000);
+    VideoCapabilities videoCapabilities() const;
+    // Native MVPS: audio samples are frozen at this frame's display ACK.
+    // Use readAudioSessionStatus separately for the current pacing/EOF clock.
+    bool readVideoPresentation(uint64_t session_id, VideoPresentation& status);
+    using AudioControl = audio_session::Control;
+    using AudioSessionStatus = audio_session::Status;
+    // Quiesce the HPS producer before Begin/Reset. Begin ACK leaves DMA paused
+    // for priming; Resume starts the first queued sample without dropping it.
+    bool controlAudioSession(uint64_t session_id, AudioControl command,
+                             int timeout_ms = 1000);
+    bool readAudioSessionStatus(uint64_t session_id, AudioSessionStatus& status);
+    // Recovery after a failed End/Flush. Never releases local ownership until
+    // actual audio Reset and fresh decoder CTRL-reset fences have acknowledged.
+    bool abortFpgaVideoSession(uint64_t session_id, int timeout_ms = 2000);
     bool beginBitstreamSession(uint64_t session_id, int timeout_ms = 250);
     BitstreamPushResult pushBitstreamNal(const BitstreamNal& nal, int timeout_ms = 250);
     bool flushBitstreamSession(uint64_t session_id, int timeout_ms = 250);
@@ -357,13 +380,21 @@ private:
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);
     bool waitBitstreamReadCount(uint32_t target, int timeout_ms);
+    bool waitBitstreamControl(ddr_bitstream_ring::Event event, uint64_t session_id,
+                              uint32_t target, int timeout_ms);
+    bool requireBitstreamSession(uint64_t session_id, const char* operation);
+    bool resetBitstreamRing(int timeout_ms);
+    bool readVideoCapabilities(uint64_t nonce, VideoCapabilities& capabilities);
+    bool readBitstreamSnapshot(uint32_t phys, uint64_t* words, size_t count);
     BitstreamPushResult writeBitstreamRecord(ddr_bitstream_ring::Event event,
                                              uint64_t session_id,
                                              uint32_t seq,
                                              uint8_t nal_type,
                                              const uint8_t* payload,
                                              size_t len,
-                                             int timeout_ms);
+                                             int timeout_ms,
+                                             const uint8_t* prefix = nullptr,
+                                             size_t prefix_len = 0);
     void publishBitstreamCtrl();
     bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
@@ -389,6 +420,16 @@ private:
     uint32_t bitstreamLegacySeq_ = 0;
     bool bitstreamLegacyActive_ = false;
     bool bitstreamResetEpoch_ = false;
+    uint16_t bitstreamProtocolVersion_ = 0;
+    bool bitstreamSessionActive_ = false;
+    uint64_t bitstreamSessionId_ = 0;
+    uint32_t bitstreamNextSeq_ = 0;
+    VideoCapabilities videoCapabilities_{};
+    uint64_t audioCommandToken_ = 0;
+    uint32_t audioPublication_ = 0;
+    bool audioSessionOwned_ = false;
+    bool bitstreamResetPending_ = false;
+    bool bitstreamAbortPending_ = false;
 };
 
 } // namespace misterplex

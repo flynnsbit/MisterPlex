@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -78,9 +79,40 @@ def parse_hierarchy_report(path: Path) -> list[HierRow]:
     return rows
 
 
-def load_config(path: Path) -> list[dict[str, object]]:
+def captured_profile(qsf: Path | None, manifest: Path | None) -> str:
+    if qsf is None:
+        if manifest is not None:
+            raise ValueError("--input-manifest requires --qsf")
+        return "baseline"
+    if manifest is None:
+        raise ValueError("--qsf requires its captured --input-manifest")
+    data = qsf.read_bytes()
+    inputs = json.loads(manifest.read_text())
+    if hashlib.sha256(data).hexdigest() != inputs["input_files"]["Plex.qsf"]:
+        raise ValueError("captured QSF hash does not match input manifest")
+    values = set()
+    for line in data.decode().splitlines():
+        match = re.match(
+            r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+(?:"([^"]+)"|\{([^}]+)\}|([^\s#]+))',
+            line,
+        )
+        if match:
+            macro = next(value for value in match.groups() if value is not None)
+            if macro.startswith("FPGA_VIDEO_320="):
+                values.add(macro.split("=", 1)[1])
+    if len(values) > 1 or values - {"0", "1"}:
+        raise ValueError("ambiguous FPGA_VIDEO_320 configuration in captured QSF")
+    return "fpga320" if values == {"1"} else "baseline"
+
+
+def load_config(path: Path, profile: str = "baseline") -> list[dict[str, object]]:
     data = json.loads(path.read_text())
-    return list(data.get("modules", []))
+    specs = [dict(spec) for spec in data.get("modules", [])]
+    if profile != "baseline":
+        overrides = data["profiles"][profile]["module_overrides"]
+        for spec in specs:
+            spec.update(overrides.get(spec["name"], {}))
+    return specs
 
 
 def find_row(rows: list[HierRow], spec: dict[str, object]) -> HierRow | None:
@@ -178,6 +210,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--map-rpt", type=Path)
     ap.add_argument("--log", type=Path, help="Quartus compile log to scan for removal/tie-off warnings")
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    ap.add_argument("--qsf", type=Path, help="Captured private QSF; never defaults to the live worktree")
+    ap.add_argument("--input-manifest", type=Path, help="inputs.json binding the captured QSF hash")
     ap.add_argument(
         "--allow-missing",
         action="append",
@@ -187,14 +221,26 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv[1:])
 
     try:
-        rows = parse_hierarchy_report(args.fit_rpt)
+        fitted_rows = parse_hierarchy_report(args.fit_rpt)
+        rows = list(fitted_rows)
         if args.map_rpt:
             rows += parse_hierarchy_report(args.map_rpt)
     except FileNotFoundError as e:
         print(f"FIT_HIERARCHY_REFUSED(exit=4): missing report {e.filename}", file=sys.stderr)
         return 4
 
-    specs = load_config(args.config)
+    try:
+        profile = captured_profile(args.qsf, args.input_manifest)
+        specs = load_config(args.config, profile)
+        if profile == "fpga320" and args.allow_missing:
+            raise ValueError("FPGA320 does not permit --allow-missing modules")
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"FIT_HIERARCHY_REFUSED(exit=4): {exc}", file=sys.stderr)
+        return 4
+    print(f"FIT_HIERARCHY_PROFILE: {profile}")
+    if profile == "fpga320":
+        # Mapped estimates cannot satisfy physical FPGA320 presence/M10K floors.
+        rows = fitted_rows
     found = [(spec, find_row(rows, spec)) for spec in specs]
     print("FIT_HIERARCHY_TABLE_BEGIN")
     print(format_table(found))

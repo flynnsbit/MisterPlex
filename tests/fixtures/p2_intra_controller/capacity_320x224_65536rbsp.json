@@ -1,0 +1,33 @@
+{
+  "fixture": "capacity_320x224_65536rbsp.264",
+  "sha256": "b52260df3940c56f88d90ec7a7670b3147f3d4a08193430f393315f42b74e98c",
+  "frames": 1,
+  "coded_width": 320,
+  "coded_height": 224,
+  "crop_luma_samples": [0, 0, 0, 12],
+  "sar": [0, 0],
+  "sar_known": false,
+  "vcl_rbsp_bytes": 65536,
+  "terminal_bit_cursor": 524288,
+  "profile": "baseline",
+  "max_num_ref_frames": 0,
+  "qp": 18,
+  "disable_deblocking_filter_idc": 1,
+  "source": {
+    "kind": "deterministic procedural YUV420; no movie pixels",
+    "base_seed": 64000,
+    "luma": "Python random.Random(64000).randrange(256), row-major 320x224; sample*245//256+5",
+    "final_luma_macroblock": "Replace x304..319,y208..223 with random.Random(0).randrange(256)*115//256+70",
+    "chroma_u": "32+(x+y)//2 for row-major 160x112",
+    "chroma_v": "224-(x+y)//2 for row-major 160x112"
+  },
+  "encoder": {
+    "tool": "ffmpeg/libx264",
+    "input": "rawvideo yuv420p 320x224, default rawvideo frame rate 25",
+    "threads": 1,
+    "frames": 1,
+    "x264_params": "cabac=0:no-deblock=1:keyint=1:ref=1:bframes=0:8x8dct=0:partitions=i4x4:ipratio=1:psy=0:crop-rect=0,0,0,12"
+  },
+  "method": "Pixel entropy was selected before ordinary x264 encoding until the complete legal VCL RBSP was exactly 65536 bytes. No encoded header, residual, reference, filter flag, or trailing bits were patched.",
+  "scope": "Controller RBSP capacity and coded/cropped geometry regression, not playback, source-DAR, hardware throughput, or full-AU transport-capacity qualification. Annex-B framing and emulation-prevention bytes are outside the RBSP byte count."
+}

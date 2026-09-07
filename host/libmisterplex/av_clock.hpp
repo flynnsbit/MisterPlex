@@ -52,6 +52,32 @@ inline int64_t activePlaybackClockUs(int64_t wallUs, int64_t pausedUs) {
     return pausedUs >= wallUs ? 0 : wallUs - pausedUs;
 }
 
+struct CompressedPacingSnapshot {
+    bool paused = false;
+    int64_t activeUs = 0;
+    int64_t lastPresentationActiveUs = 0;
+    int64_t mediaUs = 0;
+};
+
+enum class CompressedPacingResult { Due, Cancelled, Stalled };
+
+template<class Continue, class Poll, class Snapshot, class Wait>
+CompressedPacingResult waitForCompressedAccessUnit(
+    long double targetUs, Continue current, Poll poll, Snapshot snapshot, Wait wait,
+    int64_t leadUs = 40000, int64_t timeoutUs = 2000000) {
+    while (current()) {
+        if (!poll()) return CompressedPacingResult::Cancelled;
+        const auto clock = snapshot();
+        if (!clock.paused && targetUs <= clock.mediaUs + leadUs)
+            return CompressedPacingResult::Due;
+        if (!clock.paused &&
+            clock.activeUs - clock.lastPresentationActiveUs > timeoutUs)
+            return CompressedPacingResult::Stalled;
+        wait();
+    }
+    return CompressedPacingResult::Cancelled;
+}
+
 // Audio master clock (ms) from bytes handed to MrAudio (s16le stereo @ 48 kHz).
 inline int64_t audioClockMs(int64_t audioBytes) {
     if (audioBytes <= 0)
@@ -90,6 +116,26 @@ inline PlaybackTerminalState classifyPlaybackTerminalState(bool stopRequested,
     if (pipelineAborted || !hadContent)
         return PlaybackTerminalState::Stopped;
     return PlaybackTerminalState::Ended;
+}
+
+inline PlaybackTerminalState classifyFpgaPlaybackTerminalState(
+    bool currentGeneration, bool stopRequested, bool naturalEof, bool fullyDrained,
+    bool released, bool hadPresentation) {
+    if (!currentGeneration) return PlaybackTerminalState::None;
+    return !stopRequested && naturalEof && fullyDrained && released && hadPresentation
+        ? PlaybackTerminalState::Ended : PlaybackTerminalState::Stopped;
+}
+
+template<class Current, class Stopped, class Progress>
+void reportFpgaPlaybackTerminal(PlaybackTerminalState terminal, Current current,
+                               Stopped stopped, const Progress& progress,
+                               int64_t positionMs, int64_t durationMs) {
+    if (terminal == PlaybackTerminalState::None)
+        return;
+    const char* state = terminal == PlaybackTerminalState::Ended && !stopped()
+        ? "ended" : "stopped";
+    if (current())
+        progress(state, positionMs, durationMs);
 }
 
 // Decide what to do with the frame we just decoded.

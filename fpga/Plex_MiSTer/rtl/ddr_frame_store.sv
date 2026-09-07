@@ -37,6 +37,9 @@ module ddr_frame_store #(
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
 	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
 	parameter bit STRICT_YUV_DOORBELL = 1'b1,
+	parameter bit FPGA_PUBLISH_ONLY = 1'b0,
+	parameter bit RUNTIME_GEOMETRY = 1'b0,
+	parameter bit LIMITED_BT601 = 1'b0,
 	// 0: fill_bank_base = fill_bank ? BASE_W1 : BASE_W0 (product, bit-identical).
 	parameter bit DYN_BASE_EN = 1'b0,
 	// 720p L4: LINE_COUNT=8 never covers the beam, so need_y_beam_c stays 1
@@ -47,6 +50,8 @@ module ddr_frame_store #(
 	input  wire        clk,
 	input  wire        clk_ddr,
 	input  wire        reset,
+	input  wire        generation_clear,
+	output wire        generation_idle,
 
 	input  wire [$clog2(FRAME_W)-1:0] rd_x,
 	input  wire [$clog2(FRAME_H)-1:0] rd_y,
@@ -54,9 +59,13 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+	output reg         rd_de,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
+	input  wire [15:0] picture_coded_width, picture_coded_height,
+	input  wire [15:0] picture_crop_left, picture_crop_right,
+	input  wire [15:0] picture_crop_top, picture_crop_bottom,
 	input  wire [15:0] status_osd,
 	input  wire        input_cmd_valid,
 	input  wire  [7:0] input_cmd,
@@ -64,6 +73,8 @@ module ddr_frame_store #(
 	input  wire        ioctl_wr,
 	input  wire [7:0]  ioctl_dout,
 	input  wire [15:0] ioctl_index,
+	output wire [11:0] source_aspect_x,
+	output wire [11:0] source_aspect_y,
 	input  wire  [3:0] sdram_test_state,
 	input  wire  [3:0] sdram_size_code,
 	input  wire [15:0] sdram_error_count,
@@ -157,27 +168,45 @@ module ddr_frame_store #(
 	wire [63:0] y_q [0:LINE_SLOTS-1];
 	wire [63:0] u_q [0:LINE_SLOTS-1];
 	wire [63:0] v_q [0:LINE_SLOTS-1];
+	reg [15:0] pending_coded_width, pending_coded_height;
+	reg [15:0] pending_crop_left, pending_crop_right, pending_crop_top, pending_crop_bottom;
+	reg [15:0] active_coded_width, active_coded_height;
+	reg [15:0] active_crop_left, active_crop_right, active_crop_top, active_crop_bottom;
+	wire [15:0] visible_width = RUNTIME_GEOMETRY ?
+		active_coded_width - active_crop_left - active_crop_right : 16'(DISPLAY_W);
+	wire [15:0] visible_height = RUNTIME_GEOMETRY ?
+		active_coded_height - active_crop_top - active_crop_bottom : 16'(DISPLAY_H);
+	// This is FPGA-side placement, not a change to coded storage or reference
+	// geometry. Plane offsets and DMA strides retain the maximum allocation.
+	wire [15:0] viewport_x = RUNTIME_GEOMETRY ?
+		(16'(FRAME_W) - visible_width) >> 1 : 16'(PRESENT_X);
+	wire [15:0] viewport_y = RUNTIME_GEOMETRY ?
+		(16'(FRAME_H) - visible_height) >> 1 : 16'(PRESENT_Y);
+	wire [15:0] crop_x = RUNTIME_GEOMETRY ? active_crop_left : 16'(CROP_LEFT);
+	wire [15:0] crop_y = RUNTIME_GEOMETRY ? active_crop_top : 16'(CROP_TOP);
 	wire rd_x_at_or_after_origin;
 	wire rd_y_at_or_after_origin;
 	generate
-		if (PRESENT_X == 0) begin : gen_present_x_zero
+		if (PRESENT_X == 0 && !RUNTIME_GEOMETRY) begin : gen_present_x_zero
 			assign rd_x_at_or_after_origin = 1'b1;
 		end else begin : gen_present_x_nonzero
-			assign rd_x_at_or_after_origin = (rd_x >= PRESENT_X_L);
+			assign rd_x_at_or_after_origin = (16'(rd_x) >= viewport_x);
 		end
-		if (PRESENT_Y == 0) begin : gen_present_y_zero
+		if (PRESENT_Y == 0 && !RUNTIME_GEOMETRY) begin : gen_present_y_zero
 			assign rd_y_at_or_after_origin = 1'b1;
 		end else begin : gen_present_y_nonzero
-			assign rd_y_at_or_after_origin = (rd_y >= PRESENT_Y_L);
+			assign rd_y_at_or_after_origin = (16'(rd_y) >= viewport_y);
 		end
 	endgenerate
-	wire rd_x_visible = rd_x_at_or_after_origin && (rd_x < PRESENT_END_X);
-	wire rd_y_visible = rd_y_at_or_after_origin && (rd_y < PRESENT_END_Y);
+	wire rd_x_visible = rd_x_at_or_after_origin && (16'(rd_x) < viewport_x + visible_width);
+	wire rd_y_visible = rd_y_at_or_after_origin && (16'(rd_y) < viewport_y + visible_height);
 	wire rd_visible = rd_x_visible && rd_y_visible;
-	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
-	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
-	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
-	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+	wire [X_W-1:0] display_x = rd_x - X_W'(viewport_x);
+	wire [Y_W-1:0] display_y = rd_y - Y_W'(viewport_y);
+	wire [CODED_X_W-1:0] src_x = rd_visible ? (CODED_X_W'(display_x) + CODED_X_W'(crop_x)) : '0;
+	wire [CODED_Y_W-1:0] src_y = (RUNTIME_GEOMETRY ? rd_y_visible : rd_visible) ?
+		(CODED_Y_W'(display_y) + CODED_Y_W'(crop_y)) :
+		(RUNTIME_GEOMETRY ? CODED_Y_W'(crop_y) : '0);
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
@@ -211,6 +240,15 @@ module ddr_frame_store #(
 	reg vsync_toggle;
 	reg reset_ddr_s1, reset_ddr_s2;
 	wire reset_ddr = reset_ddr_s2;
+	reg generation_req;
+	reg generation_req_d1, generation_req_d2;
+	reg generation_ack, generation_ack_s1, generation_ack_s2;
+	reg generation_start, generation_start_s1, generation_start_s2;
+	wire generation_clear_active = FPGA_PUBLISH_ONLY && generation_clear;
+	wire generation_hold = FPGA_PUBLISH_ONLY &&
+	                       (generation_clear_active || generation_req || generation_ack_s2);
+	wire generation_hold_ddr = FPGA_PUBLISH_ONLY && (generation_req_d2 || generation_ack);
+	assign generation_idle = !FPGA_PUBLISH_ONLY || (!reset && !generation_hold);
 
 	always @(posedge clk_ddr) begin
 		if (reset) begin
@@ -238,7 +276,27 @@ module ddr_frame_store #(
 			pending_bank_s2 <= 1'b0;
 			pending_ready_s1 <= 1'b0;
 			pending_ready_s2 <= 1'b0;
+			generation_req <= 1'b0;
+			generation_ack_s1 <= 1'b0;
+			generation_ack_s2 <= 1'b0;
+			generation_start_s1 <= 1'b0;
+			generation_start_s2 <= 1'b0;
+			pending_coded_width <= 16'(CODED_W); pending_coded_height <= 16'(CODED_H);
+			pending_crop_left <= 16'(CROP_LEFT); pending_crop_right <= 0;
+			pending_crop_top <= 16'(CROP_TOP); pending_crop_bottom <= 0;
+			active_coded_width <= 16'(CODED_W); active_coded_height <= 16'(CODED_H);
+			active_crop_left <= 16'(CROP_LEFT); active_crop_right <= 0;
+			active_crop_top <= 16'(CROP_TOP); active_crop_bottom <= 0;
 		end else begin
+			generation_ack_s1 <= generation_ack;
+			generation_ack_s2 <= generation_ack_s1;
+			generation_start_s1 <= generation_start;
+			generation_start_s2 <= generation_start_s1;
+			if (generation_clear_active) begin
+				// Repeated clears coalesce while the acknowledgement returns low.
+				if (!generation_ack_s2) generation_req <= 1'b1;
+			end else if (generation_req && generation_ack_s2 && generation_start_s2 == start_req)
+				generation_req <= 1'b0;
 			swap_req_s1 <= swap_req_t_ddr;
 			swap_req_s2 <= swap_req_s1;
 			pending_bank_s1 <= pending_bank_ddr;
@@ -246,22 +304,44 @@ module ddr_frame_store #(
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
 
-			if (swap_req_s2 != swap_req_seen) begin
+			// Clear wins over VSync immediately; the level handshake retires DDR
+			// ownership and baselines in-flight start/swap toggles before reuse.
+			if (generation_hold) begin
 				swap_req_seen <= swap_req_s2;
-				pending_bank <= pending_bank_s2;
-				swap_pending <= 1'b1;
-			end
-
-			if (vsync_pulse && swap_pending && pending_ready_s2) begin
-				disp_bank <= pending_bank;
-				disp_buf <= ~disp_buf;
-				has_frame <= 1'b1;
 				swap_pending <= 1'b0;
-				frames_done <= frames_done + 16'd1;
-				vsync_toggle <= ~vsync_toggle;
-			end else if (vsync_pulse) begin
-				vsync_toggle <= ~vsync_toggle;
+				has_frame <= 1'b0;
+			end else begin
+				if (swap_req_s2 != swap_req_seen) begin
+					swap_req_seen <= swap_req_s2;
+					pending_bank <= pending_bank_s2;
+					swap_pending <= 1'b1;
+					if (RUNTIME_GEOMETRY) begin
+						pending_coded_width <= picture_coded_width;
+						pending_coded_height <= picture_coded_height;
+						pending_crop_left <= picture_crop_left;
+						pending_crop_right <= picture_crop_right;
+						pending_crop_top <= picture_crop_top;
+						pending_crop_bottom <= picture_crop_bottom;
+					end
+				end
+
+				if (vsync_pulse && swap_pending && pending_ready_s2) begin
+					disp_bank <= pending_bank;
+					disp_buf <= ~disp_buf;
+					has_frame <= 1'b1;
+					swap_pending <= 1'b0;
+					frames_done <= frames_done + 16'd1;
+					if (RUNTIME_GEOMETRY) begin
+						active_coded_width <= pending_coded_width;
+						active_coded_height <= pending_coded_height;
+						active_crop_left <= pending_crop_left;
+						active_crop_right <= pending_crop_right;
+						active_crop_top <= pending_crop_top;
+						active_crop_bottom <= pending_crop_bottom;
+					end
+				end
 			end
+			if (vsync_pulse) vsync_toggle <= ~vsync_toggle;
 		end
 	end
 
@@ -295,8 +375,29 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] y_line_v2 [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line_v1 [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line_v2 [0:LINE_SLOTS-1];
+	wire [Y_W-1:0] y_line_hold [0:LINE_SLOTS-1];
+	wire [Y_W-2:0] c_line_hold [0:LINE_SLOTS-1];
+	// Pad only the DDR-to-video tag branch, not local DDR cache consumers.
+	// These preserved identity LUTs add hold delay without a pipeline cycle.
+	genvar tag_slot, tag_bit;
+	generate
+		for (tag_slot = 0; tag_slot < LINE_SLOTS; tag_slot = tag_slot + 1) begin : g_tag_hold
+			for (tag_bit = 0; tag_bit < Y_W; tag_bit = tag_bit + 1) begin : g_y
+				wire middle;
+				mplex_hold_lcell first_pad (.din(y_line[tag_slot][tag_bit]), .dout(middle));
+				mplex_hold_lcell second_pad (.din(middle), .dout(y_line_hold[tag_slot][tag_bit]));
+			end
+			for (tag_bit = 0; tag_bit < Y_W-1; tag_bit = tag_bit + 1) begin : g_c
+				wire middle;
+				mplex_hold_lcell first_pad (.din(c_line[tag_slot][tag_bit]), .dout(middle));
+				mplex_hold_lcell second_pad (.din(middle), .dout(c_line_hold[tag_slot][tag_bit]));
+			end
+		end
+	endgenerate
 	reg [Y_W-1:0] want_y_sys;
 	reg [Y_W-1:0] want_y_gray;  // Gray-encoded want_y for safe CDC
+	reg [15:0] underrun_gray;
+	wire [15:0] underrun_next = underrun_count + 16'd1;
 
 	// Toggle-snapshot registers for multi-bit CDC (clk → clk_ddr)
 	reg [15:0] status_osd_hold;
@@ -376,21 +477,34 @@ module ddr_frame_store #(
 	wire signed [11:0] u_s = {4'd0, u_pix} - 12'sd128;
 	wire signed [11:0] v_s = {4'd0, v_pix} - 12'sd128;
 	wire signed [20:0] y_ext = {{9{y_s[11]}}, y_s};
-	wire signed [20:0] r_calc_w = (y_ext <<< 8) + (21'sd359 * v_s);
-	wire signed [20:0] g_calc_w = (y_ext <<< 8) - (21'sd88 * u_s) - (21'sd183 * v_s);
-	wire signed [20:0] b_calc_w = (y_ext <<< 8) + (21'sd454 * u_s);
+	wire signed [11:0] y_limited = y_s - 12'sd16;
+	wire signed [20:0] y_scaled = 21'sd298 * y_limited;
+	wire signed [20:0] r_calc_w, g_calc_w, b_calc_w;
+	generate
+		if (LIMITED_BT601) begin : g_limited_bt601
+			assign r_calc_w = y_scaled + (21'sd409 * v_s) + 21'sd128;
+			assign g_calc_w = y_scaled - (21'sd100 * u_s) - (21'sd208 * v_s) + 21'sd128;
+			assign b_calc_w = y_scaled + (21'sd516 * u_s) + 21'sd128;
+		end else begin : g_legacy_full_range
+			assign r_calc_w = (y_ext <<< 8) + (21'sd359 * v_s);
+			assign g_calc_w = (y_ext <<< 8) - (21'sd88 * u_s) - (21'sd183 * v_s);
+			assign b_calc_w = (y_ext <<< 8) + (21'sd454 * u_s);
+		end
+	endgenerate
 	wire signed [11:0] r_calc = r_calc_w[19:8];
 	wire signed [11:0] g_calc = g_calc_w[19:8];
 	wire signed [11:0] b_calc = b_calc_w[19:8];
 
 	always @(posedge clk) begin
 		if (reset) begin
+			rd_de <= 1'b0;
 			rd_active_r <= 1'b0;
 			rd_active_d <= 1'b0;
 			rd_visible_r <= 1'b0;
 			rd_visible_d <= 1'b0;
 			miss_d <= 1'b0;
 			underrun_count <= 16'd0;
+			underrun_gray <= 16'd0;
 			want_y_sys <= '0;
 			want_y_gray <= '0;
 			status_osd_hold <= 16'd0;
@@ -421,9 +535,9 @@ module ddr_frame_store #(
 			c_bank_v1 <= c_bank;
 			c_bank_v2 <= c_bank_v1;
 			for (vi = 0; vi < LINE_SLOTS; vi = vi + 1) begin
-				y_line_v1[vi] <= y_line[vi];
+				y_line_v1[vi] <= y_line_hold[vi];
 				y_line_v2[vi] <= y_line_v1[vi];
-				c_line_v1[vi] <= c_line[vi];
+				c_line_v1[vi] <= c_line_hold[vi];
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
@@ -454,11 +568,26 @@ module ddr_frame_store #(
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
 			miss_d <= rd_miss_now;
-			if (miss_d && underrun_count != 16'hFFFF)
-				underrun_count <= underrun_count + 16'd1;
+			if (miss_d && underrun_count != 16'hFFFF) begin
+				underrun_count <= underrun_next;
+				underrun_gray <= underrun_next ^ (underrun_next >> 1);
+			end
 
-			// keepv: paint when Y hits (C soft via neutral UV). Black only on Y miss.
-			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r) begin
+			// The FPGA path exports the cropped aperture with the RAM/RGB latency.
+			// Allocation padding must not become part of the scaler's source DAR.
+			rd_de <= rd_active_r && rd_visible_r && has_frame && !generation_clear;
+			if (RUNTIME_GEOMETRY) begin
+				if (rd_active_r && rd_visible_r && has_frame && !miss_d && y_hit_r) begin
+					rd_r <= sat8(r_calc);
+					rd_g <= sat8(g_calc);
+					rd_b <= sat8(b_calc);
+				end else begin
+					rd_r <= 8'd0;
+					rd_g <= 8'd0;
+					rd_b <= 8'd0;
+				end
+			// Legacy keepv RGB/blank behavior is unchanged.
+			end else if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r) begin
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
@@ -487,6 +616,7 @@ module ddr_frame_store #(
 	reg has_frame_d1, has_frame_d2;
 	reg swap_pending_d1, swap_pending_d2;
 	reg pending_bank_d1, pending_bank_d2;
+	reg [Y_W-1:0] pending_top_d1, pending_top_d2;
 	reg [Y_W-1:0] want_y_gray_s1, want_y_gray_s2;  // Gray-coded 2-FF sync
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
@@ -524,6 +654,18 @@ module ddr_frame_store #(
 	reg [15:0] status_osd_safe;
 	reg        sdram_status_tog_s1, sdram_status_tog_s2, sdram_status_tog_seen;
 	reg [23:0] sdram_status_safe;
+	reg [15:0] underrun_gray_s1, underrun_gray_s2, underrun_safe;
+	wire [15:0] underrun_gray_hold, underrun_decoded;
+	// PLXF consumes a DDR-local count, not the changing video-domain binary bus.
+	genvar underrun_bit;
+	generate
+		for (underrun_bit = 0; underrun_bit < 16; underrun_bit = underrun_bit + 1) begin : g_underrun_cdc
+			wire middle;
+			mplex_hold_lcell first_pad (.din(underrun_gray[underrun_bit]), .dout(middle));
+			mplex_hold_lcell second_pad (.din(middle), .dout(underrun_gray_hold[underrun_bit]));
+			assign underrun_decoded[underrun_bit] = ^underrun_gray_s2[15:underrun_bit];
+		end
+	endgenerate
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -532,6 +674,8 @@ module ddr_frame_store #(
 	wire [11:0] plxa_x;
 	wire [11:0] plxa_y;
 	wire [7:0]  plxa_token;
+	assign source_aspect_x = plxa_x;
+	assign source_aspect_y = plxa_y;
 	source_aspect_ack u_plxa (
 		.clk(clk),
 		.reset(reset),
@@ -556,11 +700,12 @@ module ddr_frame_store #(
 	);
 
 	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
-		integer sum;
+		integer base_value;
 		begin
-			sum = {{(32-Y_W){1'b0}}, base};
-			sum = sum + ahead;
-			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
+			base_value = {{(32-Y_W){1'b0}}, base};
+			// Each tap's offset is constant: compare before the offset adder.
+			clamp_ahead = (base_value >= FRAME_H - ahead) ?
+			              LAST_Y : Y_W'(base_value + ahead);
 		end
 	endfunction
 
@@ -596,6 +741,10 @@ module ddr_frame_store #(
 	reg [LINE_COUNT-1:0] y_bank_cur_r, c_bank_cur_r;
 	reg [Y_W-1:0]        y_line_cur_r [0:LINE_COUNT-1];
 	reg [Y_W-2:0]        c_line_cur_r [0:LINE_COUNT-1];
+	reg [LINE_COUNT-1:0] y_valid_prep_r, c_valid_prep_r;
+	reg [LINE_COUNT-1:0] y_bank_prep_r, c_bank_prep_r;
+	reg [Y_W-1:0]        y_line_prep_r [0:LINE_COUNT-1];
+	reg [Y_W-2:0]        c_line_prep_r [0:LINE_COUNT-1];
 
 
 	integer ti, tj, tk;
@@ -607,6 +756,8 @@ module ddr_frame_store #(
 	reg [SLOT_W-1:0] target_y_idx_cur_c, target_y_idx_prep_c, target_c_idx_cur_c, target_c_idx_prep_c;
 	reg found_line, slot_keep, found_slot_c_cur, found_slot_c_prep;
 	reg [Y_W-1:0] desired_y;
+	reg [Y_W-1:0] prep_y;
+	reg [Y_W-2:0] prep_c;
 	reg [Y_W-2:0] desired_c;
 	reg [SLOT_W-1:0] cur_base_idx, prep_base_idx, yh;
 	reg sched_valid, sched_is_y, sched_for_pending;
@@ -615,7 +766,7 @@ module ddr_frame_store #(
 	reg [Y_W-2:0] sched_cy;
 	reg [SLOT_W-1:0] sched_idx;
 	always @* begin
-		// Absolute bases still needed for absolute fill indices / prep live scan.
+		// Absolute bases are needed only for the selected fill indices.
 		cur_base_idx = cur_base_idx_r;
 		prep_base_idx = prep_base_idx_r;
 		need_y_cur_c = 1'b0;
@@ -636,6 +787,8 @@ module ddr_frame_store #(
 		found_slot_c_cur = 1'b0;
 		found_slot_c_prep = 1'b0;
 		pending_ready_c = 1'b1;
+		prep_y = '0;
+		prep_c = '0;
 
 		// CUR Y: O(1) home. CUR C: linear scan of flat window for need detect.
 		for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
@@ -665,31 +818,33 @@ module ddr_frame_store #(
 
 			// PREP: Y home + C free-list hole (swap-only).
 			if (swap_pending_d2) begin
-				yh = y_home_off(ti[Y_W-1:0]);
-				found_line = y_valid[prep_base_idx_r + yh]
-				    && (y_bank[prep_base_idx_r + yh] == pending_bank_prep_r)
-				    && (y_line[prep_base_idx_r + yh] == ti[Y_W-1:0]);
+				prep_y = RUNTIME_GEOMETRY ? clamp_ahead(pending_top_d2, ti) : ti[Y_W-1:0];
+				prep_c = prep_y[Y_W-1:1];
+				yh = y_home_off(prep_y);
+				found_line = y_valid_prep_r[yh]
+				    && (y_bank_prep_r[yh] == pending_bank_prep_r)
+				    && (y_line_prep_r[yh] == prep_y);
 				if (!found_line) begin
 					pending_ready_c = 1'b0;
 					if (!need_y_prep_c) begin
 						need_y_prep_c = 1'b1;
-						target_y_prep_c = ti[Y_W-1:0];
+						target_y_prep_c = prep_y;
 						target_y_idx_prep_c = prep_base_idx_r + yh;
 					end
 				end
 
 				found_line = 1'b0;
 				for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
-					if (c_valid[prep_base_idx_r + tj[SLOT_W-1:0]]
-					    && (c_bank[prep_base_idx_r + tj[SLOT_W-1:0]] == pending_bank_prep_r)
-					    && (c_line[prep_base_idx_r + tj[SLOT_W-1:0]] == ti[Y_W-1:1]))
+					if (c_valid_prep_r[tj]
+					    && (c_bank_prep_r[tj] == pending_bank_prep_r)
+					    && (c_line_prep_r[tj] == prep_c))
 						found_line = 1'b1;
 				end
 				if (!found_line) begin
 					pending_ready_c = 1'b0;
 					if (!need_c_prep_c) begin
 						need_c_prep_c = 1'b1;
-						target_c_prep_c = ti[Y_W-1:1];
+						target_c_prep_c = prep_c;
 					end
 				end
 			end
@@ -708,7 +863,7 @@ module ddr_frame_store #(
 				target_c_idx_cur_c = cur_base_idx_r + tj[SLOT_W-1:0];
 			end
 			if (swap_pending_d2) begin
-				if ((!c_valid[prep_base_idx_r + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
+				if (!c_valid_prep_r[tj] && !found_slot_c_prep) begin
 					found_slot_c_prep = 1'b1;
 					target_c_idx_prep_c = prep_base_idx_r + tj[SLOT_W-1:0];
 				end
@@ -724,6 +879,9 @@ module ddr_frame_store #(
 	reg [Y_QW_AW:0] fill_qword;
 	reg [Y_QW_AW:0] burst_left;
 	reg [Y_QW_AW:0] qwords_remaining;
+	wire line_tag_commit = state_ddr == S_LINE_WAIT && DDRAM_DOUT_READY &&
+	                       qwords_remaining == 1 && (!fill_is_chroma || fill_plane_v);
+	wire prep_tags_clear = state_ddr == S_IDLE && generation_hold_ddr;
 	reg [7:0] imbox_cmd_seq;
 	reg [15:0] imbox_seq;
 	wire [28:0] fill_bank_base;
@@ -801,7 +959,7 @@ module ddr_frame_store #(
 `endif
 	wire [28:0] line_addr = fill_is_chroma ? chroma_addr : y_addr;
 	wire [Y_QW_AW:0] burst_cap = (qwords_remaining > DDR_BURST_MAX_QWORDS) ? DDR_BURST_MAX_QWORDS : qwords_remaining;
-	wire [7:0] burst_this = burst_cap[7:0];
+	wire [7:0] burst_this = 8'(burst_cap);
 	// keepv21: register address/burst for S_LINE_ISSUE D-side (+1 clk_ddr).
 	// Breaks fill_y/shift-add/base → DDRAM_ADDR setup cone on general[2].
 	reg [28:0] line_addr_r;
@@ -862,6 +1020,8 @@ module ddr_frame_store #(
 			swap_pending_d2 <= 1'b0;
 			pending_bank_d1 <= 1'b0;
 			pending_bank_d2 <= 1'b0;
+			pending_top_d1 <= '0;
+			pending_top_d2 <= '0;
 			cur_base_idx_r <= '0;
 			prep_base_idx_r <= '0;
 			disp_bank_cur_r <= 1'b0;
@@ -870,15 +1030,25 @@ module ddr_frame_store #(
 			c_valid_cur_r <= '0;
 			y_bank_cur_r <= '0;
 			c_bank_cur_r <= '0;
+			y_valid_prep_r <= '0;
+			c_valid_prep_r <= '0;
+			y_bank_prep_r <= '0;
+			c_bank_prep_r <= '0;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
 				y_line_cur_r[ti] <= '0;
 				c_line_cur_r[ti] <= '0;
+				y_line_prep_r[ti] <= '0;
+				c_line_prep_r[ti] <= '0;
 			end
 			want_y_gray_s1 <= '0;
 			want_y_gray_s2 <= '0;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
 				desired_y_r[ti] <= '0;
 			pending_ready_ddr <= 1'b0;
+			generation_req_d1 <= 1'b0;
+			generation_req_d2 <= 1'b0;
+			generation_ack <= 1'b0;
+			generation_start <= 1'b0;
 			pending_bank_ddr <= 1'b0;
 			swap_req_t_ddr <= 1'b0;
 			poll_div <= 16'd0;
@@ -909,6 +1079,9 @@ module ddr_frame_store #(
 			sdram_status_tog_s2 <= 1'b0;
 			sdram_status_tog_seen <= 1'b0;
 			sdram_status_safe <= 24'd0;
+			underrun_gray_s1 <= 16'd0;
+			underrun_gray_s2 <= 16'd0;
+			underrun_safe <= 16'd0;
 			plxa_tog_s1 <= 1'b0;
 			plxa_tog_s2 <= 1'b0;
 			plxa_tog_seen <= 1'b0;
@@ -964,7 +1137,16 @@ module ddr_frame_store #(
 			u_wr <= '0;
 			v_wr <= '0;
 			cmd_pop <= 1'b0;
+			// Retire the sequence with the FIFO pop, after its mailbox word was latched.
+			if (cmd_pop) begin
+				imbox_seq <= imbox_seq + 16'd1;
+				imbox_cmd_seq <= imbox_cmd_seq + 8'd1;
+			end
 
+			generation_req_d1 <= generation_req;
+			generation_req_d2 <= generation_req_d1;
+			if (!generation_req_d2) generation_ack <= 1'b0;
+			if (generation_hold_ddr) generation_start <= start_d2;
 			disp_bank_d1 <= disp_bank;
 			disp_bank_d2 <= disp_bank_d1;
 			disp_buf_d1 <= disp_buf;
@@ -975,8 +1157,11 @@ module ddr_frame_store #(
 			swap_pending_d2 <= swap_pending_d1;
 			pending_bank_d1 <= pending_bank;
 			pending_bank_d2 <= pending_bank_d1;
+			// Held geometry crosses with the pending-bank request, before prefill.
+			pending_top_d1 <= Y_W'(pending_crop_top);
+			pending_top_d2 <= pending_top_d1;
 
-			// CUR_TAG_WINDOW sample: base/bank mux only into these Ds.
+			// Select both flat tag windows before the need/target comparison cones.
 			cur_base_idx_r <= disp_buf_d2 ? SECOND_SET_BASE : '0;
 			prep_base_idx_r <= disp_buf_d2 ? '0 : SECOND_SET_BASE;
 			disp_bank_cur_r <= disp_bank_d2;
@@ -988,6 +1173,28 @@ module ddr_frame_store #(
 				c_bank_cur_r[ti]  <= c_bank[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
 				y_line_cur_r[ti]  <= y_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
 				c_line_cur_r[ti]  <= c_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+				y_valid_prep_r[ti] <= !prep_tags_clear &&
+					y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+				c_valid_prep_r[ti] <= !prep_tags_clear &&
+					c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+				y_bank_prep_r[ti] <= y_bank[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+				c_bank_prep_r[ti] <= c_bank[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+				y_line_prep_r[ti] <= y_line[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+				c_line_prep_r[ti] <= c_line[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+				// Forward the simultaneous tag commit so PREP sees exactly the
+				// live tags, without an extra refill or an early ready decision.
+				if (line_tag_commit &&
+				    fill_idx == (disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]) begin
+					if (fill_is_chroma) begin
+						c_valid_prep_r[ti] <= 1'b1;
+						c_bank_prep_r[ti] <= fill_bank;
+						c_line_prep_r[ti] <= fill_cy;
+					end else begin
+						y_valid_prep_r[ti] <= 1'b1;
+						y_bank_prep_r[ti] <= fill_bank;
+						y_line_prep_r[ti] <= fill_y;
+					end
+				end
 			end
 
 			// want_y: Gray-coded 2-FF sync (crossing #13)
@@ -1018,6 +1225,9 @@ module ddr_frame_store #(
 				sdram_status_safe <= sdram_status_hold;
 				sdram_status_tog_seen <= sdram_status_tog_s2;
 			end
+			underrun_gray_s1 <= underrun_gray_hold;
+			underrun_gray_s2 <= underrun_gray_s1;
+			underrun_safe <= underrun_decoded;
 
 			plxa_tog_s1 <= plxa_toggle;
 			plxa_tog_s2 <= plxa_tog_s1;
@@ -1036,7 +1246,7 @@ module ddr_frame_store #(
 			if (!sdram_mbox_valid || (sdram_status_safe != sdram_mbox_last) || (sdram_mbox_hb == 18'd0))
 				sdram_mbox_req <= 1'b1;
 			frame_mbox_hb <= frame_mbox_hb + 18'd1;
-			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
+			if (!frame_mbox_valid || ({underrun_safe, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
 			// PLXD bank-release: vsync toggle sync and heartbeat
@@ -1051,7 +1261,7 @@ module ddr_frame_store #(
 			if (!bank_mbox_valid || (bank_mbox_hb == 18'd0))
 				bank_mbox_req <= 1'b1;
 
-			if (db_bad_format) begin
+			if (!FPGA_PUBLISH_ONLY && db_bad_format) begin
 				format_error <= 1'b1;
 				doorbell_ok <= 1'b0;
 				frame_mbox_req <= 1'b1;
@@ -1067,13 +1277,15 @@ module ddr_frame_store #(
 			end
 			if (db_token_new)
 				stale_db_polls <= '0;
-			if (db_new_seq) begin
+			if (!FPGA_PUBLISH_ONLY && db_new_seq) begin
 				pending_bank_ddr <= DDRAM_DOUT[63];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
 				stale_db_polls <= '0;
 			end
-			if (spi_edge_ddr) begin
+			if (generation_hold_ddr) begin
+				start_seen <= start_d2;
+			end else if (spi_edge_ddr) begin
 				start_seen <= start_d2;
 				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
 					pending_bank_ddr <= bank_sel_d2;
@@ -1082,7 +1294,16 @@ module ddr_frame_store #(
 			end
 
 			case (state_ddr)
-				S_IDLE: begin
+				S_IDLE: if (generation_hold_ddr) begin
+					pending_ready_ddr <= 1'b0;
+					sched_valid <= 1'b0;
+					y_valid <= '0;
+					c_valid <= '0;
+					// Return the sampled start token before raising its acknowledgement.
+					if (generation_req_d2 && generation_start == start_d2 &&
+					    start_seen == start_d2 && !DDRAM_RD && !DDRAM_WE && !poll_pending)
+						generation_ack <= 1'b1;
+				end else begin
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
@@ -1090,10 +1311,10 @@ module ddr_frame_store #(
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= FRAME_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {underrun_count, debug_state, frame_mbox_seq + 8'd1, MAGIC_F};
+						DDRAM_DIN <= {underrun_safe, debug_state, frame_mbox_seq + 8'd1, MAGIC_F};
 						DDRAM_WE <= 1'b1;
 						frame_mbox_seq <= frame_mbox_seq + 8'd1;
-						frame_mbox_last <= {underrun_count, debug_state};
+						frame_mbox_last <= {underrun_safe, debug_state};
 						frame_mbox_valid <= 1'b1;
 						frame_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
@@ -1221,8 +1442,6 @@ module ddr_frame_store #(
 						DDRAM_DIN <= {imbox_seq + 16'd1, imbox_cmd_seq + 8'd1, cmd_rdata, MAGIC_I};
 						DDRAM_WE <= 1'b1;
 						cmd_pop <= 1'b1;
-						imbox_seq <= imbox_seq + 16'd1;
-						imbox_cmd_seq <= imbox_cmd_seq + 8'd1;
 						state_ddr <= S_WRITE_WAIT;
 					end else if (mbox_req && poll_div[7:0] == 8'd128 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= MAILBOX_W;

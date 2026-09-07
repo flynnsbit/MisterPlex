@@ -1,0 +1,13 @@
+{
+  "kind": "same-byte controller-provided local re-encode of existing real-content IDR; not new PMS capture",
+  "provided_by": "a66461c3-035c-4bbc-936d-40ec4468359b",
+  "provided_artifact": "build/p2-intra-controller/filteroff.264",
+  "annexb_sha256": "003cdb64a16913b7d84cc9a35707a23892d8c57acd95e10078c1d398dd00ac71",
+  "required_disable_deblocking_filter_idc": 1,
+  "source_files": {
+    "tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264": "be02e6ef5edbffe9ed3db43ee7b100696abb9106db9385a880df8573921ef216",
+    "tests/fixtures/p3_host_recon/README.md": "29587906acd558d4fb450be5e65d6598293ac0e5ccbccf743fcd545b34ef2066"
+  },
+  "producer_recipe_reported": "Ordinary FFmpeg decode source; libx264 baseline QP24; cabac=0:no-deblock=1:keyint=1:ref=1:bframes=0:8x8dct=0",
+  "provenance_limit": "Exact delivered bytes frozen; recipe reported by producer, not claimed byte-for-byte re-encoded by this gate."
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include "fpga_av_trace.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -7,7 +8,11 @@
 
 #ifdef MPX_HAVE_LIBAV
 #include <atomic>
+#include <optional>
 #include <string>
+#include <vector>
+#include "ddr_bitstream_ring.hpp"
+#include "source_aspect.hpp"
 #endif
 
 namespace misterplex {
@@ -324,6 +329,7 @@ inline bool scaleI420NearestPlanes(const uint8_t* y, int yStride,
 #ifdef MPX_HAVE_LIBAV
 
 struct AvInprocOpenOpts {
+    // Software bank expectation; in compressed mode these are MAX coded bounds.
     int expectW = 1280;
     int expectH = 720;
     int threads = 2;
@@ -336,21 +342,125 @@ struct AvInprocOpenOpts {
     // Live annex-B fifo: larger probe, no nobuffer (32k+nobuffer sent a
     // truncated NAL → avcodec_send_packet Invalid data).
     bool liveFifo = false;
+    // Demux/parse compressed H.264 only. Never opens a video decoder.
+    bool compressedVideo = false;
+    bool decodeAudio = true;
+    bool allowInter = false;
+    bool allowDeblock = false;
+    bool requireAllIdr = false;
+    bool requireLimitedBt601 = false;
+    size_t maxAccessUnitBytes = ddr_bitstream_ring::kMaxAccessUnitBytes;
+    size_t maxVclRbspBytes = ddr_bitstream_ring::kMaxAccessUnitBytes;
+    int expectedFpsNum = 0;
+    int expectedFpsDen = 0;
+    const std::atomic<bool>* cancelled = nullptr;
+    const std::atomic<bool>* paused = nullptr;
 };
+
+struct AvCompressedVideoGeometry {
+    int codedWidth = 0, codedHeight = 0;
+    int visibleWidth = 0, visibleHeight = 0;
+    int macroblockColumns = 0, macroblockRows = 0;
+    int cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0;
+    SourceAspect sourceAspect{};
+    bool videoSignalPresent = false;
+    bool fullRange = false;
+    bool colorDescriptionPresent = false;
+    unsigned colorPrimaries = 2;
+    unsigned transferCharacteristics = 2;
+    unsigned matrixCoefficients = 2;
+
+    bool limitedBt601Signaled() const {
+        return !fullRange && colorDescriptionPresent &&
+               (matrixCoefficients == 5 || matrixCoefficients == 6);
+    }
+
+    bool samePictureLayout(const AvCompressedVideoGeometry& other) const {
+        return codedWidth == other.codedWidth && codedHeight == other.codedHeight &&
+               cropLeft == other.cropLeft && cropRight == other.cropRight &&
+               cropTop == other.cropTop && cropBottom == other.cropBottom;
+    }
+};
+
+struct AvCompressedAccessUnit {
+    std::vector<uint8_t> annexb;
+    int64_t pts = ddr_bitstream_ring::kNoTimestamp;
+    int64_t duration = 0;
+    uint32_t timebaseNum = 0;
+    uint32_t timebaseDen = 0;
+    bool keyframe = false;
+    bool parameterSetsChanged = false;
+    AvCompressedVideoGeometry geometry;
+};
+
+constexpr size_t kCompressedPacketCountLimit = 32;
+constexpr size_t kCompressedPacketByteLimit = 2 * 1024 * 1024;
+constexpr size_t kCompressedPcmByteLimit = 48000 * 4 * 4;
+
+enum class AvAudioProgress { Ready, Pending, Backpressure, Paused, Eof, Cancelled, Error };
+enum class AvDemuxBlocked { Idle, Input, VideoQueue, PcmQueue, Cancelled, Eof, Error };
+
+#if MPX_FPGA_AV_TRACE
+// Independent atomic observations, not a coherent demux/PCM snapshot.
+struct AvCompressedPressure {
+    bool available = false, inputEof = false, audioEof = false, reservedVideo = false;
+    size_t queuedPackets = 0, queuedBytes = 0, pcmBytes = 0;
+    AvDemuxBlocked blocked = AvDemuxBlocked::Idle;
+};
+#endif
+
+struct AvCompressedDiagnostics {
+    bool available = false, detailsAvailable = false, sourceOpen = false;
+    size_t queuedPackets = 0, queuedBytes = 0, pcmBytes = 0;
+    int64_t nextQueuedPts = ddr_bitstream_ring::kNoTimestamp;
+    bool inputEof = false, audioEof = false, cancelled = false;
+    AvDemuxBlocked blocked = AvDemuxBlocked::Idle;
+    std::optional<int> inputReadResult;
+    bool inputReadCancelled = false;
+    std::optional<int> ioError;
+    std::optional<bool> ioEof;
+    std::optional<int64_t> ioBytesRead, containerDurationUs;
+    uint64_t inputVideoPackets = 0, returnedAccessUnits = 0;
+    int64_t lastInputPts = ddr_bitstream_ring::kNoTimestamp;
+    int64_t lastInputDuration = 0, lastAuPts = ddr_bitstream_ring::kNoTimestamp;
+    int64_t firstAuPts = ddr_bitstream_ring::kNoTimestamp;
+    int64_t lastAuDuration = 0;
+    int inputTimebaseNum = 0, inputTimebaseDen = 0;
+    int auTimebaseNum = 0, auTimebaseDen = 0;
+    size_t queuedVideoPackets = 0;
+    bool reservedVideo = false;
+    std::string error;
+};
+
+std::string formatCompressedDiagnostics(const AvCompressedDiagnostics& state);
 
 class AvInprocDecoder {
 public:
     bool open(const std::string& pathOrUrl, const AvInprocOpenOpts& o, std::string& err);
     // 1=frame, 0=EOF, -1=error. Packed I420 (Y then U then V, no padding between planes).
     int readI420(uint8_t* dst, size_t frameBytes, std::string& err);
+    // 1=complete AU, 0=drained EOF, -1=error. Original container rational PTS.
+    int readAccessUnit(AvCompressedAccessUnit& au, std::string& err);
+    // The existing PCM consumer may advance the shared demux while video is paced.
+    // One packet per call; video packets remain bounded and in original order.
+    AvAudioProgress advanceCompressedAudio(std::string& err);
+    AvCompressedDiagnostics compressedDiagnostics() const;
+#if MPX_FPGA_AV_TRACE
+    // Same open/close lifetime contract as the other reader methods; no locks.
+    AvCompressedPressure compressedPressure() const noexcept;
+#endif
+    SourceAspect sourceAspect() const;
+    AvCompressedVideoGeometry videoGeometry() const;
+    int64_t firstAudioPtsUs() const;
     // PCM from the same demux as readI420. 48 kHz s16le stereo. 0=empty/EOF.
-    int drainPcm(uint8_t* dst, size_t n);
+    int drainPcm(uint8_t* dst, size_t n, bool wait = true);
     bool hasAudio() const;
     bool audioEof() const;
-    // Unblock drainPcm waiters and libav fifo open/read (join audio first).
+    // Unblock PCM/demux waiters. Join readers/audio before close or reopening a seek.
     void requestStop();
     void close();
     ~AvInprocDecoder() { close(); }
+    // Compressed mode: actual SPS coded size, never the configured maximum.
     int width() const;
     int height() const;
     bool isOpen() const;
@@ -361,10 +471,13 @@ public:
     AvInprocDecoder& operator=(const AvInprocDecoder&) = delete;
 
 private:
+    bool openCompressed(const std::string&, const AvInprocOpenOpts&, std::string&);
     static int interruptThunk(void* p);
     struct Impl;
     Impl* impl_ = nullptr;
     std::atomic<int> abort_{0};
+    const std::atomic<bool>* cancelled_ = nullptr;
+    std::atomic<int64_t> ioDeadlineMs_{0};
 };
 
 #endif // MPX_HAVE_LIBAV

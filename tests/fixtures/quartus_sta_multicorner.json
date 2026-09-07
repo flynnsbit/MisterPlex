@@ -1,0 +1,19 @@
+{
+  "source": "Native model names and selected Slow 1100mV 100C table rows from retained a07. Tests reuse these rows across models to exercise parsing, not to claim other-corner measurements.",
+  "models": [
+    "Slow 1100mV 100C Model",
+    "Slow 1100mV -40C Model",
+    "Fast 1100mV 100C Model",
+    "Fast 1100mV -40C Model"
+  ],
+  "sys_clock": "emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk",
+  "ddr_clock": "emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk",
+  "tables": {
+    "Fmax": "; Fmax ; Restricted Fmax ; Clock Name ; Note ;\n+------------+-----------------+-----------------------------------------------------------------------------------+------+\n; 17.37 MHz ; 17.37 MHz ; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk ; ;\n; 83.73 MHz ; 83.73 MHz ; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk ; ;\n+------------+-----------------+-----------------------------------------------------------------------------------+------+\n",
+    "Setup": "; Clock ; Slack ; End Point TNS ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk ; -7.569 ; -2111.759 ;\n; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk ; -0.832 ; -73.446 ;\n; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ; -0.440 ; -3.461 ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n",
+    "Hold": "; Clock ; Slack ; End Point TNS ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n; emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk ; -0.553 ; -1.624 ;\n; emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk ; 0.226 ; 0.000 ;\n; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ; 0.246 ; 0.000 ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n",
+    "Recovery": "; Clock ; Slack ; End Point TNS ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ; 4.320 ; 0.000 ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n",
+    "Removal": "; Clock ; Slack ; End Point TNS ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk ; 0.644 ; 0.000 ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n",
+    "Minimum Pulse Width": "; Clock ; Slack ; End Point TNS ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n; pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0] ; 1.122 ; 0.000 ;\n+-----------------------------------------------------------------------------------+--------+---------------+\n"
+  }
+}

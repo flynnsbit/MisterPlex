@@ -58,6 +58,9 @@ int main() {
     // GREEN: kick-on-swap (post-swap doorbell only).
     CHECK(kickOnSwapMeets24(24.10, 0.0));
     CHECK(kickOnSwapMeets24(24.10, 400.0));
+    CHECK(plex720pRequireReleasedAfterPace(true, true));
+    CHECK(!plex720pRequireReleasedAfterPace(true, false));
+    CHECK(!plex720pRequireReleasedAfterPace(false, true));
     CHECK(uniqueMeets24(uniqueFpsWaitThisSwap(24.10, 0.0)));
 
     // 24 presents @ 24000/1001 → 1.001 s of 48 kHz stereo.
@@ -115,8 +118,8 @@ int main() {
     CHECK(stickIngestWantedOn720pPipe(true, false));
     CHECK(stickIngestWantedOn720pPipe(true, true));
     CHECK(!stickIngestWantedOn720pPipe(false, true));
-    CHECK(combined720pSkipAvHold(true, false));
-    CHECK(combined720pSkipAvHold(true, true));
+    CHECK(!combined720pSkipAvHold(true, false));
+    CHECK(!combined720pSkipAvHold(true, true));
     CHECK(!combined720pSkipAvHold(false, false));
     CHECK(!plex720pSkipBankMemcpy(0, true));
     CHECK(!plex720pSkipBankMemcpy(0x3f000000u, false)); // live 03f1b95a must copy
@@ -127,6 +130,11 @@ int main() {
     CHECK(avDecide(-100, holdLeadMsWithQueued(40, kFeedTargetBytes), 0, 0) ==
           AvAction::Present);
     CHECK(holdLeadMsWithQueued(40, kMrAudioBytesPerSec) == 240); // cap 200
+    CHECK(presentLeadForAvDecide(true, 40, kFeedTargetBytes) == 40);
+    CHECK(presentLeadForAvDecide(true, 40, 0) == 40);
+    CHECK(avDecide(-50, presentLeadForAvDecide(true, 40, kFeedTargetBytes), 0, 0) ==
+          AvAction::Hold);
+    CHECK(presentLeadForAvDecide(false, 40, kFeedTargetBytes) == 140);
 
     // Leftover 480p PLXI + static L4 PLXJ (28cb5a75 live) must classify L4.
     CHECK(decideLiveGlassFromProbes(true, false, true, false) == LiveGlass::L4);

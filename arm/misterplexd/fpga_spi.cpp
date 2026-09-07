@@ -7,6 +7,7 @@
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 #include "libmisterplex/spi_ack_wait.hpp"
+#include "libmisterplex/mraudio_status.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -55,6 +56,12 @@ constexpr int kDdrBankReuseMinUs = 16000;
 // Also guards err_ (std::string is not thread-safe — concurrent writes crashed soak).
 // recursive: setErr/lastError may run while SpiExclusive already holds the lock.
 std::recursive_mutex& spiMutex() {
+    static std::recursive_mutex m;
+    return m;
+}
+
+// Ring backpressure must not hold the SPI lock needed by PCM delivery.
+std::recursive_mutex& bitstreamMutex() {
     static std::recursive_mutex m;
     return m;
 }
@@ -471,6 +478,7 @@ bool FpgaSpi::ensureBitstreamDdrMap() {
 }
 
 void FpgaSpi::releaseBitstreamDdrMap() {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
     if (bitstreamMap_) {
         munmap(bitstreamMap_, bitstreamMapLen_);
         bitstreamMap_ = nullptr;
@@ -484,6 +492,14 @@ void FpgaSpi::releaseBitstreamDdrMap() {
     bitstreamLegacySeq_ = 0;
     bitstreamLegacyActive_ = false;
     bitstreamResetEpoch_ = false;
+    bitstreamProtocolVersion_ = 0;
+    bitstreamSessionActive_ = false;
+    bitstreamSessionId_ = 0;
+    bitstreamNextSeq_ = 0;
+    audioSessionOwned_ = false;
+    bitstreamResetPending_ = false;
+    bitstreamAbortPending_ = false;
+    videoCapabilities_ = {};
 }
 
 bool FpgaSpi::readBitstreamFpgaCount(uint32_t& readCount) {
@@ -495,12 +511,13 @@ bool FpgaSpi::readBitstreamFpgaCount(uint32_t& readCount) {
     const uint64_t raw = *p;
     if (static_cast<uint32_t>(raw) != ring::kReadMagic)
         return false;
-    readCount = static_cast<uint32_t>(raw >> 32);
+    readCount = static_cast<uint32_t>(raw >> 32) & ring::kCountMask;
     return true;
 }
 
 bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
     namespace ring = ddr_bitstream_ring;
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
     status = BitstreamStatus{};
     if (!ensureBitstreamDdrMap())
         return false;
@@ -518,15 +535,16 @@ bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
     const uint64_t st4 = read64(ring::kStat4Phys);
     const uint64_t st5 = read64(ring::kStat5Phys);
     const uint64_t st6 = read64(ring::kStat6Phys);
-    if (static_cast<uint32_t>(readRaw) != ring::kReadMagic)
+    if (static_cast<uint32_t>(readRaw) != ring::kReadMagic ||
+        static_cast<uint32_t>(errRaw) != ring::kErrMagic)
         return false;
     status.producer_count = bitstreamWriteCount_;
-    status.consumer_count = static_cast<uint32_t>(readRaw >> 32);
+    status.consumer_count = static_cast<uint32_t>(readRaw >> 32) & ring::kCountMask;
     (void)ring::decodeErrStatusWord(errRaw, status);
     if (static_cast<uint32_t>(st0) == ring::kStat0Magic)
         status.ring_level = static_cast<uint32_t>(st0 >> 32);
     else
-        status.ring_level = bitstreamWriteCount_ - status.consumer_count;
+        status.ring_level = ring::countDistance(bitstreamWriteCount_, status.consumer_count);
     if (static_cast<uint32_t>(st1) == ring::kStat1Magic)
         status.consumer_seq = static_cast<uint32_t>(st1 >> 32);
     if (static_cast<uint32_t>(st2) == ring::kStat2Magic)
@@ -546,10 +564,49 @@ bool FpgaSpi::waitBitstreamReadCount(uint32_t target, int timeout_ms) {
     for (int waited = 0; waited <= maxUs; waited += stepUs) {
         uint32_t readCount = 0;
         if (readBitstreamFpgaCount(readCount) &&
-            static_cast<int32_t>(readCount - target) >= 0)
+            readCount == (target & ddr_bitstream_ring::kCountMask))
             return true;
         usleep(stepUs);
     }
+    setErr("waitBitstreamReadCount: FPGA did not acknowledge the complete record");
+    return false;
+}
+
+bool FpgaSpi::waitBitstreamControl(ddr_bitstream_ring::Event event, uint64_t session_id,
+                                  uint32_t target, int timeout_ms) {
+    namespace ring = ddr_bitstream_ring;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(std::max(0, timeout_ms));
+    do {
+        BitstreamStatus status;
+        if (readBitstreamStatus(status)) {
+            if (status.fatal || status.desync) {
+                setErr("waitBitstreamControl: FPGA rejected the session record");
+                return false;
+            }
+            bool stateMatches = status.session_id == session_id;
+            if (event == ring::Event::End)
+                stateMatches = !status.active;
+            else if (event == ring::Event::Pause)
+                stateMatches = stateMatches && status.active && status.paused;
+            else if (event == ring::Event::Resume || event == ring::Event::Begin)
+                stateMatches = stateMatches && status.active && !status.paused;
+            if (status.consumer_count == (target & ring::kCountMask) && stateMatches) {
+                clearErr();
+                return true;
+            }
+        }
+        usleep(500);
+    } while (std::chrono::steady_clock::now() < deadline);
+    setErr("waitBitstreamControl: FPGA session/fence acknowledgement timed out");
+    return false;
+}
+
+bool FpgaSpi::requireBitstreamSession(uint64_t session_id, const char* operation) {
+    if (bitstreamSessionActive_ && session_id == bitstreamSessionId_ &&
+        !bitstreamAbortPending_ && !bitstreamResetPending_)
+        return true;
+    setErr(std::string(operation) + ": stale or inactive session");
     return false;
 }
 
@@ -559,17 +616,23 @@ FpgaSpi::BitstreamPushResult FpgaSpi::writeBitstreamRecord(ddr_bitstream_ring::E
                                                            uint8_t nal_type,
                                                            const uint8_t* payload,
                                                            size_t len,
-                                                           int timeout_ms) {
+                                                           int timeout_ms,
+                                                           const uint8_t* prefix,
+                                                           size_t prefix_len) {
     namespace ring = ddr_bitstream_ring;
-    if (len && !payload) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    const bool dataRecord = event == ring::Event::Nal || event == ring::Event::AccessUnit;
+    const size_t capacity = ring::kRingBytes - (dataRecord ? ring::kControlReserveBytes : 0);
+    if ((len && !payload) || (prefix_len && !prefix)) {
         setErr("writeBitstreamRecord: empty payload pointer");
         return BitstreamPushResult::Fatal;
     }
-    const size_t recordLen = ring::kRecordHeaderBytes + len;
-    if (recordLen > ring::kRingBytes) {
+    if (prefix_len > capacity - ring::kRecordHeaderBytes ||
+        len > capacity - ring::kRecordHeaderBytes - prefix_len) {
         setErr("writeBitstreamRecord: record larger than ring");
         return BitstreamPushResult::Fatal;
     }
+    const size_t recordLen = ring::kRecordHeaderBytes + prefix_len + len;
     if (!ensureBitstreamDdrMap())
         return BitstreamPushResult::Fatal;
 
@@ -582,50 +645,55 @@ FpgaSpi::BitstreamPushResult FpgaSpi::writeBitstreamRecord(ddr_bitstream_ring::E
         return BitstreamPushResult::Desync;
     }
 
-    uint32_t readCount = bitstreamWriteCount_;
-    (void)readBitstreamFpgaCount(readCount);
+    uint32_t readCount = 0;
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(std::max(0, timeout_ms));
-    while (bitstreamWriteCount_ - readCount + recordLen > ring::kRingBytes) {
+    while (true) {
+        const bool haveCount = readBitstreamFpgaCount(readCount);
+        const uint32_t used = ring::countDistance(bitstreamWriteCount_, readCount);
+        if (haveCount && used > ring::kRingBytes) {
+            setErr("writeBitstreamRecord: invalid FPGA consumer count");
+            return BitstreamPushResult::Desync;
+        }
+        if (haveCount && used + recordLen <= capacity)
+            break;
         if (std::chrono::steady_clock::now() >= deadline) {
-            setErr("writeBitstreamRecord: FPGA ring full");
-            return BitstreamPushResult::Full;
+            setErr(haveCount ? "writeBitstreamRecord: FPGA ring full" :
+                              "writeBitstreamRecord: FPGA consumer telemetry unavailable");
+            return haveCount ? BitstreamPushResult::Full : BitstreamPushResult::Fatal;
         }
         usleep(500);
         if (statusIsFatal()) {
             setErr("writeBitstreamRecord: FPGA reports transport desync");
             return BitstreamPushResult::Desync;
         }
-        (void)readBitstreamFpgaCount(readCount);
     }
 
-    std::vector<uint8_t> header(ring::kRecordHeaderBytes, 0);
-    auto put32 = [&](size_t off, uint32_t v) {
-        header[off + 0] = static_cast<uint8_t>(v);
-        header[off + 1] = static_cast<uint8_t>(v >> 8);
-        header[off + 2] = static_cast<uint8_t>(v >> 16);
-        header[off + 3] = static_cast<uint8_t>(v >> 24);
-    };
-    auto put64 = [&](size_t off, uint64_t v) {
-        put32(off, static_cast<uint32_t>(v));
-        put32(off + 4, static_cast<uint32_t>(v >> 32));
-    };
-    put32(0, ring::kRecordMagic);
+    std::array<uint8_t, ring::kRecordHeaderBytes> header{};
+    ring::putLe32(header.data(), ring::kRecordMagic);
     header[4] = static_cast<uint8_t>(event);
     header[5] = nal_type;
-    put64(8, session_id);
-    put32(16, seq);
-    put32(20, static_cast<uint32_t>(len));
+    const uint16_t version = event == ring::Event::Probe
+                                 ? mailbox_abi::kFpgaVideoAbiVersion
+                                 : bitstreamProtocolVersion_;
+    header[6] = static_cast<uint8_t>(version);
+    header[7] = static_cast<uint8_t>(version >> 8);
+    ring::putLe64(header.data() + 8, session_id);
+    ring::putLe32(header.data() + 16, seq);
+    ring::putLe32(header.data() + 20, static_cast<uint32_t>(prefix_len + len));
 
     auto writeBytes = [&](const uint8_t* src, size_t n) {
         uint32_t wr = bitstreamWriteCount_ & static_cast<uint32_t>(ring::kRingBytes - 1u);
         const size_t first = std::min(n, static_cast<size_t>(ring::kRingBytes - wr));
-        std::memcpy(bitstreamMap_ + wr, src, first);
+        ring::copyToDeviceBytes(bitstreamMap_ + wr, src, first);
         if (first < n)
-            std::memcpy(bitstreamMap_, src + first, n - first);
-        bitstreamWriteCount_ += static_cast<uint32_t>(n);
+            ring::copyToDeviceBytes(bitstreamMap_, src + first, n - first);
+        bitstreamWriteCount_ = (bitstreamWriteCount_ + static_cast<uint32_t>(n)) &
+                              ring::kCountMask;
     };
     writeBytes(header.data(), header.size());
+    if (prefix_len)
+        writeBytes(prefix, prefix_len);
     if (len)
         writeBytes(payload, len);
     __sync_synchronize();
@@ -2223,11 +2291,21 @@ bool FpgaSpi::sendSourceAspect(const SourceAspect& aspect) {
 
 bool FpgaSpi::flushBitstreamDdr() {
     namespace ring = ddr_bitstream_ring;
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (bitstreamSessionActive_ && bitstreamProtocolVersion_ != 0) {
+        setErr("flushBitstreamDdr: end the FPGA video session before resetting its ring");
+        return false;
+    }
     if (!ensureBitstreamDdrMap())
         return false;
     bitstreamWriteCount_ = 0;
     bitstreamLegacySeq_ = 0;
     bitstreamLegacyActive_ = false;
+    bitstreamSessionActive_ = false;
+    bitstreamSessionId_ = 0;
+    bitstreamNextSeq_ = 0;
+    bitstreamProtocolVersion_ = 0;
+    videoCapabilities_ = {};
     bitstreamResetEpoch_ = !bitstreamResetEpoch_;
     std::memset(bitstreamMap_, 0, ring::kRingBytes);
     publishBitstreamCtrl();
@@ -2235,7 +2313,302 @@ bool FpgaSpi::flushBitstreamDdr() {
     return true;
 }
 
+bool FpgaSpi::resetBitstreamRing(int timeout_ms) {
+    namespace ring = ddr_bitstream_ring;
+    if (!ensureBitstreamDdrMap())
+        return false;
+    auto* ctrl = reinterpret_cast<volatile uint64_t*>(
+        bitstreamMap_ + ring::kCtrlPhys - ring::kDataPhys);
+    if (!bitstreamResetPending_) {
+        const uint64_t previous = *ctrl;
+        bitstreamResetEpoch_ = ((previous >> 63) & 1u) == 0;
+        bitstreamWriteCount_ = 0;
+        bitstreamResetPending_ = true;
+        __sync_synchronize();
+        publishBitstreamCtrl();
+    }
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(std::max(0, timeout_ms));
+    do {
+        BitstreamStatus status;
+        if (readBitstreamStatus(status) && status.consumer_count == 0 &&
+            !status.active && !status.fatal && !status.desync &&
+            status.reset_epoch == bitstreamResetEpoch_) {
+            bitstreamResetPending_ = false;
+            bitstreamProtocolVersion_ = 0;
+            bitstreamLegacyActive_ = false;
+            videoCapabilities_ = {};
+            clearErr();
+            return true;
+        }
+        usleep(500);
+    } while (std::chrono::steady_clock::now() < deadline);
+    setErr("resetBitstreamRing: no fresh FPGA reset-epoch acknowledgement");
+    return false;
+}
+
+bool FpgaSpi::readBitstreamSnapshot(uint32_t phys, uint64_t* snapshot, size_t count) {
+    namespace ring = ddr_bitstream_ring;
+    if (!ensureBitstreamDdrMap())
+        return false;
+    if (phys < ring::kDataPhys || count == 0 || snapshot == nullptr ||
+        count > bitstreamMapLen_ / sizeof(uint64_t) ||
+        static_cast<uint64_t>(phys - ring::kDataPhys) + count * sizeof(uint64_t) >
+            bitstreamMapLen_) {
+        setErr("readBitstreamSnapshot: mailbox outside the negotiated mapping");
+        return false;
+    }
+    auto* words = reinterpret_cast<volatile uint64_t*>(
+        bitstreamMap_ + phys - ring::kDataPhys);
+    const uint64_t before = words[count - 1];
+    if ((before >> 32) == 0)
+        return false;
+    __sync_synchronize();
+    for (size_t i = 0; i < count; ++i)
+        snapshot[i] = words[i];
+    __sync_synchronize();
+    return before == snapshot[count - 1] && before == words[count - 1];
+}
+
+bool FpgaSpi::readVideoCapabilities(uint64_t nonce, VideoCapabilities& capabilities) {
+    namespace ring = ddr_bitstream_ring;
+    std::array<uint64_t, 8> snapshot{};
+    if (!readBitstreamSnapshot(mailbox_abi::kVideoCapsAddr, snapshot.data(), snapshot.size()))
+        return false;
+    return ring::decodeVideoCapabilities(snapshot, nonce, capabilities);
+}
+
+bool FpgaSpi::readVideoPresentation(uint64_t session_id, VideoPresentation& status) {
+    namespace ring = ddr_bitstream_ring;
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    status = {};
+    if (!requireBitstreamSession(session_id, "readVideoPresentation"))
+        return false;
+    if (bitstreamProtocolVersion_ != mailbox_abi::kFpgaVideoAbiVersion) {
+        setErr("readVideoPresentation: session has no negotiated video feedback ABI");
+        return false;
+    }
+    std::array<uint64_t, 9> snapshot{};
+    if (!readBitstreamSnapshot(mailbox_abi::kVideoPresentationAddr, snapshot.data(),
+                              snapshot.size()) ||
+        !ring::decodeVideoPresentation(snapshot, session_id, videoCapabilities_.nonce, status)) {
+        setErr("readVideoPresentation: awaiting current-epoch presentation feedback");
+        return false;
+    }
+    clearErr();
+    return true;
+}
+
+bool FpgaSpi::readAudioSessionStatus(uint64_t session_id, AudioSessionStatus& status) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    status = {};
+    if (!bitstreamSessionActive_ || session_id != bitstreamSessionId_ ||
+        videoCapabilities_.nonce == 0)
+        return false;
+    std::array<uint64_t, 8> words{};
+    return readBitstreamSnapshot(mailbox_abi::kAudioStatusAddr, words.data(), words.size()) &&
+           audio_session::decodeStatus(words, status) && status.supported &&
+           status.session_id == session_id && status.nonce == videoCapabilities_.nonce;
+}
+
+bool FpgaSpi::controlAudioSession(uint64_t session_id, AudioControl command, int timeout_ms) {
+    namespace ring = ddr_bitstream_ring;
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    constexpr uint32_t required = ring::ConsumedAudioClock | ring::AudioSessionControl;
+    if (!audio_session::validControl(command) || !bitstreamSessionActive_ ||
+        session_id != bitstreamSessionId_ || bitstreamResetPending_ ||
+        (bitstreamAbortPending_ && command != AudioControl::Reset) ||
+        bitstreamProtocolVersion_ != mailbox_abi::kFpgaVideoAbiVersion ||
+        (videoCapabilities_.features & required) != required ||
+        videoCapabilities_.nonce == 0) {
+        setErr("controlAudioSession: no matching real DMA-session capability");
+        return false;
+    }
+    uint32_t producerPosition = 0;
+    if (command != AudioControl::Pause) {
+        // MrAudio open() reads status without moving the ring origin. Its
+        // write() is the only metadata publisher, so carry the quiesced
+        // producer position rather than waiting for an impossible later write.
+        for (unsigned observation = 0; observation < 2; ++observation) {
+            const int fd = ::open("/dev/MrAudio", O_RDONLY | O_CLOEXEC);
+            if (fd < 0) {
+                setErr("controlAudioSession: cannot read MrAudio producer position");
+                return false;
+            }
+            char text[256]{};
+            ssize_t count;
+            do {
+                count = ::read(fd, text, sizeof(text) - 1);
+            } while (count < 0 && errno == EINTR);
+            ::close(fd);
+            const auto producer = parseMrAudioStatus(text, count);
+            if (!producer.valid() || (producer.writePointer & 3) != 0) {
+                setErr("controlAudioSession: invalid MrAudio producer position");
+                return false;
+            }
+            const auto position = static_cast<uint32_t>(
+                producer.writePointer % kMrAudioRingBytes);
+            if (observation != 0 && position != producerPosition) {
+                setErr("controlAudioSession: PCM producer is not quiescent");
+                return false;
+            }
+            producerPosition = position;
+        }
+    }
+    if (audioCommandToken_ == UINT64_MAX || !ensureBitstreamDdrMap()) {
+        setErr("controlAudioSession: command token exhausted or mailbox unavailable");
+        return false;
+    }
+    const uint64_t token = ++audioCommandToken_;
+    if (++audioPublication_ == 0)
+        ++audioPublication_;
+    const uint64_t nonce = videoCapabilities_.nonce;
+    const auto commandWords =
+        audio_session::encodeControl(session_id, nonce, token, command, audioPublication_,
+                                     producerPosition);
+    auto* words = reinterpret_cast<volatile uint64_t*>(
+        bitstreamMap_ + mailbox_abi::kAudioControlAddr - ring::kDataPhys);
+    words[5] = 0;
+    __sync_synchronize();
+    for (size_t i = 0; i < 5; ++i)
+        words[i] = commandWords[i];
+    __sync_synchronize();
+    words[5] = commandWords[5];
+    __sync_synchronize();
+    if (command == AudioControl::Begin)
+        audioSessionOwned_ = true; // A timed-out command may still be in flight.
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(std::max(0, timeout_ms));
+    do {
+        AudioSessionStatus status;
+        if (readAudioSessionStatus(session_id, status) &&
+            audio_session::matchesAck(status, session_id, nonce, token, command)) {
+            if (status.error != 0) {
+                setErr("controlAudioSession: DMA consumer rejected the command");
+                return false;
+            }
+            if (audio_session::completed(status, command)) {
+                if (command == AudioControl::Reset)
+                    audioSessionOwned_ = false;
+                clearErr();
+                return true;
+            }
+        }
+        usleep(500);
+    } while (std::chrono::steady_clock::now() < deadline);
+    setErr("controlAudioSession: no fresh nonce/token-bound DMA acknowledgement");
+    return false;
+}
+
+bool FpgaSpi::abortFpgaVideoSession(uint64_t session_id, int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (!bitstreamSessionActive_ || session_id != bitstreamSessionId_ ||
+        (videoCapabilities_.features & ddr_bitstream_ring::FencedReset) == 0) {
+        setErr("abortFpgaVideoSession: no matching session with a real decoder-reset fence");
+        return false;
+    }
+    bitstreamAbortPending_ = true;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(std::max(0, timeout_ms));
+    auto remaining = [&]() {
+        return static_cast<int>(std::max<int64_t>(0,
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now()).count()));
+    };
+    if (audioSessionOwned_ &&
+        !controlAudioSession(session_id, AudioControl::Reset, remaining()))
+        return false;
+    if (!resetBitstreamRing(remaining()))
+        return false;
+    bitstreamSessionActive_ = false;
+    bitstreamSessionId_ = 0;
+    bitstreamNextSeq_ = 0;
+    bitstreamAbortPending_ = false;
+    clearErr();
+    return true;
+}
+
+FpgaSpi::VideoCapabilities FpgaSpi::videoCapabilities() const {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    return videoCapabilities_;
+}
+
+bool FpgaSpi::beginFpgaVideoSession(uint64_t session_id,
+                                   VideoCapabilities& capabilities, int timeout_ms) {
+    namespace ring = ddr_bitstream_ring;
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    capabilities = {};
+    if (session_id == 0 || bitstreamSessionActive_) {
+        setErr("beginFpgaVideoSession: require a nonzero epoch and no active session");
+        return false;
+    }
+    uint64_t nonce = 0;
+    const int randomFd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (randomFd < 0) {
+        setErr("beginFpgaVideoSession: cannot obtain a fresh core challenge");
+        return false;
+    }
+    size_t filled = 0;
+    while (filled < sizeof(nonce)) {
+        const ssize_t count = ::read(randomFd,
+            reinterpret_cast<uint8_t*>(&nonce) + filled, sizeof(nonce) - filled);
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            break;
+        filled += static_cast<size_t>(count);
+    }
+    ::close(randomFd);
+    if (filled != sizeof(nonce) || nonce == 0) {
+        setErr("beginFpgaVideoSession: incomplete core challenge");
+        return false;
+    }
+    if (!resetBitstreamRing(timeout_ms))
+        return false;
+    if (writeBitstreamRecord(ring::Event::Probe, nonce, mailbox_abi::kFpgaVideoLayoutId,
+                            0, nullptr, 0, timeout_ms) != BitstreamPushResult::Ok)
+        return false;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(std::max(0, timeout_ms));
+    bool haveCapabilities = false;
+    do {
+        if (readVideoCapabilities(nonce, capabilities)) {
+            haveCapabilities = true;
+            break;
+        }
+        BitstreamStatus status;
+        if (readBitstreamStatus(status) && (status.fatal || status.desync)) {
+            setErr("beginFpgaVideoSession: core rejected FPGA-video ABI negotiation");
+            return false;
+        }
+        usleep(500);
+    } while (std::chrono::steady_clock::now() < deadline);
+    if (!haveCapabilities) {
+        setErr("beginFpgaVideoSession: no fresh core capability reply");
+        return false;
+    }
+    if (!capabilities.supportsVideo()) {
+        setErr("beginFpgaVideoSession: incompatible core layout, build or H.264/color/commit capabilities");
+        return false;
+    }
+    bitstreamProtocolVersion_ = mailbox_abi::kFpgaVideoAbiVersion;
+    videoCapabilities_ = capabilities;
+    if (!beginBitstreamSession(session_id, timeout_ms)) {
+        if (!bitstreamSessionActive_) {
+            bitstreamProtocolVersion_ = 0;
+            videoCapabilities_ = {};
+        }
+        return false;
+    }
+    return true;
+}
+
 bool FpgaSpi::beginBitstreamSession(uint64_t session_id, int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (session_id == 0 || bitstreamSessionActive_) {
+        setErr("beginBitstreamSession: invalid epoch or active session");
+        return false;
+    }
     BitstreamStatus st;
     if (readBitstreamStatus(st) && st.active) {
         setErr("beginBitstreamSession: session already active; end first");
@@ -2245,11 +2618,64 @@ bool FpgaSpi::beginBitstreamSession(uint64_t session_id, int timeout_ms) {
                                         nullptr, 0, timeout_ms);
     if (r != BitstreamPushResult::Ok)
         return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
+    if (bitstreamProtocolVersion_ == mailbox_abi::kFpgaVideoAbiVersion) {
+        // Once published, a timeout is not proof that Begin did not happen.
+        // Retain the epoch/capabilities so bounded fenced abort remains possible.
+        bitstreamSessionActive_ = true;
+        bitstreamSessionId_ = session_id;
+    }
+    if (!waitBitstreamControl(ddr_bitstream_ring::Event::Begin, session_id,
+                             bitstreamWriteCount_, timeout_ms))
+        return false;
+    bitstreamSessionActive_ = true;
+    bitstreamSessionId_ = session_id;
+    bitstreamNextSeq_ = 0;
+    return true;
+}
+
+FpgaSpi::BitstreamPushResult FpgaSpi::pushBitstreamAccessUnit(
+    const BitstreamAccessUnit& au, int timeout_ms) {
+    namespace ring = ddr_bitstream_ring;
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (!bitstreamSessionActive_ || bitstreamAbortPending_ || bitstreamResetPending_ ||
+        bitstreamProtocolVersion_ != mailbox_abi::kFpgaVideoAbiVersion ||
+        au.session_id != bitstreamSessionId_ || !videoCapabilities_.supportsVideo()) {
+        setErr("pushBitstreamAccessUnit: no matching negotiated FPGA video session");
+        return BitstreamPushResult::Desync;
+    }
+    if (!ring::validAccessUnit(au, videoCapabilities_.max_au_bytes)) {
+        setErr("pushBitstreamAccessUnit: invalid or oversized access unit metadata");
+        return BitstreamPushResult::Fatal;
+    }
+    if (au.seq != bitstreamNextSeq_) {
+        setErr("pushBitstreamAccessUnit: discontinuous access unit sequence");
+        return BitstreamPushResult::Desync;
+    }
+    BitstreamStatus status;
+    if (!readBitstreamStatus(status) || !status.active ||
+        status.session_id != au.session_id || status.fatal || status.desync) {
+        setErr("pushBitstreamAccessUnit: FPGA session lost or rejected");
+        return BitstreamPushResult::Desync;
+    }
+    if (status.paused) {
+        setErr("pushBitstreamAccessUnit: FPGA session paused");
+        return BitstreamPushResult::Full;
+    }
+    const auto metadata = ring::encodeAccessUnitMetadata(au);
+    const auto result = writeBitstreamRecord(ring::Event::AccessUnit, au.session_id,
+        au.seq, 0, au.annexb, au.len, timeout_ms, metadata.data(), metadata.size());
+    if (result == BitstreamPushResult::Ok)
+        ++bitstreamNextSeq_;
+    return result;
 }
 
 FpgaSpi::BitstreamPushResult FpgaSpi::pushBitstreamNal(const BitstreamNal& nal,
                                                        int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (bitstreamProtocolVersion_ != 0) {
+        setErr("pushBitstreamNal: negotiated video requires complete access units");
+        return BitstreamPushResult::Fatal;
+    }
     if (!nal.annexb || !nal.len) {
         setErr("pushBitstreamNal: empty NAL");
         return BitstreamPushResult::Fatal;
@@ -2268,41 +2694,87 @@ FpgaSpi::BitstreamPushResult FpgaSpi::pushBitstreamNal(const BitstreamNal& nal,
 }
 
 bool FpgaSpi::flushBitstreamSession(uint64_t session_id, int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (!requireBitstreamSession(session_id, "flushBitstreamSession"))
+        return false;
     const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Flush, session_id, 0, 0,
                                         nullptr, 0, timeout_ms);
     if (r != BitstreamPushResult::Ok)
         return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
+    const bool ok = waitBitstreamControl(ddr_bitstream_ring::Event::Flush, session_id,
+                                         bitstreamWriteCount_, timeout_ms);
+    if (ok)
+        bitstreamNextSeq_ = 0;
+    return ok;
 }
 
 bool FpgaSpi::endBitstreamSession(uint64_t session_id, int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (!requireBitstreamSession(session_id, "endBitstreamSession"))
+        return false;
+    if (audioSessionOwned_) {
+        setErr("endBitstreamSession: quiesce producer and acknowledge audio Reset first");
+        return false;
+    }
     const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::End, session_id, 0, 0,
                                         nullptr, 0, timeout_ms);
     if (r != BitstreamPushResult::Ok)
         return false;
-    const bool ok = waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
+    const bool ok = waitBitstreamControl(ddr_bitstream_ring::Event::End, session_id,
+                                         bitstreamWriteCount_, timeout_ms);
     if (ok && session_id == bitstreamLegacySessionId_)
         bitstreamLegacyActive_ = false;
+    if (ok) {
+        bitstreamSessionActive_ = false;
+        bitstreamSessionId_ = 0;
+        bitstreamNextSeq_ = 0;
+        bitstreamProtocolVersion_ = 0;
+        videoCapabilities_ = {};
+    }
     return ok;
 }
 
+bool FpgaSpi::drainBitstreamSession(uint64_t session_id, int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (!bitstreamSessionActive_ || bitstreamAbortPending_ || bitstreamResetPending_ ||
+        session_id != bitstreamSessionId_ ||
+        bitstreamProtocolVersion_ != mailbox_abi::kFpgaVideoAbiVersion) {
+        setErr("drainBitstreamSession: no matching FPGA video session");
+        return false;
+    }
+    const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Drain, session_id,
+                                        0, 0, nullptr, 0, timeout_ms);
+    return r == BitstreamPushResult::Ok &&
+           waitBitstreamControl(ddr_bitstream_ring::Event::Drain, session_id,
+                                bitstreamWriteCount_, timeout_ms);
+}
+
 bool FpgaSpi::pauseBitstreamSession(uint64_t session_id, int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (!requireBitstreamSession(session_id, "pauseBitstreamSession"))
+        return false;
     const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Pause, session_id, 0, 0,
                                         nullptr, 0, timeout_ms);
     if (r != BitstreamPushResult::Ok)
         return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
+    return waitBitstreamControl(ddr_bitstream_ring::Event::Pause, session_id,
+                                bitstreamWriteCount_, timeout_ms);
 }
 
 bool FpgaSpi::resumeBitstreamSession(uint64_t session_id, int timeout_ms) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
+    if (!requireBitstreamSession(session_id, "resumeBitstreamSession"))
+        return false;
     const auto r = writeBitstreamRecord(ddr_bitstream_ring::Event::Resume, session_id, 0, 0,
                                         nullptr, 0, timeout_ms);
     if (r != BitstreamPushResult::Ok)
         return false;
-    return waitBitstreamReadCount(bitstreamWriteCount_, timeout_ms);
+    return waitBitstreamControl(ddr_bitstream_ring::Event::Resume, session_id,
+                                bitstreamWriteCount_, timeout_ms);
 }
 
 bool FpgaSpi::sendBitstreamChunkDdr(const uint8_t* data, size_t len) {
+    std::lock_guard<std::recursive_mutex> g(bitstreamMutex());
     if (!data || !len) {
         setErr("sendBitstreamChunkDdr: empty");
         return false;
@@ -2315,15 +2787,17 @@ bool FpgaSpi::sendBitstreamChunkDdr(const uint8_t* data, size_t len) {
     }
     BitstreamNal nal;
     nal.session_id = bitstreamLegacySessionId_;
-    nal.seq = bitstreamLegacySeq_++;
+    nal.seq = bitstreamLegacySeq_;
     nal.nal_type = len >= 5 && data[0] == 0 && data[1] == 0
                        ? static_cast<uint8_t>(data[(data[2] == 1) ? 3 : 4] & 0x1f)
                        : 0;
     nal.annexb = data;
     nal.len = len;
     const auto r = pushBitstreamNal(nal, 250);
-    if (r == BitstreamPushResult::Ok)
+    if (r == BitstreamPushResult::Ok) {
+        ++bitstreamLegacySeq_;
         return true;
+    }
     if (r == BitstreamPushResult::Full)
         setErr("sendBitstreamChunkDdr: FPGA ring full");
     else if (r == BitstreamPushResult::Desync)

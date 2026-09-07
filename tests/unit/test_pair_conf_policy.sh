@@ -63,6 +63,15 @@ if grep -q 'TRANSCODE_PROFILE=480p' "$tmp"; then
   fail "live 0eea3580 must not inherit 480p transcode profile"
 fi
 ok "live 0eea3580 does not inherit 480p profile"
+
+misterplex_apply_pair_conf "98f2e1252974d6ff20158f24960b891b" "$tmp"
+grep -q 'DECODE=1280x720' "$tmp" || fail "l4-vga60 98f2e125 must be L4 720p keys"
+grep -q 'DISPLAY_RES=720p' "$tmp" || fail "l4-vga60 98f2e125 DISPLAY_RES=720p"
+grep -q 'TRANSCODE_PROFILE=720p' "$tmp" || fail "l4-vga60 98f2e125 TRANSCODE_PROFILE=720p"
+if grep -q 'TRANSCODE_PROFILE=480p' "$tmp"; then
+  fail "l4-vga60 98f2e125 must not inherit 480p transcode profile"
+fi
+ok "l4-vga60 98f2e125 does not inherit 480p profile"
 fi
 
 misterplex_apply_pair_conf "4d6efef954acf7b33747f35ac2878c1b" "$tmp"

@@ -406,11 +406,11 @@ std::string Companion::timelineXml(const std::string& commandId) const {
     std::lock_guard<std::mutex> lock(mu_);
     const std::string effectiveCommandId = commandId.empty() ? "0" : commandId;
 
-    std::string videoState = state_;
+    std::string videoState = state_ == "ended" ? "stopped" : state_;
     const bool holdIdle =
-        !wantPlay_ && (prePlayHold_ || castBound_) &&
+        !terminalStop_ && !wantPlay_ && (prePlayHold_ || castBound_) &&
         (videoState == "stopped" || videoState.empty() || videoState == "buffering");
-    if (wantPlay_ && (videoState == "stopped" || videoState.empty()))
+    if (!terminalStop_ && wantPlay_ && (videoState == "stopped" || videoState.empty()))
         videoState = "buffering";
     else if (holdIdle)
         videoState = "buffering";
@@ -418,7 +418,7 @@ std::string Companion::timelineXml(const std::string& commandId) const {
     const bool mediaActive =
         wantPlay_ && (videoState == "playing" || videoState == "paused" ||
                       videoState == "buffering" || !pendingKey_.empty());
-    if (mediaActive && videoState == "stopped")
+    if (!terminalStop_ && mediaActive && videoState == "stopped")
         videoState = "buffering";
 
     const std::string videoLoc = mediaActive ? "fullScreenVideo" : "navigation";
@@ -483,23 +483,34 @@ std::string Companion::timelineXml(const std::string& commandId) const {
     return b.str();
 }
 
-void Companion::setState(const std::string& state, int64_t timeMs, int64_t durationMs) {
+void Companion::setState(const std::string& state, int64_t timeMs, int64_t durationMs,
+                         bool terminal, const CurrentFn& current) {
     std::lock_guard<std::mutex> lock(mu_);
+    if (current && !current())
+        return;
+    if (terminalStop_ &&
+        (state == "playing" || state == "paused" || state == "buffering"))
+        return;
     const std::string previousState = state_;
+    const bool previousTerminal = terminalStop_;
     // After stop clearMedia(), prePlayHold_ is set while wantPlay_ is false. Ignore
     // late media-thread progress so async teardown cannot re-arm fullScreenVideo.
     if (!wantPlay_ && prePlayHold_ &&
         (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
         return;
     }
+    // A final decoder rejection is not a pending seek. Keep the bind/position,
+    // but expose stopped until a new play or progress event starts another run.
+    terminalStop_ = state == "ended" ||
+                    (state == "stopped" && (terminal || terminalStop_));
     // Empty/failed session end (no frames): player reports stopped@0. Keep scrubber
     // time so a plant seek + step is not clobbered by demux short-read teardown.
-    // Natural EOF with content uses "ended" and may update time to duration.
+    // Natural EOF uses "ended" and retains the actual final presentation time.
     if (state == "stopped" && wantPlay_) {
         state_ = state;
         if (durationMs > 0)
             durationMs_ = durationMs;
-        requestTimelinePush(previousState != state_);
+        requestTimelinePush(previousState != state_ || previousTerminal != terminalStop_);
         return;
     }
     // Scrubber bounds on incoming time before plant-hold compare.
@@ -541,7 +552,7 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
             // Pin thumb to plant (not demux startMs of a superseded seek).
             timeMs_ = scrubTargetMs_;
             wantPlay_ = true;
-            requestTimelinePush(previousState != state_);
+            requestTimelinePush(previousState != state_ || previousTerminal != terminalStop_);
             return;
         }
         if (delta > kScrubCatchupMs) {
@@ -578,7 +589,7 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
     // Player progress "stopped" (EOF) must not drop scrubber bind fields.
     if (state == "playing" || state == "paused" || state == "buffering")
         wantPlay_ = true;
-    requestTimelinePush(previousState != state_);
+    requestTimelinePush(previousState != state_ || previousTerminal != terminalStop_);
 }
 
 bool Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
@@ -603,6 +614,7 @@ bool Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
     if (pendingContainerKey_.empty() && !pendingPlayQueueId_.empty())
         pendingContainerKey_ = "/playQueues/" + pendingPlayQueueId_ + "?own=1";
     pendingRatingKey_ = req.ratingKey;
+    pendingToken_ = req.token;
     serverMachineId_ = req.serverMachineId;
     serverProto_ = req.protocol.empty() ? "http" : req.protocol;
     serverHost_ = req.address;
@@ -643,23 +655,30 @@ void Companion::seedPlaybackPosition(int64_t timeMs, int64_t durationMs) {
     // Re-base hold on the real start. Without this, playMedia plant@0 + PMS
     // viewOffset demux start left Web polls frozen at 0 while media ran ahead.
     scrubTargetMs_ = timeMs;
-    if (wantPlay_ && (state_ == "stopped" || state_.empty()))
+    if (wantPlay_ && (state_ == "stopped" || state_.empty())) {
         state_ = "buffering";
+        terminalStop_ = false;
+    }
     requestTimelinePush(true);
 }
 
-void Companion::stagePlay(const PlayRequest& req) {
+bool Companion::stagePlay(const PlayRequest& req, const CurrentFn& current) {
     // Plant scrubber identity for skipNext/auto-next before async resolve so
     // bindMedia key-match accepts this title and Web sees the advance early.
     std::lock_guard<std::mutex> lock(mu_);
+    if (current && !current())
+        return false;
     wantPlay_ = true;
     prePlayHold_ = false;
     castBound_ = true;
     state_ = "buffering";
+    terminalStop_ = false;
     durationMs_ = 0;
     timeMs_ = req.offsetMs < 0 ? 0 : req.offsetMs;
     scrubTargetMs_ = timeMs_; // hold until demux/bind catches up
     pendingKey_ = req.key;
+    pendingToken_ = req.token;
+    pendingGeneration_ = req.dispatchGeneration;
     pendingContainerKey_ = req.containerKey;
     pendingPlayQueueId_ = req.playQueueId;
     pendingPlayQueueItemId_ = req.playQueueItemId;
@@ -677,10 +696,71 @@ void Companion::stagePlay(const PlayRequest& req) {
     if (!req.serverMachineId.empty())
         serverMachineId_ = req.serverMachineId;
     requestTimelinePush(true);
+    return true;
 }
 
-void Companion::clearMedia() {
+TransportRequest Companion::transportRequestLocked(TransportCommand command) {
+    TransportRequest request = onTransportQueued_ ? onTransportQueued_(command)
+                                                 : TransportRequest{};
+    request.positionMs = timeMs_;
+    request.originGeneration = pendingGeneration_;
+    auto& media = request.media;
+    media.key = pendingKey_;
+    media.ratingKey = pendingRatingKey_;
+    media.containerKey = pendingContainerKey_;
+    media.playQueueId = pendingPlayQueueId_;
+    media.playQueueItemId = pendingPlayQueueItemId_;
+    media.playQueueVersion = pendingPlayQueueVersion_;
+    media.address = serverHost_;
+    media.protocol = serverProto_;
+    media.port = serverPort_;
+    media.serverMachineId = serverMachineId_;
+    media.token = pendingToken_;
+    media.offsetMs = timeMs_;
+    media.offsetPresent = true;
+    media.dispatchGeneration = request.generation;
+    return request;
+}
+
+bool Companion::acceptSeekLocked(int64_t ms, TransportRequest& request) {
+    ms = std::max<int64_t>(0, ms);
+    if (durationMs_ > 0)
+        ms = std::min(ms, durationMs_);
+    if (!wantPlay_ || ms == timeMs_)
+        return false;
+    request = transportRequestLocked(TransportCommand::Seek);
+    request.media.offsetMs = ms;
+    pendingGeneration_ = request.generation;
+    scrubTargetMs_ = timeMs_ = ms;
+    state_ = "buffering";
+    terminalStop_ = false;
+    return true;
+}
+
+bool Companion::seekTo(int64_t ms, const CurrentFn& current) {
+    TransportRequest request;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if ((current && !current()) || !acceptSeekLocked(ms, request))
+            return false;
+    }
+    requestTimelinePush(true);
+    if (onSeek_)
+        onSeek_(request);
+    return true;
+}
+
+bool Companion::acceptPauseResumeLocked(bool pause, TransportRequest& request) {
+    if (!wantPlay_ || terminalStop_)
+        return false;
+    request = transportRequestLocked(pause ? TransportCommand::Pause : TransportCommand::Resume);
+    state_ = pause ? "paused" : "playing";
+    return true;
+}
+
+TransportRequest Companion::clearMedia() {
     std::lock_guard<std::mutex> lock(mu_);
+    auto request = transportRequestLocked(TransportCommand::Stop);
     // Drop media binding so polls are a clean idle (no key/container).
     // Web: video state=stopped WITH key still idles the cast player and freezes scrubber.
     pendingKey_.clear();
@@ -689,8 +769,11 @@ void Companion::clearMedia() {
     pendingPlayQueueItemId_.clear();
     pendingPlayQueueVersion_.clear();
     pendingRatingKey_.clear();
+    pendingToken_.clear();
+    pendingGeneration_ = 0;
     wantPlay_ = false;
     state_ = "stopped";
+    // A browser Stop after terminal EOF must not reopen the buffering hold.
     timeMs_ = 0;
     durationMs_ = 0;
     scrubTargetMs_ = -1;
@@ -699,6 +782,7 @@ void Companion::clearMedia() {
     if (castBound_)
         prePlayHold_ = true;
     requestTimelinePush(true);
+    return request;
 }
 
 void Companion::requestTimelinePush(bool immediate) {
@@ -1154,6 +1238,10 @@ void Companion::httpLoop() {
                 if (tok.empty())
                     tok = pctDecode(headerValue(req, "X-Plex-Token"));
                 if (!tok.empty()) {
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        pendingToken_ = tok;
+                    }
                     try {
                         onTokenUpdate_(tok);
                     } catch (...) {
@@ -1246,11 +1334,13 @@ void Companion::httpLoop() {
                 std::lock_guard<std::mutex> lock(mu_);
                 const bool keepActive =
                     wantPlay_ && (state_ == "playing" || state_ == "buffering" || state_ == "paused");
-                if (!keepActive) {
+                if (!keepActive && !terminalStop_) {
                     // Remember key for following playMedia; wire omits media bind
                     // while wantPlay_ is false (buffering@navigation hold).
                     if (!pr.key.empty())
                         pendingKey_ = pr.key;
+                    if (!pr.token.empty())
+                        pendingToken_ = pr.token;
                     if (!pr.ratingKey.empty())
                         pendingRatingKey_ = pr.ratingKey;
                     if (!pr.address.empty())
@@ -1274,9 +1364,11 @@ void Companion::httpLoop() {
                         pr.containerKey.find("/playQueues/") != std::string::npos)
                         pendingContainerKey_ = pr.containerKey;
                     durationMs_ = 0;
+                    pendingGeneration_ = 0;
                     prePlayHold_ = true;
                     wantPlay_ = false;
                     state_ = "stopped"; // wire shows buffering via prePlayHold_
+                    terminalStop_ = false;
                     castBound_ = true;
                 }
                 // else: leave live timeline alone (Web mirror after playMedia must not idle)
@@ -1333,6 +1425,7 @@ void Companion::httpLoop() {
                     prePlayHold_ = false;
                     castBound_ = true;
                     state_ = "buffering";
+                    terminalStop_ = false;
                     // Never plant negative scrubber time (Web/browse edge).
                     int64_t off = pr.offsetMs < 0 ? 0 : pr.offsetMs;
                     // Drop prior title duration on every fresh cast. A shorter leftover
@@ -1343,6 +1436,8 @@ void Companion::httpLoop() {
                     timeMs_ = off;
                     scrubTargetMs_ = off; // hold until bind/demux
                     pendingKey_ = pr.key;
+                    pendingToken_ = pr.token;
+                    pendingGeneration_ = pr.dispatchGeneration;
                     pendingContainerKey_ = pr.containerKey;
                     pendingPlayQueueId_ = pr.playQueueId;
                     pendingPlayQueueItemId_ = pr.playQueueItemId;
@@ -1389,42 +1484,20 @@ void Companion::httpLoop() {
                 continue;
             }
 
-            if (isPause) {
-                int64_t t = 0, d = 0;
-                bool active = false;
+            if (isPause || isResumePlay) {
+                TransportRequest request;
+                bool accepted = false;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
-                    t = timeMs_;
-                    d = durationMs_;
-                    active = wantPlay_;
+                    accepted = acceptPauseResumeLocked(isPause, request);
                 }
-                // Idle/stopped: ACK only — setState("paused") would re-arm wantPlay_
-                // and fullScreenVideo without a media key (scrubber ghost after stop).
-                if (active)
-                    setState("paused", t, d);
+                if (accepted)
+                    requestTimelinePush(true);
                 sendHttp(c, machineId_, 200, "application/xml",
                          timelineXml(requestCommandId));
-                if (active && onPause_)
-                    onPause_();
-                close(c);
-                continue;
-            }
-            if (isResumePlay) {
-                int64_t t = 0, d = 0;
-                bool active = false;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    t = timeMs_;
-                    d = durationMs_;
-                    active = wantPlay_;
-                }
-                // Idle: ACK only — do not re-arm wantPlay via setState("playing").
-                if (active)
-                    setState("playing", t, d);
-                sendHttp(c, machineId_, 200, "application/xml",
-                         timelineXml(requestCommandId));
-                if (active && onResume_)
-                    onResume_();
+                const auto& handler = isPause ? onPause_ : onResume_;
+                if (accepted && handler)
+                    handler(request);
                 close(c);
                 continue;
             }
@@ -1433,9 +1506,9 @@ void Companion::httpLoop() {
                 // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
                 // clearMedia before player.stop so late progress cannot re-arm wantPlay
                 // (setState ignores progress while prePlayHold && !wantPlay).
-                clearMedia();
+                const auto request = clearMedia();
                 if (onStop_)
-                    onStop_();
+                    onStop_(request);
                 sendHttp(c, machineId_, 200, "application/xml",
                          timelineXml(requestCommandId));
                 close(c);
@@ -1444,43 +1517,19 @@ void Companion::httpLoop() {
             if (isSeek) {
                 bool present = false;
                 int64_t ms = parseOffsetMs(req, &present);
-                if (ms < 0)
-                    ms = 0;
-                int64_t d = 0;
-                int64_t curT = 0;
-                bool active = false;
+                TransportRequest request;
+                bool accepted = false;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
-                    d = durationMs_;
-                    curT = timeMs_;
-                    active = wantPlay_;
-                    // Clamp seek into known duration so scrubber cannot overshoot.
-                    if (d > 0 && ms > d)
-                        ms = d;
+                    if (present)
+                        accepted = acceptSeekLocked(ms, request);
                 }
-                // No offset=/viewOffset=/time=: ACK only (do not jump to 0 unintentionally).
-                // Idle after stop: ACK only — do not re-arm player via onSeek
-                // (stop leaves last URL; seekMs would restart without scrubber bind).
-                // Same position after clamp: ACK only — avoid demux restart thrash
-                // (Web sometimes re-sends the current scrubber thumb position).
-                const bool moved = present && (ms != curT);
-                if (active && moved) {
-                    // Atomic plant: scrub target + time under one lock so demux
-                    // progress cannot interleave a stale pin between assign/setState.
-                    {
-                        std::lock_guard<std::mutex> lock(mu_);
-                        scrubTargetMs_ = ms;
-                        timeMs_ = ms;
-                        if (d > 0)
-                            durationMs_ = d;
-                        state_ = "buffering";
-                        wantPlay_ = true;
-                    }
-                }
+                if (accepted)
+                    requestTimelinePush(true);
                 sendHttp(c, machineId_, 200, "application/xml",
                          timelineXml(requestCommandId));
-                if (active && moved && onSeek_)
-                    onSeek_(ms);
+                if (accepted && onSeek_)
+                    onSeek_(request);
                 close(c);
                 continue;
             }
@@ -1500,39 +1549,33 @@ void Companion::httpLoop() {
                 if (isStepBack)
                     step = -step;
                 int64_t t = 0, d = 0;
-                bool active = false;
+                TransportRequest request;
+                bool accepted = false;
                 int64_t target = 0;
                 int64_t applied = 0;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     t = timeMs_;
                     d = durationMs_;
-                    active = wantPlay_;
                     target = t + step;
                     if (target < 0)
                         target = 0;
                     if (d > 0 && target > d)
                         target = d;
                     applied = target - t;
-                    // applied==0 at bounds: ACK only — no buffering thrash / player restart.
-                    if (active && applied != 0) {
-                        scrubTargetMs_ = target;
-                        timeMs_ = target;
-                        if (d > 0)
-                            durationMs_ = d;
-                        state_ = "buffering";
-                        wantPlay_ = true;
-                    }
+                    accepted = acceptSeekLocked(target, request);
                 }
+                if (accepted)
+                    requestTimelinePush(true);
                 sendHttp(c, machineId_, 200, "application/xml",
                          timelineXml(requestCommandId));
                 // Prefer absolute seek when available so player lands on clamped target
                 // even if positionMs lags companion timeMs_ (progress race).
-                if (active && applied != 0) {
+                if (accepted) {
                     if (onSeek_)
-                        onSeek_(target);
+                        onSeek_(request);
                     else if (onStep_)
-                        onStep_(applied);
+                        onStep_(applied, request);
                 }
                 close(c);
                 continue;
@@ -1552,33 +1595,26 @@ void Companion::httpLoop() {
                 continue;
             }
             if (isSkipPrevious) {
-                int64_t d = 0;
                 int64_t t = 0;
                 bool active = false;
+                bool seekAccepted = false;
+                TransportRequest request;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
-                    d = durationMs_;
                     t = timeMs_;
                     active = wantPlay_;
+                    if (active && onSkipPrevious_)
+                        request = transportRequestLocked(TransportCommand::Previous);
+                    else if (active && onSeek_ && t != 0)
+                        seekAccepted = acceptSeekLocked(0, request);
                 }
-                // Idle: ACK only (no re-arm). Active: fire handler *before* zeroing
-                // timeMs_ so main can Plex-style branch on scrub position
-                // (t>3s → restart@0; t≤3s → queue previous / no-op at 0).
+                // Preserve the accepted position/identity for the restart-or-queue
+                // decision; never apply an old optimistic plant after its callback.
                 if (active) {
                     if (onSkipPrevious_)
-                        onSkipPrevious_();
-                    else if (onSeek_ && t != 0)
-                        onSeek_(0);
-                    // Optimistic scrubber plant after branch (queue-prev rebind overwrites).
-                    if (t != 0) {
-                        std::lock_guard<std::mutex> lock(mu_);
-                        scrubTargetMs_ = 0;
-                        timeMs_ = 0;
-                        if (d > 0)
-                            durationMs_ = d;
-                        state_ = "buffering";
-                        wantPlay_ = true;
-                    }
+                        onSkipPrevious_(request);
+                    else if (seekAccepted)
+                        onSeek_(request);
                 }
                 sendHttp(c, machineId_, 200, "application/xml",
                          timelineXml(requestCommandId));

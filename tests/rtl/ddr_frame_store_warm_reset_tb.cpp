@@ -15,8 +15,10 @@ constexpr uint32_t kBasePhys = 0x30000000u;
 constexpr uint32_t kBankStrideBytes = 65536u;
 constexpr uint32_t kDoorbellPhys = 0x3001F000u;
 constexpr uint32_t kFrameMailboxPhys = 0x3001F118u;
+constexpr uint32_t kInputMailboxPhys = 0x3001F108u;
 constexpr uint32_t kMagic = 0x504C584Bu;
 constexpr uint32_t kFrameMailboxMagic = 0x504C5846u;
+constexpr uint32_t kInputMailboxMagic = 0x504C5849u;
 constexpr int kW = 80;
 constexpr int kH = 48;
 constexpr int kYQ = kW / 8;
@@ -54,6 +56,7 @@ class Sim {
 public:
     Vddr_frame_store_warm_reset_tb top{};
     std::vector<uint64_t> mem;
+    std::vector<uint64_t> inputMailboxes;
     uint64_t cycle = 0;
     int busy = 0;
     int rdDelay = -1;
@@ -80,6 +83,8 @@ public:
         top.start_req = 0;
         top.bank_sel = 0;
         top.vsync_pulse = 0;
+        top.input_cmd_valid = 0;
+        top.input_cmd = 0;
         top.DDRAM_BUSY = 0;
         top.DDRAM_DOUT = 0;
         top.DDRAM_DOUT_READY = 0;
@@ -145,7 +150,7 @@ public:
     }
 
     void serviceDdrStart() {
-        if (top.DDRAM_RD && busy == 0 && rdDelay < 0 && rdLeft == 0) {
+        if (top.DDRAM_RD && !forceDdrBusy && busy == 0 && rdDelay < 0 && rdLeft == 0) {
             if (schedulerArmed) {
                 sawScheduledLineRead = true;
                 schedulerArmed = false;
@@ -160,10 +165,12 @@ public:
             rdDelay = 2;
             busy = rdLeft + rdDelay + 1;
         }
-        if (top.DDRAM_WE && busy == 0) {
+        if (top.DDRAM_WE && !forceDdrBusy && busy == 0) {
             const uint32_t off = addrOffQ(top.DDRAM_ADDR);
             if (off < mem.size())
                 mem[off] = top.DDRAM_DIN;
+            if (top.DDRAM_ADDR == (kInputMailboxPhys >> 3))
+                inputMailboxes.push_back(top.DDRAM_DIN);
             busy = 2;
         }
     }
@@ -376,6 +383,103 @@ bool runInitialFrameMailboxPublish() {
               << " frame_debug=0x" << int((mbox >> 40) & 0xffu)
               << std::dec << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
+}
+
+void runInputMailboxSequence() {
+    Sim sim;
+    sim.resetCore();
+    for (unsigned batch = 0; batch < 100; ++batch) {
+        sim.forceDdrBusy = true;
+        for (unsigned item = 0; item < 3; ++item) {
+            sim.top.input_cmd = (batch * 3 + item) % 255 + 1;
+            sim.top.input_cmd_valid = 1;
+            sim.tick();
+        }
+        sim.top.input_cmd_valid = 0;
+        for (int i = 0; i < 25; ++i) sim.tick();
+        sim.forceDdrBusy = false;
+        const size_t expected = (batch + 1) * 3;
+        for (int i = 0; i < 20000 && sim.inputMailboxes.size() < expected; ++i)
+            sim.tick();
+        if (sim.inputMailboxes.size() != expected)
+            throw std::runtime_error("input mailbox lost or repeated a queued command: expected=" +
+                std::to_string(expected) + " received=" + std::to_string(sim.inputMailboxes.size()) +
+                " state=" + std::to_string(sim.top.debug_state));
+    }
+    for (size_t i = 0; i < sim.inputMailboxes.size(); ++i) {
+        const uint64_t word = sim.inputMailboxes[i];
+        if (static_cast<uint32_t>(word) != kInputMailboxMagic ||
+            ((word >> 32) & 0xffu) != i % 255 + 1 ||
+            ((word >> 40) & 0xffu) != ((i + 1) & 0xffu) ||
+            (word >> 48) != i + 1)
+            throw std::runtime_error("input mailbox command/order/sequence mismatch");
+    }
+    sim.forceDdrBusy = true;
+    sim.top.input_cmd = 222;
+    sim.top.input_cmd_valid = 1;
+    sim.tick();
+    sim.top.input_cmd_valid = 0;
+    sim.resetCore();
+    sim.inputMailboxes.clear();
+    sim.forceDdrBusy = false;
+    for (int i = 0; i < 1000; ++i) sim.tick();
+    if (!sim.inputMailboxes.empty())
+        throw std::runtime_error("input mailbox replayed a command across reset");
+    sim.top.input_cmd = 17;
+    sim.top.input_cmd_valid = 1;
+    sim.tick();
+    sim.top.input_cmd_valid = 0;
+    for (int i = 0; i < 20000 && sim.inputMailboxes.empty(); ++i) sim.tick();
+    const uint64_t first = (uint64_t{1} << 48) | (uint64_t{1} << 40) |
+                           (uint64_t{17} << 32) | kInputMailboxMagic;
+    if (sim.inputMailboxes.size() != 1 || sim.inputMailboxes[0] != first)
+        throw std::runtime_error("input mailbox sequence did not restart at one");
+    std::cout << "ddr_frame_store warm-reset raw: input_mailbox_sequence commands=300 wrap=1 reset=1\n";
+}
+
+void runUnderrunMailboxSnapshot() {
+    Sim sim;
+    sim.fillFrame(1, 208);
+    sim.resetCore();
+    for (int i = 0; i < 3000; ++i) sim.tick();
+    sim.ringDoorbell(1, 1);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error("underrun snapshot setup did not produce a frame");
+    sim.forceDdrBusy = true;
+    sim.top.rd_x = 0;
+    sim.top.rd_y = kH - 1;
+    uint16_t previousSafe = 0;
+    for (unsigned target : {256u, 32768u, 65535u}) {
+        sim.top.rd_active = 1;
+        for (int i = 0; i < 70000 && sim.top.underrun_count < target; ++i) {
+            sim.tick();
+            const uint16_t safe = sim.top.debug_underrun_safe;
+            if (safe < previousSafe || safe > sim.top.underrun_count)
+                throw std::runtime_error("underrun CDC count was torn or nonmonotonic");
+            previousSafe = safe;
+        }
+        if (sim.top.underrun_count < target)
+            throw std::runtime_error("underrun snapshot did not cross the requested carry");
+        sim.top.rd_active = 0;
+        for (int i = 0; i < 8; ++i) sim.tick();
+        if (sim.top.debug_underrun_safe != sim.top.underrun_count)
+            throw std::runtime_error("underrun CDC count did not converge after misses stopped");
+        previousSafe = sim.top.debug_underrun_safe;
+    }
+    sim.top.rd_active = 1;
+    for (int i = 0; i < 16; ++i) sim.tick();
+    if (sim.top.underrun_count != 65535 || sim.top.debug_underrun_safe != 65535)
+        throw std::runtime_error("underrun count did not saturate");
+    sim.top.rd_active = 0;
+    sim.forceDdrBusy = false;
+    for (int i = 0; i < 100000 && (sim.frameMailbox() >> 48) != 65535; ++i) sim.tick();
+    if (static_cast<uint32_t>(sim.frameMailbox()) != kFrameMailboxMagic ||
+        (sim.frameMailbox() >> 48) != 65535)
+        throw std::runtime_error("PLXF did not publish the settled underrun count");
+    sim.resetCore();
+    if (sim.top.underrun_count || sim.top.debug_underrun_safe)
+        throw std::runtime_error("underrun CDC count survived reset");
+    std::cout << "ddr_frame_store warm-reset raw: underrun_cdc carries=256,32768 saturation=65535 reset=0\n";
 }
 
 bool runInitialFrameMailboxAbsentWhenDdrBusy() {
@@ -729,6 +833,8 @@ void run() {
     bool schedulerSeen = false;
     schedulerSeen |= runInitialFrameMailboxPublish();
     schedulerSeen |= runInitialFrameMailboxAbsentWhenDdrBusy();
+    runInputMailboxSequence();
+    runUnderrunMailboxSnapshot();
     schedulerSeen |= runFreshNoStale();
     schedulerSeen |= runChromaPlaneReadMapping();
     schedulerSeen |= runChromaVerticalStrideMapping();

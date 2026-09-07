@@ -11,7 +11,9 @@ fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 ok() { echo "OK: $*"; }
 
 grep -q 'combined720pAudioStartsWithVideo' "$MP" || fail "media_player missing combined720pAudioStartsWithVideo"
-grep -q 'holdLeadMsWithQueued' "$MP" || fail "media_player missing holdLeadMsWithQueued"
+KEEPUP="$ROOT/host/libmisterplex/p720_audio_keepup.hpp"
+grep -q 'holdLeadMsWithQueued' "$KEEPUP" || fail "p720_audio_keepup missing holdLeadMsWithQueued"
+grep -q 'presentLeadForAvDecide' "$KEEPUP" || fail "p720_audio_keepup missing presentLeadForAvDecide"
 grep -q 'holdAudioToPicturesWanted' "$MP" || fail "media_player missing holdAudioToPicturesWanted"
 grep -q 'stickIngestWantedOn720pPipe' "$MP" || fail "media_player missing stickIngestWantedOn720pPipe"
 grep -q 'plex720pWcBankIngest' "$MP" || fail "media_player missing plex720pWcBankIngest"
@@ -32,6 +34,13 @@ if grep -E '^[^#]*PLEX_PRESENT_720P_L4=1' "$ROOT/fpga/Plex_MiSTer/Plex.qsf" >/de
 fi
 ok "product QSF stays 480p; L4 dyn-base is ifdef"
 PLEXSV="$ROOT/fpga/Plex_MiSTer/Plex.sv"
+if ! grep -A4 'L4 720p24 core raster is ~18 kHz' "$PLEXSV" | grep -q 'assign VGA_SCALER = 1'; then
+  fail "L4 must VGA_SCALER=1 (raw 720p24 analog is ~18 kHz H; VGA LCDs tear)"
+fi
+if ! grep -A6 'L4 720p24 core raster is ~18 kHz' "$PLEXSV" | grep -q 'assign VGA_SCALER = 0'; then
+  fail "480p gold path must keep VGA_SCALER=0"
+fi
+ok "L4 VGA follows HDMI 60 Hz scaler; 480p analog native"
 if ! grep -q '`ifndef PLEX_PRESENT_720P_L4' "$PLEXSV"; then
   fail "Plex.sv must gate stream_path behind ifndef PLEX_PRESENT_720P_L4 (l4-dyn2 Fmax 13.99)"
 fi
@@ -100,6 +109,22 @@ if ! grep -q 'MPX_STICK_I420:-1' "$SUP"; then
   fail "supervise must default MPX_STICK_I420=1 (WC dest ingest; 480p geometry-gated)"
 fi
 grep -q 'combined720pSkipAvHold' "$MP" || fail "media_player missing combined720pSkipAvHold"
+grep -q 'inproc720Hold' "$MP" || \
+  fail "720p inproc must Hold even with 1 spare (24.00 vs 23.976 lipsync)"
+grep -q 'presentLeadForAvDecide' "$MP" || \
+  fail "720p inproc must use presentLeadForAvDecide (queued-inflated lead hid Hold)"
+if awk '/void MediaPlayer::latchAndApplyDisplayRaster/,/^}/' "$MP" | grep -q 'lastVideoModeCmd_ = cmd'; then
+  fail "latch must not seed lastVideoModeCmd_ (skipped CEA 720p60; HDMI stayed 480p60)"
+fi
+DR="$ROOT/host/libmisterplex/display_raster.hpp"
+grep -q 'video_mode 1280,110,40,220,720,5,5,20,74250' "$DR" || \
+  fail "L4 HDMI must be CEA 720p60 (standard 60 Hz TVs; ascal 24→60)"
+if grep -A2 'inline constexpr const char\* kVideoModeCmd720p =' "$DR" | grep -q 10080; then
+  fail "kVideoModeCmd720p must not be 640x480@24 (most TVs cannot lock 24 Hz HDMI)"
+fi
+if grep -n 'plex720pRequireReleasedAfterPace' "$MP" >/dev/null; then
+  fail "720p must not RequireReleased (PLXD 50ms timeout unique 22.7; 480p-only)"
+fi
 grep -q 'holdAudioToPictures_\.load' "$MP" || fail "audioPump must use holdAudioToPictures_"
 if grep -nE 'audioReleaseAfterPresents_\.store\(24\)' "$MP" | grep -v 'startWithVideo' >/dev/null; then
   # inproc-only 24-present gate is still allowed; combined path must log after_video_ms=0
@@ -112,6 +137,13 @@ grep -q 'inproc_audio=remux_pcm' "$MP" || fail "720p must log remux_pcm (one HTT
 grep -q 'mplex-inproc.pcm' "$MP" || fail "720p remux must write PCM fifo"
 grep -q 'O_RDONLY | O_NONBLOCK' "$MP" || \
   fail "PCM pump must O_RDONLY|O_NONBLOCK (O_RDWR self-writer hides remux EOF)"
+grep -q 'remux fifo writer timeout' "$MP" || \
+  fail "remux must wait for fifo writer (avformat_open wait_for_partner hangs stop)"
+grep -q '/tmp/mplex-ffmpeg.err' "$MP" || \
+  fail "ffmpeg stderr must be /tmp (USB open wedged remux child before exec)"
+if grep -n '/media/usb0/misterplex-lab/logs/ffmpeg.err' "$MP" >/dev/null; then
+  fail "spawnFfmpeg must not open USB ffmpeg.err (D-state before exec)"
+fi
 if grep -n 'open(afifo, O_RDWR)' "$MP" | grep -v NONBLOCK >/dev/null; then
   fail "PCM pump must not open(afifo, O_RDWR) blocking — EOF hang + HTTP spinner"
 fi

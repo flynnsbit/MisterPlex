@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Real-bitstream CAVLC residual cy/MB (product h264_cavlc_residual_block).
-# LABEL: residual parse only — not full decoder. Recon lower bound is +34.
+# LABEL: residual parse only — not full decoder or a decoder FPS measurement.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
@@ -55,8 +55,8 @@ if [[ "$RC" -ne 0 ]]; then
 fi
 assert_sim_executed "h264_cavlc_real_mb_cycles" "$OUT" "CAVLC_REAL_MB_CYCLES PASS"
 # Require architecture lines so a truncated run cannot green.
-if ! grep -q 'HEADLINE_720P_AT_20MHz' <<<"$OUT"; then
-  echo "FAIL missing HEADLINE_720P_AT_20MHz" >&2
+if ! grep -q 'CYCLE_SCOPE residual_parser_only' <<<"$OUT"; then
+  echo "FAIL missing residual-only cycle scope" >&2
   exit 1
 fi
 if ! grep -q 'cy_MB_luma+chroma_residual' <<<"$OUT"; then

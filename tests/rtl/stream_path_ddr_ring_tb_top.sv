@@ -30,8 +30,18 @@ module stream_path_ddr_ring_tb_top #(
 	output wire [15:0] stream_ddr_underruns,
 	output wire [15:0] stream_ddr_overruns,
 	output wire [31:0] stream_ddr_host_write,
-	output wire [31:0] stream_ddr_fpga_read
+	output wire [31:0] stream_ddr_fpga_read,
+	output wire        reader_byte_valid,
+	output wire [7:0]  reader_byte,
+	output wire        reader_last,
+	output wire        reader_backpressure,
+	output wire        fifo_writer
 );
+	assign reader_byte_valid = spath.ddr_wr_en;
+	assign reader_byte = spath.ddr_wr_data;
+	assign reader_last = spath.ddr_wr_last;
+	assign reader_backpressure = spath.reader_full;
+	assign fifo_writer = spath.bf_wr_en;
 	wire [15:0] underruns_raw;
 	wire [15:0] overruns_raw;
 	wire [63:0] ddr_dout_to_dut;
@@ -76,7 +86,7 @@ module stream_path_ddr_ring_tb_top #(
 	wire        residual_ok;
 	wire signed [7:0] residual_dc;
 	wire [7:0]  residual_csum;
-	wire signed [15:0] residual_coeff [0:15];
+	wire signed [8:0] residual_coeff [0:15];
 	wire        residual_place_pulse;
 	wire [7:0]  recon_sig;
 	wire [7:0]  recon_dbg;
@@ -153,6 +163,12 @@ module stream_path_ddr_ring_tb_top #(
 		.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel),
 		.fs_wr_reset(fs_wr_reset),
-		.fs_swap(fs_swap)
+		.fs_swap(fs_swap),
+		.fs_wr_ready(1'b1),
+		.fs_present_sel(1'b1),
+		.fs_writes_idle(1'b1),
+		.picture_ready(1'b0),
+		.pub_mem_rd(1'b0),
+		.pub_mem_addr(18'd0)
 	);
 endmodule

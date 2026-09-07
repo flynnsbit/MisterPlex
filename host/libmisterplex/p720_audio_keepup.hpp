@@ -61,6 +61,13 @@ inline bool kickOnSwapMeets24(double scanout_hz, double post_swap_us) {
     return uniqueMeets24(uniqueFpsWaitThisSwap(scanout_hz, post_swap_us));
 }
 
+// After kick-on-swap saw frames_done++, the back bank is free. 480p-class
+// RequireReleased then. BestEffort used to write during scanout (HDMI tear).
+// Do not poll RequireReleased *before* the swap wait (that was unique ~15).
+inline bool plex720pRequireReleasedAfterPace(bool is720p, bool beamPaced) {
+    return is720p && beamPaced;
+}
+
 // PCM bytes at 48 kHz s16le stereo for `presents` frames at num/den.
 // 720p pipe warmup: drain this many gated bytes so MrAudio starts at picture
 // time (audio running from t=0 while unique~8 left +1.4 s drift).
@@ -159,12 +166,14 @@ inline bool stickIngestWantedOn720pPipe(bool stickWanted, bool useInproc) {
     return stickWanted;
 }
 
-// 720p combined: kick-on-swap is the 24.10 Hz pace. avDecide Hold slaved
-// unique to heard clock (pfps 23.5, hw_fps 22.8, audio_s/wall 0.98).
-// 480p still Holds (copy 4.3 ms, unique already ~24).
+// Kick-on-swap keeps unique at the 24.00 Hz beam. Skipping Hold let
+// pictures run 24.00 against 24000/1001 audio (~1 ms/s, −475 ms at 5.5 min
+// on Farpoint HDMI). Hold again: unique stays ≥23.97, lips stay on the
+// heard clock. spare<2 escape is pipe-only (see present loop).
 inline bool combined720pSkipAvHold(bool is720p, bool useInproc) {
+    (void)is720p;
     (void)useInproc;
-    return is720p;
+    return false;
 }
 
 // Skip WC bank memcpy only when FPGA DYN_BASE_EN=1 will latch doorbell phys.
@@ -186,6 +195,18 @@ inline int holdLeadMsWithQueued(int presentLeadMs, std::int64_t queuedBytes) {
     constexpr int kCapMs = 200;
     const int add = qms > kCapMs ? kCapMs : qms;
     return presentLeadMs + add;
+}
+
+// 480p: inflate lead by ring depth so heard-clock −100 ms does not Hold
+// unique to 23.5. 720p inproc on a 24.00 Hz beam must NOT inflate: HDMI
+// Farpoint grew av_drift −41→−180 ms by t+116 s with pfps still 24.0
+// (Hold never fired until |drift| > ~140). Use the 40 ms present lead so
+// pictures lock to heard 23.976 (unique ≥23.97, lips tens of ms).
+inline int presentLeadForAvDecide(bool inproc720, int presentLeadMs,
+                                  std::int64_t queuedBytes) {
+    if (inproc720)
+        return presentLeadMs < 0 ? 0 : presentLeadMs;
+    return holdLeadMsWithQueued(presentLeadMs, queuedBytes);
 }
 
 } // namespace p720_av

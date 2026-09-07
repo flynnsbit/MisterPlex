@@ -1,0 +1,23 @@
+{
+  "fixture": "real_color_filter_off_320x240_1f.264",
+  "sha256": "003cdb64a16913b7d84cc9a35707a23892d8c57acd95e10078c1d398dd00ac71",
+  "annexb_bytes": 7445,
+  "vcl_rbsp_bytes": 6841,
+  "frames": 1,
+  "coded_width": 320,
+  "coded_height": 240,
+  "crop_luma_samples": [0, 0, 0, 0],
+  "sar": [1, 1],
+  "sar_known": true,
+  "profile": "baseline",
+  "max_num_ref_frames": 0,
+  "pic_init_qp": 24,
+  "slice_qp_delta": -3,
+  "slice_qp": 21,
+  "disable_deblocking_filter_idc": 1,
+  "source": "tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264",
+  "source_sha256": "be02e6ef5edbffe9ed3db43ee7b100696abb9106db9385a880df8573921ef216",
+  "method": "Ordinary FFmpeg decodes the source picture, then ordinary libx264 encodes a new baseline IDR with legally disabled filtering. No bitstream fields or reference pixels are injected into the DUT.",
+  "x264_params": "cabac=0:no-deblock=1:keyint=1:ref=1:bframes=0:8x8dct=0",
+  "scope": "One independently decodable color picture. Not completion of the original filter-enabled bytes, temporal/inter proof, source-DAR proof, hardware throughput, or playback qualification."
+}

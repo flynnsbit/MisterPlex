@@ -22,7 +22,7 @@ module h264_cavlc_nc_predictor (
     wire up_mb_available   = (mb_y != 8'd0) && ((mb_index - {8'd0, mb_width}) >= first_mb_in_slice);
     assign nA_available = left_tc_valid && ((block_x != 2'd0) || left_mb_available);
     assign nB_available = up_tc_valid   && ((block_y != 2'd0) || up_mb_available);
-    assign nC = (nA_available && nB_available) ? ((left_tc + up_tc + 5'd1) >> 1) :
+    assign nC = (nA_available && nB_available) ? (({1'b0, left_tc} + {1'b0, up_tc} + 6'd1) >> 1) :
                 nA_available ? left_tc :
                 nB_available ? up_tc : 5'd0;
     assign coeff_token_table = (nC < 5'd2) ? 3'd0 :
@@ -31,20 +31,21 @@ module h264_cavlc_nc_predictor (
 endmodule
 
 module h264_cavlc_residual_block #(
-    parameter int MAX_BYTES = 64
+    parameter int MAX_BYTES = 64,
+    parameter int BIT_W = $clog2(MAX_BYTES * 8 + 1)
 )(
     input  wire               clk,
     input  wire               reset,
     input  wire               start,
     input  wire [2:0]         coeff_token_table, // 0:nC<2, 1:nC<4, 2:nC<8, 3:nC>=8, 4:chroma_dc
     input  wire [4:0]         max_coeff,         // 16 luma, 15 AC-only, 4 chroma DC
-    input  wire [9:0]         bit_offset_start,
-    input  wire [9:0]         bit_len,
+    input  wire [BIT_W-1:0]   bit_offset_start,
+    input  wire [BIT_W-1:0]   bit_len,
     input  wire [7:0]         rbsp [0:MAX_BYTES-1],
     output reg                busy,
     output reg                done,
     output reg                ok,
-    output reg [9:0]          bit_offset_end,
+    output reg [BIT_W-1:0]    bit_offset_end,
     output reg [4:0]          total_coeff,
     output reg [1:0]          trailing_ones,
     output reg [3:0]          total_zeros,
@@ -82,7 +83,7 @@ module h264_cavlc_residual_block #(
         ST_FAIL       = 5'd14;
 
     reg [4:0] st;
-    reg [9:0] bit_pos;
+    reg [BIT_W:0] bit_pos;
     reg [15:0] code;
     reg [4:0] code_len;
     reg [4:0] tc_r;
@@ -98,36 +99,74 @@ module h264_cavlc_residual_block #(
     reg [4:0] place_i;
     reg signed [5:0] coeff_num;
 
-    wire cur_bit = (bit_pos < bit_len) ? rbsp[bit_pos[8:3]][3'd7 - bit_pos[2:0]] : 1'b0;
-    wire token_too_long = (coeff_token_table == 3'd3) ? (code_len >= 5'd6) :
-                          (coeff_token_table == 3'd4) ? (code_len >= 5'd8) : (code_len >= 5'd16);
+    // One shared word-select network replaces independent arbitrary-bit reads
+    // for every bit of every speculative level/run window. Three <=32-bit
+    // levels need at most 96 bits; aligning within an 8-byte word needs 160.
+    localparam int WINDOW_ROWS = (MAX_BYTES + 7) / 8;
+    wire [BIT_W:0] window_row = bit_pos >> 6;
+    wire [5:0] window_shift = 6'(bit_pos);
+    wire [BIT_W:0] available_bits =
+        (bit_pos < {1'b0, bit_len}) ? ({1'b0, bit_len} - bit_pos) : '0;
+    reg [159:0] selected_words;
+    wire [159:0] aligned_words = selected_words << window_shift;
+    wire [95:0] stream_window;
 
-    // Peek up to 32 stream bits starting at abs bit offset `pos` (MSB = first).
-    // Throughput: multi-bit level prefix/suffix + single-cycle VLC attempts.
-    function automatic [31:0] peek32(input [9:0] pos);
-        integer k;
-        reg [9:0] p;
-        begin
-            peek32 = 32'd0;
-            for (k = 0; k < 32; k = k + 1) begin
-                p = pos + k[9:0];
-                if (p < bit_len)
-                    peek32[31 - k] = rbsp[p[8:3]][3'd7 - p[2:0]];
+    always @* begin : select_window_words
+        integer row, lane;
+        selected_words = 160'd0;
+        for (row = 0; row < WINDOW_ROWS; row = row + 1) begin
+            for (lane = 0; lane < 20; lane = lane + 1) begin
+                if (row * 8 + lane < MAX_BYTES)
+                    selected_words[159 - lane * 8 -: 8] =
+                        selected_words[159 - lane * 8 -: 8] |
+                        (rbsp[row * 8 + lane] &
+                         {8{window_row == (BIT_W+1)'(row)}});
             end
+        end
+    end
+
+    genvar window_bit;
+    generate
+        for (window_bit = 0; window_bit < 96; window_bit = window_bit + 1) begin : mask_window_eof
+            assign stream_window[95-window_bit] =
+                (available_bits > window_bit) ? aligned_words[159-window_bit] : 1'b0;
+        end
+    endgenerate
+
+    function automatic [31:0] window32(input [6:0] offset);
+        reg [95:0] shifted;
+        begin
+            shifted = stream_window << offset;
+            window32 = shifted[95:64];
         end
     endfunction
 
-    // Count leading zeros before first 1 in window (stream order = MSB first).
-    // Returns 32 if no 1 present in the 32-bit window.
-    function automatic [5:0] clz32(input [31:0] w);
-        integer k;
+    function automatic [1:0] clz4_nonzero(input [3:0] w);
         begin
-            clz32 = 6'd32;
-            for (k = 31; k >= 0; k = k - 1) begin
-                if (w[k] && clz32 == 6'd32)
-                    clz32 = 6'(31 - k);
-            end
+            casez (w)
+                4'b1???: clz4_nonzero = 2'd0;
+                4'b01??: clz4_nonzero = 2'd1;
+                4'b001?: clz4_nonzero = 2'd2;
+                default: clz4_nonzero = 2'd3;
+            endcase
         end
+    endfunction
+
+    function automatic [2:0] clz8_nonzero(input [7:0] w);
+        clz8_nonzero = (|w[7:4]) ? {1'b0, clz4_nonzero(w[7:4])}
+                                  : {1'b1, clz4_nonzero(w[3:0])};
+    endfunction
+
+    function automatic [3:0] clz16_nonzero(input [15:0] w);
+        clz16_nonzero = (|w[15:8]) ? {1'b0, clz8_nonzero(w[15:8])}
+                                    : {1'b1, clz8_nonzero(w[7:0])};
+    endfunction
+
+    // Balanced nibble/byte/halfword encoding, with an explicit all-zero sentinel.
+    function automatic [5:0] clz32(input [31:0] w);
+        clz32 = !(|w) ? 6'd32 :
+                (|w[31:16]) ? {2'b00, clz16_nonzero(w[31:16])}
+                              : {2'b01, clz16_nonzero(w[15:0])};
     endfunction
 
     // Extract n MSBs of window as integer (n in 1..32).
@@ -621,14 +660,10 @@ module h264_cavlc_residual_block #(
     endfunction
 
     function automatic signed [15:0] level_from_code(input [31:0] code_in);
-        reg signed [15:0] mask;
-        reg signed [15:0] t;
-        reg [31:0] half;
         begin
-            mask = code_in[0] ? -16'sd1 : 16'sd0;
-            half = (code_in + 32'd2) >> 1;
-            t = $signed(half[15:0]);
-            level_from_code = (t ^ mask) - mask;
+            // -(floor(code/2)+1) is ~floor(code/2), including -32768.
+            level_from_code = code_in[0] ? $signed(~code_in[16:1])
+                                         : $signed(code_in[16:1] + 16'd1);
         end
     endfunction
 
@@ -638,40 +673,61 @@ module h264_cavlc_residual_block #(
         end
     endfunction
 
-    // Match host residualBlock after first non-T1 level:
-    //   escape → 2; else 1 + (unsigned(level+3) > 6)
-    // BUGFIX: prior RTL used signed (lvl+3)>6, which never fires for
-    // negative levels (e.g. -7) and desyncs suffixLength on real CB streams.
-    function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [15:0] lvl);
-        reg [15:0] lvl_plus_3_u;
+    // The first suffix length is 0 or 1. abs(level)>3 means levelCode>=6;
+    // removing the first-level +2 correction gives prefix thresholds 4/2
+    // (TrailingOnes<3) or 6/3. Escapes exceed either threshold.
+    function automatic [2:0] suffix_next_first(
+        input [5:0] pfx, input [2:0] cur_suf, input [1:0] t1);
+        reg [5:0] threshold;
         begin
-            lvl_plus_3_u = lvl + 16'sd3; // bit pattern; compare unsigned below
-            if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
-                suffix_next_first = 3'd2;
-            else
-                suffix_next_first = 3'd1 + (lvl_plus_3_u > 16'd6);
+            threshold = (cur_suf == 0) ? ((t1 < 3) ? 6'd4 : 6'd6)
+                                       : ((t1 < 3) ? 6'd2 : 6'd3);
+            suffix_next_first = (pfx >= threshold) ? 3'd2 : 3'd1;
         end
     endfunction
 
-    // Subsequent coeffs — match host residualBlock exactly:
-    //   kLim[s] + unsigned(level) > 2*kLim[s]
-    // (unsigned cast of a negative level is large → always increment; do NOT
-    // use |level| here or synthetic encoder + host diverge).
-    function automatic [2:0] suffix_next(input [2:0] cur_suf, input signed [15:0] lvl);
-        reg [15:0] lim;
+    // For subsequent levels, levelCode=(prefix<<suffixLength)+suffix.
+    // abs(level)>3<<(suffixLength-1) iff prefix>=3, including escapes.
+    // Keep this feedback independent of signed coefficient conversion/range checks.
+    function automatic [2:0] suffix_next(input [2:0] cur_suf, input [5:0] pfx);
         begin
-            case (cur_suf)
-            3'd0: lim = 16'd0;
-            3'd1: lim = 16'd3;
-            3'd2: lim = 16'd6;
-            3'd3: lim = 16'd12;
-            3'd4: lim = 16'd24;
-            default: lim = 16'd48;
-            endcase
             suffix_next = cur_suf;
-            if (cur_suf < 3'd6 && (lim + lvl[15:0]) > (lim << 1))
+            if (cur_suf < 3'd6 && (cur_suf == 0 || pfx >= 6'd3))
                 suffix_next = cur_suf + 3'd1;
         end
+    endfunction
+
+    // Complete inline levels have at most 14 suffix bits. Align once at the
+    // end of the codeword instead of cascading prefix-left and suffix-right shifts.
+    function automatic [15:0] inline_suffix(
+        input [31:0] w, input [5:0] consumed, input [4:0] suffix_bits);
+        reg [31:0] shifted;
+        begin
+            shifted = w >> (6'd32 - consumed);
+            inline_suffix = shifted[15:0] & (16'hFFFF >> (5'd16 - suffix_bits));
+        end
+    endfunction
+
+    function automatic [15:0] decode_inline_level_code(
+        input [5:0] pfx, input [2:0] sl, input [15:0] suffix,
+        input first, input [1:0] t1);
+        reg [11:0] base;
+        reg [15:0] escape_bits;
+        begin
+            base = (pfx >= 6'd15 && sl == 0) ? 12'd30 :
+                   ((pfx < 6'd15 ? {8'd0, pfx[3:0]} : 12'd15) << sl);
+            if (first && t1 < 2'd3) base = base + 12'd2;
+            // Only prefixes 16/17 escape within 32 bits. Their offsets occupy
+            // bits 12/13, disjoint from base (<1923), so no offset adder is needed.
+            escape_bits = (pfx == 6'd16) ? 16'h1000 :
+                          (pfx == 6'd17) ? 16'h3000 : 16'd0;
+            decode_inline_level_code = ({4'd0, base} | escape_bits) + suffix;
+        end
+    endfunction
+
+    function automatic level_fits(input [31:0] lc);
+        // +32768 is not representable; -32768 (code 65535) is.
+        level_fits = lc <= 32'd65535 && lc != 32'd65534;
     endfunction
 
     task automatic clear_arrays;
@@ -684,6 +740,37 @@ module h264_cavlc_residual_block #(
             end
         end
     endtask
+
+    reg signed [15:0] placed_coeff [0:15];
+    reg [3:0] place_index [0:15];
+    reg [15:0] place_valid;
+    reg place_bad;
+    always @* begin : place_one_hot
+        integer src, dst;
+        reg signed [5:0] cnum;
+        cnum = -6'sd1;
+        place_valid = 16'd0;
+        place_bad = 1'b0;
+        for (src = 15; src >= 0; src = src - 1) begin
+            place_index[src] = 4'd0;
+            if (src < tc_r && !place_bad) begin
+                cnum = cnum + {2'd0, run_dbg[src]} + 6'sd1;
+                if (cnum >= 0 && cnum < $signed({1'b0, max_coeff})) begin
+                    place_index[src] = cnum[3:0];
+                    place_valid[src] = 1'b1;
+                end else place_bad = 1'b1;
+            end
+        end
+        // Nonnegative runs make all valid destinations distinct. Use an OR
+        // selection, not sixteen ordered variable-index writes per output.
+        for (dst = 0; dst < 16; dst = dst + 1) begin
+            placed_coeff[dst] = 16'sd0;
+            for (src = 0; src < 16; src = src + 1)
+                placed_coeff[dst] = placed_coeff[dst] |
+                    (level_dbg[src] &
+                     {16{place_valid[src] && place_index[src] == 4'(dst)}});
+        end
+    end
 
     always @(posedge clk) begin
         reg [7:0] tok;
@@ -759,7 +846,12 @@ module h264_cavlc_residual_block #(
                     cy_other <= 16'd0;
                     cy_total <= 16'd0;
 `endif
-                    st <= ST_TOKEN_BIT;
+                    if (bit_len > MAX_BYTES * 8 || bit_offset_start >= bit_len ||
+                        !(max_coeff == 5'd4 || max_coeff == 5'd15 || max_coeff == 5'd16) ||
+                        coeff_token_table > 3'd4 ||
+                        ((coeff_token_table == 3'd4) != (max_coeff == 5'd4)))
+                        st <= ST_FAIL;
+                    else st <= ST_TOKEN_BIT;
                 end
             end
 
@@ -767,13 +859,12 @@ module h264_cavlc_residual_block #(
             ST_TOKEN_BIT: begin
                 if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin : g_tok_par
-                    reg [31:0] twin;
-                    reg [31:0] tbits;
+                    reg [31:0] twin, tbits;
                     reg [4:0] tmax, tlen, blen;
                     reg [7:0] tcand, tbest;
                     reg found_t;
                     integer ti;
-                    twin = peek32(bit_pos);
+                    twin = window32(7'd0);
                     tmax = (coeff_token_table == 3'd3) ? 5'd6 :
                            (coeff_token_table == 3'd4) ? 5'd8 : 5'd16;
                     found_t = 1'b0;
@@ -782,9 +873,9 @@ module h264_cavlc_residual_block #(
                     for (ti = 1; ti <= 16; ti = ti + 1) begin
                         tlen = ti[4:0];
                         if (tlen <= tmax && (bit_pos + {5'd0, tlen}) <= bit_len) begin
-                            // Quartus rejects bit-select on function call results.
                             tbits = take_msb(twin, {1'b0, tlen});
-                            tcand = coeff_token_lookup(coeff_token_table, tlen, tbits[15:0]);
+                            tcand = coeff_token_lookup(coeff_token_table, tlen,
+                                                       tbits[15:0]);
                             if (tcand[7] && !found_t) begin
                                 found_t = 1'b1;
                                 tbest = tcand;
@@ -828,7 +919,7 @@ module h264_cavlc_residual_block #(
                     // peek up to 3 sign bits
                     begin : g_signs
                         reg [31:0] sw;
-                        sw = peek32(bit_pos);
+                        sw = window32(7'd0);
                         if (t1_r >= 2'd1)
                             level_dbg[0] <= sw[31] ? -16'sd1 : 16'sd1;
                         if (t1_r >= 2'd2)
@@ -855,48 +946,58 @@ module h264_cavlc_residual_block #(
                 else begin : g_lvl_tri
                     reg [31:0] win_a, win_b, win_c, sfx_a, sfx_b, sfx_c;
                     reg [5:0] pfx_a, pfx_b, pfx_c;
-                    reg [9:0] avail_a, cons_a, cons_b, cons_c, bpos_b, bpos_c;
+                    reg [BIT_W:0] avail_a, cons_a, cons_b, cons_c, bpos_b, bpos_c;
                     reg [4:0] sleft_a, sleft_b, sleft_c;
                     reg [2:0] sl_a, sl_b, sl_c, sl_cur;
                     reg signed [15:0] lvl_a, lvl_b, lvl_c;
-                    reg do_b, do_c, bad_a, bad_b, bad_c, first_a;
+                    reg do_b, do_c, bad_a, first_a;
                     reg [31:0] lc_a, lc_b, lc_c;
                     reg [1:0] n_ok;
 
                     first_a = first_non_t1;
                     sl_cur = suffix_length;
-                    win_a = peek32(bit_pos);
+                    win_a = window32(7'd0);
                     pfx_a = clz32(win_a);
                     avail_a = bit_len - bit_pos;
                     do_b = 1'b0;
                     do_c = 1'b0;
                     bad_a = 1'b1;
-                    bad_b = 1'b0;
-                    bad_c = 1'b0;
-                    cons_a = 10'd0;
-                    cons_b = 10'd0;
-                    cons_c = 10'd0;
-                    lvl_a = 16'sd0;
-                    lvl_b = 16'sd0;
-                    lvl_c = 16'sd0;
-                    sl_a = sl_cur;
-                    sl_b = sl_cur;
-                    sl_c = sl_cur;
                     n_ok = 2'd0;
+
+                    // Speculative addresses depend only on prefixes/suffix sizes.
+                    // Coefficient range/EOF checks gate retirement, not lookahead.
+                    if (pfx_a == 6'd14 && sl_cur == 0) sleft_a = 5'd4;
+                    else if (pfx_a < 6'd15) sleft_a = {2'd0, sl_cur};
+                    else sleft_a = pfx_a[4:0] - 5'd3;
+                    cons_a = {4'd0, pfx_a} + 10'd1 + {5'd0, sleft_a};
+                    sl_a = first_a ? suffix_next_first(pfx_a, sl_cur, t1_r)
+                                   : suffix_next(sl_cur, pfx_a);
+                    win_b = window32(7'(cons_a));
+                    pfx_b = clz32(win_b);
+                    if (pfx_b < 6'd15) sleft_b = {2'd0, sl_a};
+                    else sleft_b = pfx_b[4:0] - 5'd3;
+                    cons_b = {4'd0, pfx_b} + 10'd1 + {5'd0, sleft_b};
+                    sl_b = suffix_next(sl_a, pfx_b);
+                    win_c = window32(7'(cons_a + cons_b));
+                    pfx_c = clz32(win_c);
+                    if (pfx_c < 6'd15) sleft_c = {2'd0, sl_b};
+                    else sleft_c = pfx_c[4:0] - 5'd3;
+                    cons_c = {4'd0, pfx_c} + 10'd1 + {5'd0, sleft_c};
+                    sl_c = suffix_next(sl_b, pfx_c);
+
+                    sfx_a = {16'd0, inline_suffix(win_a, 6'(cons_a), sleft_a)};
+                    sfx_b = {16'd0, inline_suffix(win_b, 6'(cons_b), sleft_b)};
+                    sfx_c = {16'd0, inline_suffix(win_c, 6'(cons_c), sleft_c)};
+                    lc_a = {16'd0, decode_inline_level_code(pfx_a, sl_cur, sfx_a[15:0], first_a, t1_r)};
+                    lc_b = {16'd0, decode_inline_level_code(pfx_b, sl_a, sfx_b[15:0], 1'b0, t1_r)};
+                    lc_c = {16'd0, decode_inline_level_code(pfx_c, sl_b, sfx_c[15:0], 1'b0, t1_r)};
+                    lvl_a = level_from_code(lc_a);
+                    lvl_b = level_from_code(lc_b);
+                    lvl_c = level_from_code(lc_c);
 
                     if (pfx_a >= 6'd32 || {6'd0, pfx_a} >= {2'd0, avail_a} || pfx_a > 6'd31) begin
                         st <= ST_FAIL;
                     end else begin
-                        if (first_a) begin
-                            if (pfx_a < 6'd14) sleft_a = {2'd0, sl_cur};
-                            else if (pfx_a == 6'd14) sleft_a = (sl_cur != 0) ? {2'd0, sl_cur} : 5'd4;
-                            else sleft_a = pfx_a[4:0] - 5'd3;
-                        end else begin
-                            if (pfx_a < 6'd15) sleft_a = {2'd0, sl_cur};
-                            else sleft_a = pfx_a[4:0] - 5'd3;
-                        end
-                        cons_a = {4'd0, pfx_a} + 10'd1 + {5'd0, sleft_a};
-
                         if (bit_pos + cons_a > bit_len) begin
                             st <= ST_FAIL;
                         end else if (({1'b0, pfx_a} + 7'd1 + {1'b0, sleft_a}) > 7'd32) begin
@@ -906,119 +1007,60 @@ module h264_cavlc_residual_block #(
                             suffix_acc <= 32'd0;
                             st <= ST_LVL_SUF;
                         end else begin
-                            sfx_a = take_msb(win_a << ({4'd0, pfx_a} + 10'd1), {1'b0, sleft_a});
-                            if (first_a) begin
-                                if (pfx_a < 6'd14)
-                                    lc_a = ({26'd0, pfx_a} << sl_cur) + sfx_a;
-                                else if (pfx_a == 6'd14) begin
-                                    if (sl_cur != 0)
-                                        lc_a = (32'd14 << sl_cur) + sfx_a;
-                                    else
-                                        lc_a = 32'd14 + sfx_a;
-                                end else begin
-                                    lc_a = 32'd30;
-                                    if (pfx_a >= 6'd16)
-                                        lc_a = lc_a + (32'd1 << (pfx_a - 6'd3)) - 32'd4096;
-                                    lc_a = lc_a + sfx_a;
-                                end
-                                if (t1_r < 2'd3) lc_a = lc_a + 32'd2;
-                            end else begin
-                                if (pfx_a < 6'd15)
-                                    lc_a = ({26'd0, pfx_a} << sl_cur) + sfx_a;
-                                else begin
-                                    lc_a = (32'd15 << sl_cur);
-                                    if (pfx_a >= 6'd16)
-                                        lc_a = lc_a + (32'd1 << (pfx_a - 6'd3)) - 32'd4096;
-                                    lc_a = lc_a + sfx_a;
-                                end
-                            end
-                            bad_a = (idx >= 5'd16 || lc_a > 32'd65535);
-                            if (!bad_a) begin
-                                lvl_a = level_from_code(lc_a);
-                                sl_a = first_a ? suffix_next_first(pfx_a, sl_cur, lvl_a)
-                                               : suffix_next(sl_cur, lvl_a);
-                                n_ok = 2'd1;
-                            end
+                            // An inline escape uses 2*prefix-2 <= 32 bits, so
+                            // prefix<=17 and levelCode<=30593 even at suffixLength7.
+                            // Only the long-escape store needs a signed16 range check.
+                            bad_a = (idx >= 5'd16);
+                            if (!bad_a) n_ok = 2'd1;
 
                             // Level B
                             if (!bad_a && (idx + 5'd1 < tc_r) &&
                                 (bit_pos + cons_a < bit_len)) begin
                                 bpos_b = bit_pos + cons_a;
-                                win_b = peek32(bpos_b);
-                                pfx_b = clz32(win_b);
                                 if (!(pfx_b >= 6'd32 ||
                                       {6'd0, pfx_b} >= {2'd0, (bit_len - bpos_b)} ||
                                       pfx_b > 6'd31)) begin
-                                    if (pfx_b < 6'd15) sleft_b = {2'd0, sl_a};
-                                    else sleft_b = pfx_b[4:0] - 5'd3;
-                                    cons_b = {4'd0, pfx_b} + 10'd1 + {5'd0, sleft_b};
                                     if ((bpos_b + cons_b <= bit_len) &&
                                         (({1'b0, pfx_b} + 7'd1 + {1'b0, sleft_b}) <= 7'd32)) begin
-                                        sfx_b = take_msb(win_b << ({4'd0, pfx_b} + 10'd1),
-                                                         {1'b0, sleft_b});
-                                        if (pfx_b < 6'd15)
-                                            lc_b = ({26'd0, pfx_b} << sl_a) + sfx_b;
-                                        else begin
-                                            lc_b = (32'd15 << sl_a);
-                                            if (pfx_b >= 6'd16)
-                                                lc_b = lc_b + (32'd1 << (pfx_b - 6'd3)) - 32'd4096;
-                                            lc_b = lc_b + sfx_b;
-                                        end
-                                        bad_b = ((idx + 5'd1) >= 5'd16 || lc_b > 32'd65535);
-                                        if (!bad_b) begin
-                                            lvl_b = level_from_code(lc_b);
-                                            sl_b = suffix_next(sl_a, lvl_b);
-                                            do_b = 1'b1;
-                                            n_ok = 2'd2;
-                                        end
+                                        // idx+1 < tc_r <= 16 also bounds the destination.
+                                        do_b = 1'b1;
+                                        n_ok = 2'd2;
                                     end
                                 end
                             end
 
                             // Level C
-                            if (do_b && !bad_b && (idx + 5'd2 < tc_r)) begin
+                            if (do_b && (idx + 5'd2 < tc_r)) begin
                                 bpos_c = bit_pos + cons_a + cons_b;
                                 if (bpos_c < bit_len) begin
-                                    win_c = peek32(bpos_c);
-                                    pfx_c = clz32(win_c);
                                     if (!(pfx_c >= 6'd32 ||
                                           {6'd0, pfx_c} >= {2'd0, (bit_len - bpos_c)} ||
                                           pfx_c > 6'd31)) begin
-                                        if (pfx_c < 6'd15) sleft_c = {2'd0, sl_b};
-                                        else sleft_c = pfx_c[4:0] - 5'd3;
-                                        cons_c = {4'd0, pfx_c} + 10'd1 + {5'd0, sleft_c};
                                         if ((bpos_c + cons_c <= bit_len) &&
                                             (({1'b0, pfx_c} + 7'd1 + {1'b0, sleft_c}) <= 7'd32)) begin
-                                            sfx_c = take_msb(win_c << ({4'd0, pfx_c} + 10'd1),
-                                                             {1'b0, sleft_c});
-                                            if (pfx_c < 6'd15)
-                                                lc_c = ({26'd0, pfx_c} << sl_b) + sfx_c;
-                                            else begin
-                                                lc_c = (32'd15 << sl_b);
-                                                if (pfx_c >= 6'd16)
-                                                    lc_c = lc_c + (32'd1 << (pfx_c - 6'd3)) - 32'd4096;
-                                                lc_c = lc_c + sfx_c;
-                                            end
-                                            bad_c = ((idx + 5'd2) >= 5'd16 || lc_c > 32'd65535);
-                                            if (!bad_c) begin
-                                                lvl_c = level_from_code(lc_c);
-                                                sl_c = suffix_next(sl_b, lvl_c);
-                                                do_c = 1'b1;
-                                                n_ok = 2'd3;
-                                            end
+                                            do_c = 1'b1;
+                                            n_ok = 2'd3;
                                         end
                                     end
                                 end
                             end
 
-                            if (bad_a || bad_b || bad_c) begin
+                            if (bad_a) begin
                                 st <= ST_FAIL;
                             end else begin
                                 first_non_t1 <= 1'b0;
+                                // Distinct destinations: select data with the registered
+                                // index, and enable each write only for its retired level.
+                                for (ci = 0; ci < 16; ci = ci + 1) begin
+                                    if (idx == 5'(ci) ||
+                                        (ci >= 1 && idx == 5'(ci-1) && do_b) ||
+                                        (ci >= 2 && idx == 5'(ci-2) && do_c))
+                                        level_dbg[ci] <=
+                                            (lvl_a & {16{idx == 5'(ci)}}) |
+                                            (lvl_b & {16{ci >= 1 && idx == 5'(ci-1)}}) |
+                                            (lvl_c & {16{ci >= 2 && idx == 5'(ci-2)}});
+                                end
                                 if (n_ok == 2'd3) begin
-                                    level_dbg[idx[3:0]] <= lvl_a;
-                                    level_dbg[idx[3:0] + 4'd1] <= lvl_b;
-                                    level_dbg[idx[3:0] + 4'd2] <= lvl_c;
                                     prefix <= pfx_c;
                                     suffix_acc <= sfx_c;
                                     suffix_length <= sl_c;
@@ -1030,8 +1072,6 @@ module h264_cavlc_residual_block #(
                                         st <= ST_LVL_PRE;
                                     end
                                 end else if (n_ok == 2'd2) begin
-                                    level_dbg[idx[3:0]] <= lvl_a;
-                                    level_dbg[idx[3:0] + 4'd1] <= lvl_b;
                                     prefix <= pfx_b;
                                     suffix_acc <= sfx_b;
                                     suffix_length <= sl_b;
@@ -1043,7 +1083,6 @@ module h264_cavlc_residual_block #(
                                         st <= ST_LVL_PRE;
                                     end
                                 end else begin
-                                    level_dbg[idx[3:0]] <= lvl_a;
                                     prefix <= pfx_a;
                                     suffix_acc <= sfx_a;
                                     suffix_length <= sl_a;
@@ -1068,7 +1107,7 @@ module h264_cavlc_residual_block #(
                 end else if (bit_pos + {5'd0, suffix_left} > bit_len) st <= ST_FAIL;
                 else begin : g_long_suf
                     reg [31:0] win2;
-                    win2 = peek32(bit_pos);
+                    win2 = window32(7'd0);
                     suffix_acc <= take_msb(win2, {1'b0, suffix_left});
                     bit_pos <= bit_pos + {5'd0, suffix_left};
                     suffix_left <= 5'd0;
@@ -1088,33 +1127,33 @@ module h264_cavlc_residual_block #(
                         else
                             level_code = 32'd14 + suffix_acc;
                     end else begin
-                        level_code = 32'd30;
+                        level_code = (32'd15 << suffix_length) + ((suffix_length == 0) ? 32'd15 : 32'd0);
                         if (prefix >= 6'd16)
                             level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
                     if (t1_r < 2'd3) level_code = level_code + 32'd2;
-                    level_bad = (idx >= 5'd16 || level_code > 32'd65535);
+                    level_bad = (idx >= 5'd16 || !level_fits(level_code));
                     if (!level_bad) begin
                         lvl_tmp = level_from_code(level_code);
                         level_dbg[idx[3:0]] <= lvl_tmp;
-                        suffix_length <= suffix_next_first(prefix, suffix_length, lvl_tmp);
+                        suffix_length <= suffix_next_first(prefix, suffix_length, t1_r);
                         first_non_t1 <= 1'b0;
                     end
                 end else begin
                     if (prefix < 6'd15)
                         level_code = ({26'd0, prefix} << suffix_length) + suffix_acc;
                     else begin
-                        level_code = (32'd15 << suffix_length);
+                        level_code = (32'd15 << suffix_length) + ((suffix_length == 0) ? 32'd15 : 32'd0);
                         if (prefix >= 6'd16)
                             level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
-                    level_bad = (idx >= 5'd16 || level_code > 32'd65535);
+                    level_bad = (idx >= 5'd16 || !level_fits(level_code));
                     if (!level_bad) begin
                         lvl_tmp = level_from_code(level_code);
                         level_dbg[idx[3:0]] <= lvl_tmp;
-                        suffix_length <= suffix_next(suffix_length, lvl_tmp);
+                        suffix_length <= suffix_next(suffix_length, prefix);
                     end
                 end
                 if (level_bad) st <= ST_FAIL;
@@ -1134,13 +1173,12 @@ module h264_cavlc_residual_block #(
                     st <= ST_PLACE_INIT;
                 end else if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin : g_tz_par
-                    reg [31:0] zwin;
-                    reg [31:0] zbits;
+                    reg [31:0] zwin, zbits;
                     reg [4:0] zmax, zlen, zbest_len;
                     reg [4:0] zcand, zbest;
                     reg found_z;
                     integer zi;
-                    zwin = peek32(bit_pos);
+                    zwin = window32(7'd0);
                     zmax = tz_is_chroma ? 5'd3 : 5'd9;
                     found_z = 1'b0;
                     zbest = 5'd0;
@@ -1149,7 +1187,8 @@ module h264_cavlc_residual_block #(
                         zlen = zi[4:0];
                         if (zlen <= zmax && (bit_pos + {5'd0, zlen}) <= bit_len) begin
                             zbits = take_msb(zwin, {1'b0, zlen});
-                            zcand = total_zeros_lookup(tz_is_chroma, tc_r, zlen[3:0], zbits[8:0]);
+                            zcand = total_zeros_lookup(tz_is_chroma, tc_r, zlen[3:0],
+                                                       zbits[8:0]);
                             if (zcand[4] && !found_z) begin
                                 found_z = 1'b1;
                                 zbest = zcand;
@@ -1157,7 +1196,7 @@ module h264_cavlc_residual_block #(
                             end
                         end
                     end
-                    if (!found_z) st <= ST_FAIL;
+                    if (!found_z || {1'b0, zbest[3:0]} + tc_r > max_coeff) st <= ST_FAIL;
                     else begin
                         bit_pos <= bit_pos + {5'd0, zbest_len};
                         total_zeros <= zbest[3:0];
@@ -1181,16 +1220,15 @@ module h264_cavlc_residual_block #(
                     st <= ST_PLACE_INIT;
                 end else if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin : g_run_pair
-                    reg [31:0] rwin_a, rwin_b;
-                    reg [31:0] rbits_a, rbits_b;
+                    reg [31:0] rwin_a, rwin_b, rbits;
                     reg [4:0] rmax_a, rmax_b, rlen, rblen_a, rblen_b;
                     reg [4:0] rcand, rbest_a, rbest_b;
                     reg found_a, found_b, do_b;
                     reg [3:0] zl_a, zl_b, run_a, run_b;
-                    reg [9:0] bpos_a;
+                    reg [BIT_W:0] bpos_a;
                     integer ri;
 
-                    rwin_a = peek32(bit_pos);
+                    rwin_a = window32(7'd0);
                     rmax_a = (zeros_left < 4'd7) ? 5'd3 : 5'd11;
                     found_a = 1'b0;
                     rbest_a = 5'd0;
@@ -1198,8 +1236,9 @@ module h264_cavlc_residual_block #(
                     for (ri = 1; ri <= 11; ri = ri + 1) begin
                         rlen = ri[4:0];
                         if (rlen <= rmax_a && (bit_pos + {5'd0, rlen}) <= bit_len) begin
-                            rbits_a = take_msb(rwin_a, {1'b0, rlen});
-                            rcand = run_before_lookup(zeros_left, rlen[3:0], rbits_a[4:0]);
+                            rbits = take_msb(rwin_a, {1'b0, rlen});
+                            rcand = run_before_lookup(zeros_left, rlen[3:0],
+                                                      rbits[4:0]);
                             if (rcand[4] && !found_a) begin
                                 found_a = 1'b1;
                                 rbest_a = rcand;
@@ -1227,13 +1266,14 @@ module h264_cavlc_residual_block #(
 
                         // Second run if more coeffs remain and zeros remain.
                         if (idx + 5'd1 < tc_r - 5'd1 && zl_a != 4'd0 && bpos_a < bit_len) begin
-                            rwin_b = peek32(bpos_a);
+                            rwin_b = window32({2'd0, rblen_a});
                             rmax_b = (zl_a < 4'd7) ? 5'd3 : 5'd11;
                             for (ri = 1; ri <= 11; ri = ri + 1) begin
                                 rlen = ri[4:0];
                                 if (rlen <= rmax_b && (bpos_a + {5'd0, rlen}) <= bit_len) begin
-                                    rbits_b = take_msb(rwin_b, {1'b0, rlen});
-                                    rcand = run_before_lookup(zl_a, rlen[3:0], rbits_b[4:0]);
+                                    rbits = take_msb(rwin_b, {1'b0, rlen});
+                                    rcand = run_before_lookup(zl_a, rlen[3:0],
+                                                              rbits[4:0]);
                                     if (rcand[4] && !found_b) begin
                                         found_b = 1'b1;
                                         rbest_b = rcand;
@@ -1279,26 +1319,10 @@ module h264_cavlc_residual_block #(
 
             ST_RUN_CHK: st <= ST_FAIL;
 
-            // Place all coeffs in one cycle. Order matches legacy ST_PLACE_STEP:
-            // walk idx = tc-1 .. 0 (reverse of decode order).
-            ST_PLACE_INIT: begin : g_place_all
-                reg signed [5:0] cnum;
-                reg fail_p;
-                integer pi;
+            ST_PLACE_INIT: begin
                 for (ci = 0; ci < 16; ci = ci + 1)
-                    coeff[ci] <= 16'sd0;
-                cnum = -6'sd1;
-                fail_p = 1'b0;
-                for (pi = 16; pi >= 1; pi = pi - 1) begin
-                    if (pi <= tc_r && !fail_p) begin
-                        cnum = cnum + {2'd0, run_dbg[idx4(5'(pi - 1))]} + 6'sd1;
-                        if (cnum < 6'sd16)
-                            coeff[cnum[3:0]] <= level_dbg[idx4(5'(pi - 1))];
-                        else
-                            fail_p = 1'b1;
-                    end
-                end
-                if (fail_p) st <= ST_FAIL;
+                    coeff[ci] <= placed_coeff[ci];
+                if (place_bad) st <= ST_FAIL;
                 else begin
                     ok <= 1'b1;
                     bit_offset_end <= bit_pos;

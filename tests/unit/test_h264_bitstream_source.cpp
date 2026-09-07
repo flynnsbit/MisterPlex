@@ -1,4 +1,5 @@
 #include "libmisterplex/h264_nal_dispatch.hpp"
+#include "libmisterplex/ddr_bitstream_ring.hpp"
 
 #include <cstdio>
 #include <fstream>
@@ -67,7 +68,7 @@ int main() {
     CHECK(ring.begin(11) == ControlResult::ActiveSession);
     CHECK(ring.end(10) == ControlResult::Ok);
 
-    // Source dispatcher preserves/replays SPS/PPS after pause/resume before VCL.
+    // Pause preserves compressed references: unconsumed P NALs are retried.
     CopyRingBitstreamProducer replayRing(4096);
     DispatchConfig cfg;
     cfg.max_full_retries = 0;
@@ -78,12 +79,12 @@ int main() {
     CHECK(dispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
     CHECK(dispatch.handleNal(idr.data(), idr.size()) == PushResult::Ok);
     CHECK(dispatch.pause() == ControlResult::Ok);
-    CHECK(dispatch.handleNal(p.data(), p.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(p.data(), p.size()) == PushResult::Full);
     CHECK(dispatch.resume() == ControlResult::Ok);
     CHECK(dispatch.handleNal(p.data(), p.size()) == PushResult::Ok);
-    CHECK(dispatch.stats().nal_dropped_paused == 1);
-    CHECK(dispatch.stats().sps_replayed >= 1);
-    CHECK(dispatch.stats().pps_replayed >= 1);
+    CHECK(dispatch.stats().nal_dropped_paused == 0);
+    CHECK(dispatch.stats().sps_replayed == 0);
+    CHECK(dispatch.stats().pps_replayed == 0);
     CHECK(dispatch.end() == ControlResult::Ok);
 
     // Full is transient and retried; persistent Full escalates distinctly.
@@ -187,6 +188,147 @@ int main() {
     CHECK(fixtureRing.status().bytes_accepted == fixture.size());
     CHECK(fixtureRing.status().nal_accepted == fixtureNals);
     CHECK(fixtureDispatch.end() == ControlResult::Ok);
+
+    {
+        AnnexBFramer bounded(8);
+        size_t emitted = 0;
+        auto accept = [&](const uint8_t*, size_t) { ++emitted; return true; };
+        const auto shortNal = nal(1, {0x11});
+        std::vector<uint8_t> many;
+        for (int i = 0; i < 20; ++i)
+            many.insert(many.end(), shortNal.begin(), shortNal.end());
+        CHECK(bounded.push(many.data(), many.size(), accept));
+        CHECK(bounded.finish(accept));
+        CHECK(emitted == 20);
+        bounded.reset();
+        const auto oversized = nal(5, {1, 2, 3, 4, 5, 6, 7, 8, 9});
+        CHECK(!bounded.push(oversized.data(), oversized.size(), accept));
+        CHECK(bounded.error() == AnnexBFramer::Error::TooLarge);
+        CHECK(!bounded.finish(accept));
+        bounded.reset();
+        const uint8_t shortFinal[] = {0, 0, 1, 0x0a};
+        CHECK(bounded.push(shortFinal, sizeof(shortFinal), accept));
+        CHECK(bounded.finish(accept));
+        bounded.reset();
+        CHECK(bounded.finish(accept));
+        CHECK(bounded.push(shortFinal, sizeof(shortFinal) - 1, accept));
+        CHECK(!bounded.finish(accept));
+        CHECK(bounded.error() == AnnexBFramer::Error::Malformed);
+        bounded.reset();
+        CHECK(bounded.push(shortFinal, sizeof(shortFinal), accept));
+        auto reject = [](const uint8_t*, size_t) { return false; };
+        CHECK(!bounded.finish(reject));
+        CHECK(bounded.error() == AnnexBFramer::Error::CallbackRejected);
+        bounded.reset();
+        CHECK(!bounded.push(nullptr, 1, accept));
+        CHECK(bounded.error() == AnnexBFramer::Error::InvalidInput);
+    }
+    {
+        namespace abi = misterplex::ddr_bitstream_ring;
+        abi::AccessUnit au;
+        au.session_id = 42;
+        au.annexb = p.data();
+        au.len = p.size();
+        au.pts = 1001;
+        au.duration = 1001;
+        au.timebase_num = 1;
+        au.timebase_den = 24000;
+        au.flags = abi::kAccessUnitKeyframe;
+        CHECK(abi::validAccessUnit(au));
+        const auto metadata = abi::encodeAccessUnitMetadata(au);
+        CHECK(metadata.size() == 32);
+        CHECK(metadata[0] == 0xe9 && metadata[1] == 3);
+        CHECK(metadata[8] == 1 && metadata[12] == 0xc0 && metadata[13] == 0x5d);
+        CHECK(metadata[16] == 0xe9 && metadata[17] == 3 && metadata[24] == 1);
+        CHECK(metadata[28] == 0 && metadata[31] == 0);
+        au.timebase_den = 0;
+        CHECK(!abi::validAccessUnit(au));
+        au.timebase_den = 24;
+        au.pts = abi::kNoTimestamp;
+        CHECK(!abi::validAccessUnit(au));
+        au.pts = -7;
+        CHECK(abi::validAccessUnit(au));
+        CHECK(!abi::validAccessUnit(au, au.len - 1));
+        au.flags = 2;
+        CHECK(!abi::validAccessUnit(au));
+        CHECK(abi::countDistance(5, 0x7ffffffdu) == 8);
+        CHECK(abi::countDistance(0x7fffffffu, 0) == 0x7fffffffu);
+
+        constexpr uint64_t nonce = 0x0123456789abcdefull;
+        const std::array<uint32_t, 8> values{{
+            (mailbox_abi::kFpgaVideoLayoutId << 16) | mailbox_abi::kFpgaVideoAbiVersion,
+            abi::kRequiredVideoFeatures, (240u << 16) | 320u, 16384u, 0x12345678u,
+            static_cast<uint32_t>(nonce), static_cast<uint32_t>(nonce >> 32), 1u,
+        }};
+        const std::array<uint32_t, 8> magics{{
+            mailbox_abi::kVideoCapsMagic, mailbox_abi::kVideoFeaturesMagic,
+            mailbox_abi::kVideoDimensionsMagic, mailbox_abi::kVideoAuLimitMagic,
+            mailbox_abi::kVideoBuildMagic, mailbox_abi::kVideoNonceLowMagic,
+            mailbox_abi::kVideoNonceHighMagic, mailbox_abi::kVideoCapsCommitMagic,
+        }};
+        std::array<uint64_t, 8> words{};
+        for (size_t i = 0; i < words.size(); ++i)
+            words[i] = (static_cast<uint64_t>(values[i]) << 32) | magics[i];
+        abi::VideoCapabilities caps;
+        CHECK(abi::decodeVideoCapabilities(words, nonce, caps));
+        CHECK(caps.supportsVideo());
+        CHECK(caps.max_width == 320 && caps.max_height == 240 && caps.nonce == nonce);
+        CHECK(!abi::decodeVideoCapabilities(words, nonce + 1, caps));
+        CHECK(!abi::decodeVideoCapabilities(words, 0, caps));
+        caps.features &= ~abi::Color420;
+        CHECK(!caps.supportsVideo());
+        words[7] = magics[7];
+        CHECK(!abi::decodeVideoCapabilities(words, nonce, caps));
+        words[7] |= 1ull << 32;
+        words[4] = magics[4];
+        CHECK(abi::decodeVideoCapabilities(words, nonce, caps));
+        CHECK(!caps.supportsVideo());
+        words[4] = (uint64_t{0x12345678} << 32) | magics[4];
+        words[0] ^= 1;
+        CHECK(!abi::decodeVideoCapabilities(words, nonce, caps));
+
+        CHECK(abi::kMaxAccessUnitBytes + abi::kAccessUnitMetadataBytes +
+                  abi::kRecordHeaderBytes + abi::kControlReserveBytes == abi::kRingBytes);
+        std::array<uint64_t, 9> shown{{
+            (uint64_t{abi::kVideoActive | abi::kVideoHasFrame | abi::kVideoAudioClock} << 32) |
+                mailbox_abi::kVideoPresentationMagic,
+            42, 1001, (uint64_t{24000} << 32) | 1,
+            (uint64_t{2} << 32) | 1, 4004, nonce, 0,
+            (uint64_t{3} << 32) | mailbox_abi::kVideoPresentationCommitMagic,
+        }};
+        abi::VideoPresentation presentation;
+        CHECK(abi::decodeVideoPresentation(shown, 42, nonce, presentation));
+        CHECK(presentation.active && presentation.has_frame && presentation.has_audio_clock);
+        CHECK(presentation.session_id == 42 && presentation.seq == 1);
+        CHECK(presentation.pts == 1001 && presentation.timebase_num == 1 &&
+              presentation.timebase_den == 24000 && presentation.presentation_count == 2);
+        CHECK(presentation.audio_samples_consumed == 4004 && presentation.publication == 3);
+        CHECK(!abi::decodeVideoPresentation(shown, 41, nonce, presentation));
+        CHECK(!abi::decodeVideoPresentation(shown, 42, nonce + 1, presentation));
+        shown[8] = mailbox_abi::kVideoPresentationCommitMagic;
+        CHECK(!abi::decodeVideoPresentation(shown, 42, nonce, presentation));
+        shown[8] |= uint64_t{3} << 32;
+        shown[3] = 1;
+        CHECK(!abi::decodeVideoPresentation(shown, 42, nonce, presentation));
+        shown[3] = (uint64_t{24000} << 32) | 1;
+        shown[2] = static_cast<uint64_t>(abi::kNoTimestamp);
+        CHECK(!abi::decodeVideoPresentation(shown, 42, nonce, presentation));
+        shown[0] = (uint64_t{abi::kVideoActive | abi::kVideoBuffering} << 32) |
+                   mailbox_abi::kVideoPresentationMagic;
+        CHECK(abi::decodeVideoPresentation(shown, 42, nonce, presentation));
+        CHECK(!presentation.has_frame && presentation.buffering && !presentation.has_audio_clock);
+        shown[7] = 1;
+        CHECK(!abi::decodeVideoPresentation(shown, 42, nonce, presentation));
+
+        for (size_t i = 0; i < mailbox_abi::kAllMailboxes.size(); ++i) {
+            const auto& a = mailbox_abi::kAllMailboxes[i];
+            for (size_t j = i + 1; j < mailbox_abi::kAllMailboxes.size(); ++j) {
+                const auto& b = mailbox_abi::kAllMailboxes[j];
+                CHECK(uint64_t{a.phys_addr} + a.size_bytes <= b.phys_addr ||
+                      uint64_t{b.phys_addr} + b.size_bytes <= a.phys_addr);
+            }
+        }
+    }
 
     if (fails) {
         std::fprintf(stderr, "test_h264_bitstream_source: %d failures\n", fails);

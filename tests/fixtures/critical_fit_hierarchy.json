@@ -1,5 +1,16 @@
 {
   "schema": "misterplex.critical_fit_hierarchy.v1",
+  "profiles": {
+    "fpga320": {
+      "description": "Captured FPGA_VIDEO_320=1: 320 pixels x 8 lines x 2 sets x 16 bits; fitted M10K presence remains mandatory.",
+      "module_overrides": {
+        "ddr_frame_store": {
+          "min_block_memory_bits": 81920,
+          "min_m10ks": 96
+        }
+      }
+    }
+  },
   "modules": [
     {
       "name": "ddr_frame_store",

@@ -2,6 +2,7 @@
 #include "verilated.h"
 
 #include <array>
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -183,6 +184,104 @@ bool compareSignal(const char* name, int block, int index, int got, int want) {
     return false;
 }
 
+    std::array<int64_t,16> inverse(const std::array<int64_t,16>& block) {
+        std::array<int64_t,16> t{}, out{};
+        for(int row=0;row<4;++row) {
+            const int p=row*4;
+            int64_t a=block[p]+block[p+2],b=block[p]-block[p+2];
+            int64_t c=(block[p+1]>>1)-block[p+3],d=block[p+1]+(block[p+3]>>1);
+            t[p]=a+d;t[p+1]=b+c;t[p+2]=b-c;t[p+3]=a-d;
+        }
+        for(int col=0;col<4;++col) {
+            int64_t a=t[col]+t[col+8],b=t[col]-t[col+8];
+            int64_t c=(t[col+4]>>1)-t[col+12],d=t[col+4]+(t[col+12]>>1);
+            out[col]=(a+d+32)>>6;out[col+4]=(b+c+32)>>6;
+            out[col+8]=(b-c+32)>>6;out[col+12]=(a-d+32)>>6;
+        }
+        return out;
+    }
+
+    std::array<int64_t,16> hadamard(const std::array<int64_t,16>& coeff,int qp) {
+        static constexpr int zz[16]={0,1,4,8,5,2,3,6,9,12,13,10,7,11,14,15};
+        static constexpr int scale[6]={10,11,13,14,16,18};
+        std::array<int64_t,16> input{},t{},out{};
+        for(int i=0;i<16;++i)input[(zz[i]>>2)|((zz[i]&3)<<2)]=coeff[i];
+        for(int i=0;i<4;++i) {
+            int p=i*4;
+            int64_t a=input[p]+input[p+1],b=input[p]-input[p+1];
+            int64_t c=input[p+2]-input[p+3],d=input[p+2]+input[p+3];
+            t[p]=a+d;t[p+1]=a-d;t[p+2]=b-c;t[p+3]=b+c;
+        }
+        for(int i=0;i<4;++i) {
+            int64_t a=t[i]+t[i+8],b=t[i]-t[i+8],c=t[i+4]-t[i+12],d=t[i+4]+t[i+12];
+            out[i*4]=a+d;out[i*4+1]=b+c;out[i*4+2]=b-c;out[i*4+3]=a-d;
+        }
+        for(auto&v:out)v=(v*scale[qp%6]*(int64_t(1)<<(qp/6))+2)>>2;
+        return out;
+    }
+
+    void fullRangeCases(Vh264_iq_idct_4x4& dut) {
+        auto tick=[&] {dut.clk=0;dut.eval();dut.clk=1;dut.eval();};
+        dut.reset=1;dut.start=0;tick();dut.reset=0;
+        static constexpr int zigzag[16]={0,1,4,8,5,2,3,6,9,12,13,10,7,11,14,15};
+        unsigned cases=0, max_cycles=0;
+        uint32_t rng=0x12345678;
+        for(int qp=0;qp<=51;++qp) for(int kind=0;kind<6;++kind) {
+            std::array<int64_t,16> quantized{}, block{};
+            std::array<uint8_t,16> pred{};
+            int count=kind==2||kind==3?15:16;
+            dut.qp=qp;dut.max_coeff=count;
+            dut.use_dc=kind==2||kind==3;dut.dc_value=kind==2?100003:-170009;
+            for(int i=0;i<16;++i) {
+                rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;
+                quantized[i]=kind==0 ? (i%2 ? -32768:32767) :
+                             kind==1 ? (i==0 ? (qp%2 ? -1025:1025):0) :
+                             kind==2 ? 0 :
+                             kind==3 ? (i==14 ? -513:0) :
+                             kind==4 ? int16_t(rng):int16_t(rng%1025)-512;
+                dut.coeff[i]=int16_t(quantized[i]);pred[i]=uint8_t(rng>>16);dut.pred[i]=pred[i];
+                if(i<count) {
+                    int pos=zigzag[i+(count==15?1:0)];
+                    block[pos]=quantized[i]*levelScale(qp,pos/4,pos%4)*(int64_t(1)<<(qp/6));
+                }
+            }
+            dut.eval();
+            auto residual=inverse(block);
+            for(int i=0;i<16;++i) {
+                if(int32_t(dut.dequant[i])!=block[i]||int32_t(dut.idct[i])!=residual[i]||
+                   dut.recon[i]!=std::clamp<int64_t>(pred[i]+residual[i],0,255))
+                    throw std::runtime_error("full signed transform mismatch qp="+std::to_string(qp)+
+                                             " case="+std::to_string(kind)+" pixel="+std::to_string(i));
+            }
+            if(dut.use_dc)block[0]=int32_t(dut.dc_value);
+            auto serial_residual=inverse(block);
+            auto dc_expected=hadamard(quantized,qp);
+            dut.start=1;tick();dut.start=0;
+            // Inputs need not remain stable after accepted start.
+            for(int i=0;i<16;++i){dut.coeff[i]=17;dut.pred[i]=3;}
+            dut.qp=51;dut.dc_value=0;dut.use_dc=0;
+            unsigned cycles=0;
+            bool serial_finished=false,dc_finished=false;
+            while((!serial_finished||!dc_finished) && cycles<100) {
+                tick();++cycles;
+                serial_finished|=dut.serial_done;
+                dc_finished|=dut.dc_done;
+            }
+            if(!serial_finished||!dc_finished||!dut.serial_ok)
+                throw std::runtime_error("serial transform did not complete");
+            for(int i=0;i<16;++i)
+                if(int32_t(dut.dc_out[i])!=dc_expected[i])
+                    throw std::runtime_error("wide DC Hadamard mismatch qp="+std::to_string(qp)+
+                                             " case="+std::to_string(kind)+" index="+std::to_string(i));
+            for(int i=0;i<16;++i)
+                if(dut.serial_recon[i]!=std::clamp<int64_t>(pred[i]+serial_residual[i],0,255))
+                    throw std::runtime_error("serial signed transform mismatch qp="+std::to_string(qp)+
+                                             " case="+std::to_string(kind)+" pixel="+std::to_string(i));
+            max_cycles=std::max(max_cycles,cycles);++cases;tick();
+        }
+        std::cout<<"OK full-signed IQ/transform cases="<<cases<<" qp=0..51 max_cycles="<<max_cycles
+                 <<" AC-only/DC-override/wide-Hadamard/latched-inputs verified\n";
+    }
 } // namespace
 
 int main(int argc, char** argv) {
@@ -214,8 +313,8 @@ int main(int argc, char** argv) {
             dut.eval();
 
             for (int i = 0; i < 16; ++i) {
-                const int gotDequant = signExtend(static_cast<int>(dut.dequant[i]), 18);
-                const int gotIdct = signExtend(static_cast<int>(dut.idct[i]), 18);
+                const int gotDequant = int32_t(dut.dequant[i]);
+                const int gotIdct = int32_t(dut.idct[i]);
                 const int gotRecon = static_cast<uint8_t>(dut.recon[i]);
                 if (!compareSignal("dequant", block.block, i, gotDequant, block.dequant[static_cast<std::size_t>(i)]) ||
                     !compareSignal("idct", block.block, i, gotIdct, block.idct[static_cast<std::size_t>(i)]) ||
@@ -228,6 +327,7 @@ int main(int argc, char** argv) {
         std::cout << "OK real RTL sim: h264_iq_idct_4x4 elaborated with Verilator; blocks="
                   << blocks.size() << " compared_values=" << compared << " qp=" << qp
                   << " fixture=" << argv[1] << '\n';
+        fullRangeCases(dut);
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL real RTL sim: " << e.what() << '\n';

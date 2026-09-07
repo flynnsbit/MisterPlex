@@ -1,8 +1,6 @@
 // Phase 3.3l-3: H.264 intra prediction helpers.
-// Behaviour matches host/libmisterplex/h264_recon.hpp for the measured all-intra
-// Plex vector. All intra modes supported: I4x4 (9 modes), I16x16 (4 modes incl.
-// Plane per clause 8.3.3.4), Chroma 8x8 (4 modes incl. Plane per clause 8.3.4.4).
-// I_PCM (mb_type 25) remains UNSUPPORTED — mode guard fires unsupported_code for it.
+// Behaviour matches host/libmisterplex/h264_recon.hpp. I16 V/H/DC/Plane are
+// sequential (one selected mode, one row/cycle).
 
 module h264_intra4x4_pred (
 	input  wire [3:0] mode,
@@ -144,6 +142,7 @@ endmodule
 
 module h264_intra16x16_pred (
 	input  wire        clk,
+	input  wire        reset,
 	input  wire        start,
 	input  wire [1:0]  mode,
 	input  wire [7:0]  above [0:15],
@@ -151,133 +150,351 @@ module h264_intra16x16_pred (
 	input  wire [7:0]  top_left,
 	input  wire        has_above,
 	input  wire        has_left,
+	output reg         busy,
+	output reg         done,
 	output reg         unsupported,
-	output reg         valid,
 	output reg  [7:0]  pred [0:255]
 );
-	// 2-cycle pipeline for Plane prediction (ITU-T H.264 clause 8.3.3.4).
-	// Cycle 1: gradient accumulation → b, c → pre-compute 32 products bx[]/cy[]
-	// Cycle 2: 256 pixels from registered a + bx[x] + cy[y] → clip
-	// Modes V/H/DC: 1 cycle (register combinational result on start).
+	// Sequential selected-mode I16 (V/H/DC/Plane). One neighbor-prep
+	// then one MB row/cycle. No 4-mode parallel engines, no 256-wide
+	// combo generate. 0 DSP: shift-add for 5*H and bb*(x-7).
+	localparam [1:0] ST_IDLE = 2'd0;
+	localparam [1:0] ST_HV   = 2'd1;
+	localparam [1:0] ST_COEF = 2'd2;
+	localparam [1:0] ST_FILL = 2'd3;
 
-	function automatic [7:0] clip8;
-		input integer v;
+	reg [1:0]  st;
+	reg [1:0]  mode_r;
+	reg        ha_r, hl_r;
+	reg [7:0]  above_r [0:15];
+	reg [7:0]  left_r [0:15];
+	reg [7:0]  tl_r;
+	reg [3:0]  ii;
+	reg [3:0]  ry;
+	reg signed [15:0] Hp, Vp;
+	reg signed [13:0] aa;
+	reg signed [12:0] bb, cc;
+	reg [7:0]  dc_v;
+	reg        plane_ok;
+
+	reg [7:0] a_hi, a_lo, l_hi, l_lo;
+	reg [7:0] left_row;
+	reg signed [9:0] da, dl;
+	reg signed [15:0] term_a, term_l;
+	reg signed [4:0] dy;
+	reg signed [16:0] row_c;
+	reg signed [16:0] valv0, valv1, valv2, valv3;
+	reg signed [16:0] valv4, valv5, valv6, valv7;
+	reg signed [16:0] valv8, valv9, valva, valvb;
+	reg signed [16:0] valvc, valvd, valve, valvf;
+	integer si;
+	integer sum_i;
+
+	function automatic [7:0] clip8s;
+		input signed [16:0] v;
+		reg signed [16:0] t;
 		begin
-			if (v < 0) clip8 = 8'd0;
-			else if (v > 255) clip8 = 8'd255;
-			else clip8 = v[7:0];
+			t = v;
+			if (t < 17'sd0) clip8s = 8'd0;
+			else if (t > 17'sd255) clip8s = 8'd255;
+			else clip8s = t[7:0];
 		end
 	endfunction
 
-	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
-	reg phase = 1'b0;
-
-	// Registered intermediates for Plane pipeline (32 products, not 256)
-	reg signed [15:0] a_r;
-	reg signed [15:0] bx_r [0:15];
-	reg signed [15:0] cy_r [0:15];
-
-	// Combinational gradient computation (feeds cycle 1 registers)
-	integer hgrad_c, vgrad_c, a_c, b_c, c_c;
-	integer gi;
-	// Individual gradient terms (computed independently, then tree-reduced)
-	integer ht [0:7];
-	integer vt [0:7];
-	always @* begin
-		// Compute individual gradient terms (clause 8.3.3.4)
-		for (gi = 0; gi < 8; gi = gi + 1) begin
-			ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
-			vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+	function automatic signed [16:0] kmul;
+		input signed [12:0] k;
+		input signed [4:0] d;
+		reg signed [16:0] acc;
+		reg signed [4:0] ad;
+		reg neg;
+		begin
+			neg = (d < 5'sd0);
+			ad  = neg ? -d : d;
+			acc = 17'sd0;
+			if (ad[0]) acc = acc + k;
+			if (ad[1]) acc = acc + (k <<< 1);
+			if (ad[2]) acc = acc + (k <<< 2);
+			if (ad[3]) acc = acc + (k <<< 3);
+			kmul = neg ? -acc : acc;
 		end
-		// Balanced tree reduction: 3 add levels instead of 7 in linear chain
-		hgrad_c = ((ht[0]+ht[1]) + (ht[2]+ht[3])) + ((ht[4]+ht[5]) + (ht[6]+ht[7]));
-		vgrad_c = ((vt[0]+vt[1]) + (vt[2]+vt[3])) + ((vt[4]+vt[5]) + (vt[6]+vt[7]));
-		a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
-		b_c = (5 * hgrad_c + 32) >>> 6;
-		c_c = (5 * vgrad_c + 32) >>> 6;
+	endfunction
+
+	function automatic signed [15:0] scale_d;
+		input [3:0] n; // 1..8
+		input signed [9:0] d;
+		begin
+			case (n)
+			4'd1: scale_d = d;
+			4'd2: scale_d = d <<< 1;
+			4'd3: scale_d = (d <<< 1) + d;
+			4'd4: scale_d = d <<< 2;
+			4'd5: scale_d = (d <<< 2) + d;
+			4'd6: scale_d = (d <<< 2) + (d <<< 1);
+			4'd7: scale_d = (d <<< 3) - d;
+			default: scale_d = d <<< 3;
+			endcase
+		end
+	endfunction
+
+	// Latch-then-slice neighbor picks (no variable 2D window).
+	always @* begin
+		a_hi = 8'd0; a_lo = 8'd0; l_hi = 8'd0; l_lo = 8'd0;
+		case (ii)
+		4'd0: begin a_hi = above_r[8];  a_lo = above_r[6]; l_hi = left_r[8];  l_lo = left_r[6]; end
+		4'd1: begin a_hi = above_r[9];  a_lo = above_r[5]; l_hi = left_r[9];  l_lo = left_r[5]; end
+		4'd2: begin a_hi = above_r[10]; a_lo = above_r[4]; l_hi = left_r[10]; l_lo = left_r[4]; end
+		4'd3: begin a_hi = above_r[11]; a_lo = above_r[3]; l_hi = left_r[11]; l_lo = left_r[3]; end
+		4'd4: begin a_hi = above_r[12]; a_lo = above_r[2]; l_hi = left_r[12]; l_lo = left_r[2]; end
+		4'd5: begin a_hi = above_r[13]; a_lo = above_r[1]; l_hi = left_r[13]; l_lo = left_r[1]; end
+		4'd6: begin a_hi = above_r[14]; a_lo = above_r[0]; l_hi = left_r[14]; l_lo = left_r[0]; end
+		default: begin a_hi = above_r[15]; a_lo = tl_r;    l_hi = left_r[15]; l_lo = tl_r;     end
+		endcase
+		da = $signed({1'b0, a_hi}) - $signed({1'b0, a_lo});
+		dl = $signed({1'b0, l_hi}) - $signed({1'b0, l_lo});
+		term_a = scale_d(ii + 4'd1, da);
+		term_l = scale_d(ii + 4'd1, dl);
+
+		left_row = 8'd128;
+		case (ry)
+		4'd0:  left_row = left_r[0];
+		4'd1:  left_row = left_r[1];
+		4'd2:  left_row = left_r[2];
+		4'd3:  left_row = left_r[3];
+		4'd4:  left_row = left_r[4];
+		4'd5:  left_row = left_r[5];
+		4'd6:  left_row = left_r[6];
+		4'd7:  left_row = left_r[7];
+		4'd8:  left_row = left_r[8];
+		4'd9:  left_row = left_r[9];
+		4'd10: left_row = left_r[10];
+		4'd11: left_row = left_r[11];
+		4'd12: left_row = left_r[12];
+		4'd13: left_row = left_r[13];
+		4'd14: left_row = left_r[14];
+		default: left_row = left_r[15];
+		endcase
+
+		dy = $signed({1'b0, ry}) - 5'sd7;
+		row_c = kmul(cc, dy);
+		valv0 = (aa + kmul(bb, -5'sd7) + row_c + 17'sd16) >>> 5;
+		valv1 = (aa + kmul(bb, -5'sd6) + row_c + 17'sd16) >>> 5;
+		valv2 = (aa + kmul(bb, -5'sd5) + row_c + 17'sd16) >>> 5;
+		valv3 = (aa + kmul(bb, -5'sd4) + row_c + 17'sd16) >>> 5;
+		valv4 = (aa + kmul(bb, -5'sd3) + row_c + 17'sd16) >>> 5;
+		valv5 = (aa + kmul(bb, -5'sd2) + row_c + 17'sd16) >>> 5;
+		valv6 = (aa + kmul(bb, -5'sd1) + row_c + 17'sd16) >>> 5;
+		valv7 = (aa + kmul(bb,  5'sd0) + row_c + 17'sd16) >>> 5;
+		valv8 = (aa + kmul(bb,  5'sd1) + row_c + 17'sd16) >>> 5;
+		valv9 = (aa + kmul(bb,  5'sd2) + row_c + 17'sd16) >>> 5;
+		valva = (aa + kmul(bb,  5'sd3) + row_c + 17'sd16) >>> 5;
+		valvb = (aa + kmul(bb,  5'sd4) + row_c + 17'sd16) >>> 5;
+		valvc = (aa + kmul(bb,  5'sd5) + row_c + 17'sd16) >>> 5;
+		valvd = (aa + kmul(bb,  5'sd6) + row_c + 17'sd16) >>> 5;
+		valve = (aa + kmul(bb,  5'sd7) + row_c + 17'sd16) >>> 5;
+		valvf = (aa + kmul(bb,  5'sd8) + row_c + 17'sd16) >>> 5;
 	end
 
-	integer x, y, i;
-	integer sum, sa_lo, sa_hi, sl_lo, sl_hi;
-	reg [7:0] dc_v;
-	integer val;
-
 	always @(posedge clk) begin
-		valid <= 1'b0;
-
-		if (phase) begin
-			// Plane cycle 2: evaluate 256 pixels from 32 registered products
-			for (y = 0; y < 16; y = y + 1)
-				for (x = 0; x < 16; x = x + 1) begin
-					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
-					pred[y * 16 + x] <= clip8(val);
-				end
-			valid <= 1'b1;
-			phase <= 1'b0;
-		end else if (start) begin
+		done <= 1'b0;
+		if (reset) begin
+			st          <= ST_IDLE;
+			busy        <= 1'b0;
+			done        <= 1'b0;
 			unsupported <= 1'b0;
-			if (mode == 2'd3) begin
-				if (has_above && has_left) begin
-					// Plane cycle 1: register a and 32 pre-computed products
-					a_r <= a_c[15:0];
-					for (i = 0; i < 16; i = i + 1) begin
-						bx_r[i] <= b_c * (i - 7);
-						cy_r[i] <= c_c * (i - 7);
-					end
-					phase <= 1'b1;
-				end else begin
-					for (i = 0; i < 256; i = i + 1) pred[i] <= 8'd128;
-					valid <= 1'b1;
-				end
-			end else if (mode == 2'd0 && has_above) begin
-				for (y = 0; y < 16; y = y + 1)
-					for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] <= above[x];
-				valid <= 1'b1;
-			end else if (mode == 2'd1 && has_left) begin
-				for (y = 0; y < 16; y = y + 1)
-					for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] <= left[y];
-				valid <= 1'b1;
-			end else begin
-				// Balanced tree: 5 add levels guaranteed vs up to 32 in linear chain
-				sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
-				      + ((above[4]+above[5]) + (above[6]+above[7]));
-				sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
-				      + ((above[12]+above[13]) + (above[14]+above[15]));
-				sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
-				      + ((left[4]+left[5]) + (left[6]+left[7]));
-				sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
-				      + ((left[12]+left[13]) + (left[14]+left[15]));
-				if (has_above && has_left) sum = (sa_lo + sa_hi) + (sl_lo + sl_hi);
-				else if (has_above) sum = sa_lo + sa_hi;
-				else if (has_left) sum = sl_lo + sl_hi;
-				else sum = 0;
-				if (has_above && has_left) dc_v = (sum + 16) >>> 5;
-				else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
-				else dc_v = 8'd128;
-				for (i = 0; i < 256; i = i + 1) pred[i] <= dc_v;
-				valid <= 1'b1;
+			mode_r      <= 2'd0;
+			ha_r        <= 1'b0;
+			hl_r        <= 1'b0;
+			tl_r        <= 8'd0;
+			ii          <= 4'd0;
+			ry          <= 4'd0;
+			Hp          <= 16'sd0;
+			Vp          <= 16'sd0;
+			aa          <= 14'sd0;
+			bb          <= 13'sd0;
+			cc          <= 13'sd0;
+			dc_v        <= 8'd128;
+			plane_ok    <= 1'b0;
+			for (si = 0; si < 256; si = si + 1)
+				pred[si] <= 8'd128;
+			for (si = 0; si < 16; si = si + 1) begin
+				above_r[si] <= 8'd0;
+				left_r[si]  <= 8'd0;
 			end
+		end else if (start && !busy) begin
+			busy        <= 1'b1;
+			done        <= 1'b0;
+			unsupported <= (mode==0 && !has_above) || (mode==1 && !has_left) ||
+			               (mode==3 && (!has_above || !has_left));
+			mode_r      <= mode;
+			ha_r        <= has_above;
+			hl_r        <= has_left;
+			tl_r        <= top_left;
+			for (si = 0; si < 16; si = si + 1) begin
+				above_r[si] <= above[si];
+				left_r[si]  <= left[si];
+			end
+			sum_i = 0;
+			if (has_above)
+				sum_i = sum_i + above[0] + above[1] + above[2] + above[3]
+				              + above[4] + above[5] + above[6] + above[7]
+				              + above[8] + above[9] + above[10] + above[11]
+				              + above[12] + above[13] + above[14] + above[15];
+			if (has_left)
+				sum_i = sum_i + left[0] + left[1] + left[2] + left[3]
+				              + left[4] + left[5] + left[6] + left[7]
+				              + left[8] + left[9] + left[10] + left[11]
+				              + left[12] + left[13] + left[14] + left[15];
+			if (mode == 2'd3) begin
+				plane_ok <= (has_above && has_left);
+				if (has_above && has_left)
+					dc_v <= 8'd128;
+				else if (has_above || has_left)
+					dc_v <= (sum_i + 8) >> 4;
+				else
+					dc_v <= 8'd128;
+			end else if (has_above && has_left)
+				dc_v <= (sum_i + 16) >> 5;
+			else if (has_above || has_left)
+				dc_v <= (sum_i + 8) >> 4;
+			else
+				dc_v <= 8'd128;
+			Hp       <= 16'sd0;
+			Vp       <= 16'sd0;
+			ii       <= 4'd0;
+			ry       <= 4'd0;
+			if ((mode == 2'd3) && has_above && has_left)
+				st <= ST_HV;
+			else
+				st <= ST_FILL;
+		end else begin
+			case (st)
+			ST_HV: begin
+				Hp <= Hp + term_a;
+				Vp <= Vp + term_l;
+				if (ii == 4'd7)
+					st <= ST_COEF;
+				else
+					ii <= ii + 4'd1;
+			end
+			ST_COEF: begin
+				// bb=(5*Hp+32)>>>6, cc=(5*Vp+32)>>>6 — extend then shift-add, 0 DSP
+				aa <= ($signed({6'd0, above_r[15]}) + $signed({6'd0, left_r[15]})) <<< 4;
+				bb <= ($signed({{2{Hp[15]}}, Hp}) + $signed({Hp, 2'b00}) + 18'sd32) >>> 6;
+				cc <= ($signed({{2{Vp[15]}}, Vp}) + $signed({Vp, 2'b00}) + 18'sd32) >>> 6;
+				ry <= 4'd0;
+				st <= ST_FILL;
+			end
+			ST_FILL: begin
+				if (mode_r == 2'd0 && ha_r) begin
+					pred[{ry, 4'd0}]  <= above_r[0];
+					pred[{ry, 4'd1}]  <= above_r[1];
+					pred[{ry, 4'd2}]  <= above_r[2];
+					pred[{ry, 4'd3}]  <= above_r[3];
+					pred[{ry, 4'd4}]  <= above_r[4];
+					pred[{ry, 4'd5}]  <= above_r[5];
+					pred[{ry, 4'd6}]  <= above_r[6];
+					pred[{ry, 4'd7}]  <= above_r[7];
+					pred[{ry, 4'd8}]  <= above_r[8];
+					pred[{ry, 4'd9}]  <= above_r[9];
+					pred[{ry, 4'd10}] <= above_r[10];
+					pred[{ry, 4'd11}] <= above_r[11];
+					pred[{ry, 4'd12}] <= above_r[12];
+					pred[{ry, 4'd13}] <= above_r[13];
+					pred[{ry, 4'd14}] <= above_r[14];
+					pred[{ry, 4'd15}] <= above_r[15];
+				end else if (mode_r == 2'd1 && hl_r) begin
+					pred[{ry, 4'd0}]  <= left_row;
+					pred[{ry, 4'd1}]  <= left_row;
+					pred[{ry, 4'd2}]  <= left_row;
+					pred[{ry, 4'd3}]  <= left_row;
+					pred[{ry, 4'd4}]  <= left_row;
+					pred[{ry, 4'd5}]  <= left_row;
+					pred[{ry, 4'd6}]  <= left_row;
+					pred[{ry, 4'd7}]  <= left_row;
+					pred[{ry, 4'd8}]  <= left_row;
+					pred[{ry, 4'd9}]  <= left_row;
+					pred[{ry, 4'd10}] <= left_row;
+					pred[{ry, 4'd11}] <= left_row;
+					pred[{ry, 4'd12}] <= left_row;
+					pred[{ry, 4'd13}] <= left_row;
+					pred[{ry, 4'd14}] <= left_row;
+					pred[{ry, 4'd15}] <= left_row;
+				end else if ((mode_r == 2'd3) && plane_ok) begin
+					pred[{ry, 4'd0}]  <= clip8s(valv0);
+					pred[{ry, 4'd1}]  <= clip8s(valv1);
+					pred[{ry, 4'd2}]  <= clip8s(valv2);
+					pred[{ry, 4'd3}]  <= clip8s(valv3);
+					pred[{ry, 4'd4}]  <= clip8s(valv4);
+					pred[{ry, 4'd5}]  <= clip8s(valv5);
+					pred[{ry, 4'd6}]  <= clip8s(valv6);
+					pred[{ry, 4'd7}]  <= clip8s(valv7);
+					pred[{ry, 4'd8}]  <= clip8s(valv8);
+					pred[{ry, 4'd9}]  <= clip8s(valv9);
+					pred[{ry, 4'd10}] <= clip8s(valva);
+					pred[{ry, 4'd11}] <= clip8s(valvb);
+					pred[{ry, 4'd12}] <= clip8s(valvc);
+					pred[{ry, 4'd13}] <= clip8s(valvd);
+					pred[{ry, 4'd14}] <= clip8s(valve);
+					pred[{ry, 4'd15}] <= clip8s(valvf);
+				end else begin
+					pred[{ry, 4'd0}]  <= dc_v;
+					pred[{ry, 4'd1}]  <= dc_v;
+					pred[{ry, 4'd2}]  <= dc_v;
+					pred[{ry, 4'd3}]  <= dc_v;
+					pred[{ry, 4'd4}]  <= dc_v;
+					pred[{ry, 4'd5}]  <= dc_v;
+					pred[{ry, 4'd6}]  <= dc_v;
+					pred[{ry, 4'd7}]  <= dc_v;
+					pred[{ry, 4'd8}]  <= dc_v;
+					pred[{ry, 4'd9}]  <= dc_v;
+					pred[{ry, 4'd10}] <= dc_v;
+					pred[{ry, 4'd11}] <= dc_v;
+					pred[{ry, 4'd12}] <= dc_v;
+					pred[{ry, 4'd13}] <= dc_v;
+					pred[{ry, 4'd14}] <= dc_v;
+					pred[{ry, 4'd15}] <= dc_v;
+				end
+				if (ry == 4'd15) begin
+					st   <= ST_IDLE;
+					busy <= 1'b0;
+					done <= 1'b1;
+				end else
+					ry <= ry + 4'd1;
+			end
+			default: st <= ST_IDLE;
+			endcase
 		end
 	end
 endmodule
 
 module h264_chroma8x8_pred (
-	input  wire        clk,
-	input  wire        start,
-	input  wire [1:0]  mode,
-	input  wire [7:0]  above [0:7],
-	input  wire [7:0]  left [0:7],
-	input  wire [7:0]  top_left,
-	input  wire        has_above,
-	input  wire        has_left,
-	output reg         valid,
-	output reg  [7:0]  pred [0:63]
+	input  wire [1:0] mode,
+	input  wire [7:0] above [0:7],
+	input  wire [7:0] left [0:7],
+	input  wire [7:0] top_left,
+	input  wire       has_above,
+	input  wire       has_left,
+	output wire [7:0] pred [0:63]
 );
-	// 2-cycle pipeline for Chroma Plane prediction (ITU-T H.264 clause 8.3.4.4).
-	// Cycle 1: gradient accumulation → b, c → pre-compute 16 products bx[]/cy[]
-	// Cycle 2: 64 pixels from registered a + bx[x] + cy[y] → clip
-	// Modes DC/H/V: 1 cycle (register combinational result on start).
+	h264_chroma_pred_region #(.SIDE(8)) u_region (
+		.mode(mode), .above(above), .left(left), .top_left(top_left),
+		.has_above(has_above), .has_left(has_left),
+		.block_x(1'b0), .block_y(1'b0), .pred(pred)
+	);
+endmodule
 
+// SIDE=4 computes only the selected reconstruction block; SIDE=8 preserves
+// the full-plane interface above. Both use the same DC and plane arithmetic.
+module h264_chroma_pred_region #(
+	parameter int SIDE = 8
+) (
+	input wire [1:0] mode,
+	input wire [7:0] above [0:7], left [0:7],
+	input wire [7:0] top_left,
+	input wire has_above, has_left,
+	input wire block_x, block_y,
+	output reg [7:0] pred [0:SIDE*SIDE-1]
+);
 	function automatic [7:0] clip8;
 		input integer v;
 		begin
@@ -287,106 +504,63 @@ module h264_chroma8x8_pred (
 		end
 	endfunction
 
-	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
-	reg phase = 1'b0;
-
-	// Registered intermediates for Plane pipeline (16 products, not 64)
-	reg signed [15:0] a_r;
-	reg signed [15:0] bx_r [0:7];
-	reg signed [15:0] cy_r [0:7];
-
-	// Combinational gradient computation (clause 8.3.4.4)
-	integer hgrad_c, vgrad_c, a_c, b_c, c_c;
-	integer gi;
-	always @* begin
-		hgrad_c = 0;
-		vgrad_c = 0;
-		for (gi = 0; gi < 4; gi = gi + 1) begin
-			hgrad_c = hgrad_c + (gi + 1) * ($signed({1'b0, above[4 + gi]}) - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, above[2 - gi]})));
-			vgrad_c = vgrad_c + (gi + 1) * ($signed({1'b0, left[4 + gi]})  - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, left[2 - gi]})));
-		end
-		a_c = 16 * ($signed({1'b0, above[7]}) + $signed({1'b0, left[7]}));
-		b_c = (17 * hgrad_c + 16) >>> 5;
-		c_c = (17 * vgrad_c + 16) >>> 5;
-	end
-
-	integer x, y, i;
+	integer x, y, i, gx, gy;
+	integer hgrad, vgrad, a, b, c, val;
 	integer sum_a0, sum_a1, sum_l0, sum_l1;
-	integer val;
-	reg [7:0] dc_tl, dc_tr, dc_bl, dc_br;
-
-	always @(posedge clk) begin
-		valid <= 1'b0;
-
-		if (phase) begin
-			// Plane cycle 2: evaluate 64 pixels from 16 registered products
-			for (y = 0; y < 8; y = y + 1)
-				for (x = 0; x < 8; x = x + 1) begin
-					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
-					pred[y * 8 + x] <= clip8(val);
-				end
-			valid <= 1'b1;
-			phase <= 1'b0;
-		end else if (start) begin
-			if (mode == 2'd3) begin
-				if (has_above && has_left) begin
-					// Plane cycle 1: register a and 16 pre-computed products
-					a_r <= a_c[15:0];
-					for (i = 0; i < 8; i = i + 1) begin
-						bx_r[i] <= b_c * (i - 3);
-						cy_r[i] <= c_c * (i - 3);
-					end
-					phase <= 1'b1;
-				end else begin
-					for (i = 0; i < 64; i = i + 1) pred[i] <= 8'd128;
-					valid <= 1'b1;
-				end
-			end else if (mode == 2'd0) begin
-				// DC with 4 quadrant sub-averages (clause 8.3.4.1)
-				sum_a0 = (above[0]+above[1]) + (above[2]+above[3]);
-				sum_a1 = (above[4]+above[5]) + (above[6]+above[7]);
-				sum_l0 = (left[0]+left[1]) + (left[2]+left[3]);
-				sum_l1 = (left[4]+left[5]) + (left[6]+left[7]);
-				if (has_above && has_left) begin
-					dc_tl = clip8((sum_a0 + sum_l0 + 4) >>> 3);
-					dc_tr = clip8((sum_a1 + 2) >>> 2);
-					dc_bl = clip8((sum_l1 + 2) >>> 2);
-					dc_br = clip8((sum_a1 + sum_l1 + 4) >>> 3);
-				end else if (has_above) begin
-					dc_tl = clip8((sum_a0 + 2) >>> 2);
-					dc_tr = clip8((sum_a1 + 2) >>> 2);
-					dc_bl = dc_tl;
-					dc_br = dc_tr;
-				end else if (has_left) begin
-					dc_tl = clip8((sum_l0 + 2) >>> 2);
-					dc_tr = dc_tl;
-					dc_bl = clip8((sum_l1 + 2) >>> 2);
-					dc_br = dc_bl;
-				end else begin
-					dc_tl = 8'd128; dc_tr = 8'd128;
-					dc_bl = 8'd128; dc_br = 8'd128;
-				end
-				for (y = 0; y < 4; y = y + 1)
-					for (x = 0; x < 4; x = x + 1) pred[y*8+x] <= dc_tl;
-				for (y = 0; y < 4; y = y + 1)
-					for (x = 4; x < 8; x = x + 1) pred[y*8+x] <= dc_tr;
-				for (y = 4; y < 8; y = y + 1)
-					for (x = 0; x < 4; x = x + 1) pred[y*8+x] <= dc_bl;
-				for (y = 4; y < 8; y = y + 1)
-					for (x = 4; x < 8; x = x + 1) pred[y*8+x] <= dc_br;
-				valid <= 1'b1;
-			end else if (mode == 2'd1) begin
-				// Horizontal
-				for (y = 0; y < 8; y = y + 1)
-					for (x = 0; x < 8; x = x + 1) pred[y*8+x] <= left[y];
-				valid <= 1'b1;
-			end else begin
-				// Vertical (mode 2)
-				for (y = 0; y < 8; y = y + 1)
-					for (x = 0; x < 8; x = x + 1) pred[y*8+x] <= above[x];
-				valid <= 1'b1;
-			end
+	integer dc [0:3];
+	integer ai [0:7];
+	integer li [0:7];
+	integer tli;
+	always @* begin
+		hgrad = 0;
+		vgrad = 0;
+		a = 0;
+		b = 0;
+		c = 0;
+		val = 0;
+		for (i = 0; i < 4; i = i + 1) dc[i] = 128;
+		for (i = 0; i < 8; i = i + 1) begin
+			ai[i] = above[i];
+			li[i] = left[i];
 		end
+		tli = top_left;
+		sum_a0 = ai[0] + ai[1] + ai[2] + ai[3];
+		sum_a1 = ai[4] + ai[5] + ai[6] + ai[7];
+		sum_l0 = li[0] + li[1] + li[2] + li[3];
+		sum_l1 = li[4] + li[5] + li[6] + li[7];
+		if (has_above && has_left) begin
+			dc[0] = (sum_a0 + sum_l0 + 4) >>> 3;
+			dc[1] = (sum_a1 + 2) >>> 2;
+			dc[2] = (sum_l1 + 2) >>> 2;
+			dc[3] = (sum_a1 + sum_l1 + 4) >>> 3;
+		end else if (has_above) begin
+			dc[0] = (sum_a0 + 2) >>> 2; dc[1] = (sum_a1 + 2) >>> 2;
+			dc[2] = dc[0]; dc[3] = dc[1];
+		end else if (has_left) begin
+			dc[0] = (sum_l0 + 2) >>> 2; dc[1] = dc[0];
+			dc[2] = (sum_l1 + 2) >>> 2; dc[3] = dc[2];
+		end
+		for (i = 0; i < 4; i = i + 1) begin
+			hgrad = hgrad + (i + 1) * (ai[4 + i] - ((i == 3) ? tli : ai[2 - i]));
+			vgrad = vgrad + (i + 1) * (li[4 + i] - ((i == 3) ? tli : li[2 - i]));
+		end
+		a = 16 * (ai[7] + li[7]);
+		b = (17 * hgrad + 16) >>> 5;
+		c = (17 * vgrad + 16) >>> 5;
+		for (y = 0; y < SIDE; y = y + 1)
+			for (x = 0; x < SIDE; x = x + 1) begin
+				gx = x + ((SIDE==4 && block_x) ? 4 : 0);
+				gy = y + ((SIDE==4 && block_y) ? 4 : 0);
+				case (mode)
+				0: pred[y*SIDE+x] = clip8(dc[(gy/4)*2+gx/4]);
+				1: pred[y*SIDE+x] = left[gy];
+				2: pred[y*SIDE+x] = above[gx];
+				default: begin
+					val = (a + b*(gx-3) + c*(gy-3) + 16) >>> 5;
+					pred[y*SIDE+x] = clip8(val);
+				end
+				endcase
+			end
 	end
 endmodule
 
@@ -411,6 +585,7 @@ module h264_intra_mode_guard (
 	wire is_i16 = (mb_type >= 8'd1) && (mb_type <= 8'd24);
 	wire is_i4  = (mb_type == 8'd0);
 	wire is_ipcm = (mb_type == 8'd25);
+	wire i16_plane = is_i16 && (i16_pred_mode == 2'd3);
 	wire bad_type = !(is_i4 || is_i16 || is_ipcm);
 
 	always @(posedge clk) begin

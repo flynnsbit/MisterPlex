@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -62,6 +63,10 @@ static void tick(Vh264_cavlc_residual_tb_top* dut) {
     dut->eval();
     dut->clk = 1;
     dut->eval();
+    if (!dut->datapath_equivalent) {
+        std::cerr << "FAIL factored window/placement differs from reference equations\n";
+        std::exit(1);
+    }
 }
 
 static int tableFromNc(int nC) {
@@ -83,13 +88,13 @@ static int runRtl(Vh264_cavlc_residual_tb_top* dut, const std::vector<uint8_t>& 
                   int& mismatches) {
     const int nbits = bit_end - bit_start;
     if (nbits <= 0) return 0;
-    if (nbits > 512) {
+    if (nbits > 1024) {
         std::cerr << "FAIL window bits=" << nbits << "\n";
         return -1;
     }
     // Pack residual bits into a fresh buffer at bit 0 (same contract as
     // h264_cavlc_residual_tb.cpp). Avoids any bit_offset_start/window edge cases.
-    std::array<uint8_t, 64> packed{};
+    std::array<uint8_t, 128> packed{};
     for (int i = 0; i < nbits; ++i) {
         const size_t abs = static_cast<size_t>(bit_start + i);
         const size_t by = abs / 8;
@@ -99,7 +104,7 @@ static int runRtl(Vh264_cavlc_residual_tb_top* dut, const std::vector<uint8_t>& 
             packed[static_cast<size_t>(i / 8)] |=
                 static_cast<uint8_t>(1u << (7 - (i & 7)));
     }
-    for (int i = 0; i < 64; i++)
+    for (int i = 0; i < 128; i++)
         dut->rbsp[i] = packed[static_cast<size_t>(i)];
     dut->coeff_token_table = tableFromNc(nC);
     dut->max_coeff = max_coeff;
@@ -141,7 +146,7 @@ static int runRtl(Vh264_cavlc_residual_tb_top* dut, const std::vector<uint8_t>& 
         return -1;
     }
     if (host.ok) {
-        if (int(dut->total_coeff) != host.total_coeff ||
+        if (int(dut->bit_offset_end) != nbits || int(dut->total_coeff) != host.total_coeff ||
             int(dut->trailing_ones) != host.trailing_ones)
             mismatches++;
         for (int k = 0; k < 16; k++) {
@@ -206,9 +211,12 @@ static void printStages(const char* name, const StageSum& s) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     std::string path = kDefaultStream;
+    int trace_mb = -1;
     for (int a = 1; a < argc; a++) {
         if (std::string(argv[a]) == "--stream" && a + 1 < argc)
             path = argv[++a];
+        else if (std::string(argv[a]) == "--trace-mb" && a + 1 < argc)
+            trace_mb = std::stoi(argv[++a]);
     }
 
     auto annexb = readFile(path);
@@ -321,11 +329,19 @@ int main(int argc, char** argv) {
     mbs.reserve(static_cast<size_t>(mbTotal));
     int mismatches = 0;
     int rtl_errors = 0;
+    int current_mb = -1;
 
     auto feed = [&](int nC, int maxc, bool chroma, MbCy& mb) -> int {
         int b0 = static_cast<int>(br.bit);
         auto host = cavlc::residualBlock(br, nC, maxc);
         int b1 = static_cast<int>(br.bit);
+        if (current_mb == trace_mb) {
+            std::cout << "MB_TRACE residual mb=" << current_mb << " chroma=" << chroma
+                      << " nC=" << nC << " max=" << maxc << " bits=" << b0 << ".." << b1
+                      << " tc=" << host.total_coeff << " coeff=";
+            for (int k=0;k<maxc;++k) std::cout << ' ' << host.coeff[k];
+            std::cout << '\n';
+        }
         if (!host.ok) return -999;
         StageSum& st = chroma ? st_chroma : st_luma;
         int cy = runRtl(dut, rbsp, b0, b1, nC, maxc, host, st, mismatches);
@@ -346,13 +362,18 @@ int main(int argc, char** argv) {
 
     for (int mby = 0; mby < mbH; ++mby) {
         for (int mbx = 0; mbx < mbW; ++mbx) {
+            current_mb = mby * mbW + mbx;
             MbCy mb{};
             if (!br.ok) {
                 std::cerr << "FAIL br mb=" << (mby * mbW + mbx) << "\n";
                 delete dut;
                 return 1;
             }
+            const auto mb_start_bit = br.bit;
             uint32_t mt = br.ue();
+            if (current_mb == trace_mb)
+                std::cout << "MB_TRACE header mb=" << current_mb << " bit=" << mb_start_bit
+                          << " mb_type=" << mt << " after_type=" << br.bit << '\n';
             if (mt > 25) {
                 std::cerr << "FAIL mb_type=" << mt << "\n";
                 delete dut;
@@ -513,18 +534,6 @@ int main(int argc, char** argv) {
         chroma_cy.push_back(m.cy_chroma);
     }
 
-    auto med = [](std::vector<int> v) -> int {
-        if (v.empty()) return 0;
-        std::sort(v.begin(), v.end());
-        return v[v.size() / 2];
-    };
-
-    const int recon_lb = 34;
-    const int cavlc_luma_med = med(luma_cy);
-    const int cavlc_all_med = med(all_cy);
-    const double cavlc_luma_p95 = pctile(luma_cy, 0.95);
-    const double cavlc_all_p95 = pctile(all_cy, 0.95);
-
     std::cout << "CAVLC_CY_PER_MB  verification_target=RTL_CAVLC_RESIDUAL\n"
               << "  stream=" << path << " bytes=" << annexb.size() << "\n"
               << "  geometry=" << chain.sps.width << "x" << chain.sps.height
@@ -554,64 +563,7 @@ int main(int argc, char** argv) {
     printStages("luma+chroma", st_all);
 #endif
 
-    const double cavlc_all_p50 = pctile(all_cy, 0.50);
-    const double cavlc_all_p99 = pctile(all_cy, 0.99);
-    const int cavlc_all_max = all_cy.empty() ? 0 : *std::max_element(all_cy.begin(), all_cy.end());
-    const double sum_luma_med = cavlc_luma_med + recon_lb;
-    const double sum_luma_p95 = cavlc_luma_p95 + recon_lb;
-    const double sum_all_med = cavlc_all_med + recon_lb;
-    const double sum_all_p50 = cavlc_all_p50 + recon_lb;
-    const double sum_all_p95 = cavlc_all_p95 + recon_lb;
-    const double sum_all_p99 = cavlc_all_p99 + recon_lb;
-    const double sum_all_max = cavlc_all_max + recon_lb;
-    // Parent-verified budgets @20 MHz:
-    const double bud_sd = 712.3;   // 624x480@24
-    const double bud_hd30 = 185.2; // 1280x720@30
-    const double bud_hd24 = 231.5; // 1280x720@24 — binding product target
-
-    auto verdict = [&](double cost, double budget) -> const char* {
-        return (cost < budget) ? "UNDER_BUDGET" : "OVER_BUDGET";
-    };
-
-    std::cout << std::fixed << std::setprecision(1);
-    std::cout << "ARCH_COMBINE recon_lower_bound_cy=" << recon_lb << "\n"
-              << "  CAVLC_all_p50+recon=" << sum_all_p50
-              << "  CAVLC_all_p95+recon=" << sum_all_p95
-              << "  CAVLC_all_p99+recon=" << sum_all_p99
-              << "  CAVLC_all_max+recon=" << sum_all_max << "\n"
-              << "  CAVLC_luma_med+recon=" << sum_luma_med
-              << "  CAVLC_luma_p95+recon=" << sum_luma_p95 << "\n"
-              << "  vs_624x480@24_budget_" << bud_sd << "_@20MHz:\n"
-              << "    all_p50 " << verdict(sum_all_p50, bud_sd)
-              << " all_p95 " << verdict(sum_all_p95, bud_sd)
-              << " all_p99 " << verdict(sum_all_p99, bud_sd) << "\n"
-              << "  vs_1280x720@24_budget_" << bud_hd24 << "_@20MHz:\n"
-              << "    all_p50 " << verdict(sum_all_p50, bud_hd24)
-              << " all_p95 " << verdict(sum_all_p95, bud_hd24)
-              << " all_p99 " << verdict(sum_all_p99, bud_hd24) << "\n"
-              << "  vs_1280x720@30_budget_" << bud_hd30 << "_@20MHz:\n"
-              << "    all_p50 " << verdict(sum_all_p50, bud_hd30)
-              << " all_p95 " << verdict(sum_all_p95, bud_hd30)
-              << " all_p99 " << verdict(sum_all_p99, bud_hd30) << "\n";
-
-    bool hd24_p95_ok = sum_all_p95 < bud_hd24;
-    bool hd30_p95_ok = sum_all_p95 < bud_hd30;
-    bool sd_p95_ok = sum_all_p95 < bud_sd;
-    std::cout << "HEADLINE_720P24_AT_20MHz: ";
-    if (hd24_p95_ok)
-        std::cout << "PASS (CAVLC+recon p95=" << sum_all_p95 << " < " << bud_hd24 << ")\n";
-    else
-        std::cout << "FAIL (CAVLC+recon p95=" << sum_all_p95 << " >= " << bud_hd24
-                  << " — TIME wall; need CAVLC speedup and/or faster decode domain)\n";
-    std::cout << "HEADLINE_720P_AT_20MHz: ";
-    if (hd30_p95_ok)
-        std::cout << "FIT (CAVLC+recon p95 UNDER " << bud_hd30 << ")\n";
-    else if (hd24_p95_ok)
-        std::cout << "FIT_24_NOT_30 (p95 under 231.5 but over 185.2)\n";
-    else if (sd_p95_ok)
-        std::cout << "NO_FIT_720P_YES_SD (p95 under 624x480@24 only)\n";
-    else
-        std::cout << "NO_FIT_EVEN_SD (p95 over 712)\n";
+    std::cout << "CYCLE_SCOPE residual_parser_only; no decoder FPS or timing-closure claim\n";
 
     std::cout << "CAVLC_REAL_MB_CYCLES PASS n_mb=" << mbTotal << "\n";
     return 0;

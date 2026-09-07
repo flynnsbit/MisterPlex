@@ -2,6 +2,15 @@
 # Deploy static ARM misterplexd to MiSTer and restart.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# This dispatch must precede every legacy build, SSH command, and service action.
+if [[ "${1:-}" == "--prebuilt-candidate" ]]; then
+  shift
+  exec python3 "$ROOT/scripts/deploy_candidate_pair.py" "$@"
+fi
+if (($#)); then
+  echo "Use --prebuilt-candidate --manifest FILE --mode copy-only|menu; legacy deploy takes no arguments." >&2
+  exit 2
+fi
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"

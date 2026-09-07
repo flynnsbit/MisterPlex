@@ -29,6 +29,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module stream_path_recon_tb -Wno-fatal \
+  -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   -CFLAGS "-std=c++17 -O2" \
   "$ROOT/tests/rtl/stream_path_recon_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_ingest.sv" \
@@ -42,6 +43,16 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_coeff_sat9.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_recon.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_bit_reader.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_residual_seq.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_slice_rbsp_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mb_ctrl.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv" \
   "$ROOT/tests/rtl/stream_path_recon_tb.cpp"

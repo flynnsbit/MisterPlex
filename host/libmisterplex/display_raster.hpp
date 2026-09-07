@@ -1,6 +1,7 @@
 #pragma once
 // F12 Display → /dev/MiSTer_cmd video_mode. Unknown label = no write.
-// L4 product stays on CEA 720p60. kVideoModeCmd720p24 is legal, unused.
+// L4 HDMI is CEA 720p60 (standard TVs). 24 Hz HDMI is lab-only; most
+// displays will not lock it. kVideoModeCmd720p24 is legal, unused.
 
 #include "libmisterplex/osd_menu.hpp"
 
@@ -24,9 +25,12 @@ inline constexpr const char* kVideoModeCmd240pLcd = "video_mode 640,16,96,48,480
 inline constexpr const char* kVideoModeCmd480i = "video_mode 720,19,62,57,240,4,3,15,13500";
 // VESA SVGA 800×600@60 (ascal preset 5). LCD / 31 kHz VGA.
 inline constexpr const char* kVideoModeCmd480p = "video_mode 800,40,128,88,600,1,4,23,40000";
-// CEA-861 720p60 (ascal preset 0). Not 24 Hz.
-inline constexpr const char* kVideoModeCmd720p = "video_mode 1280,110,40,220,720,5,5,20,74250";
-// CEA 720p24. Legal cmd; L4 stays on 720p60 (ascal 60→24 hurt decode).
+// CEA-861 720p60 (ascal preset 0). Product HDMI for standard 60 Hz TVs.
+// ascal 24→60 (2:3). Do not ship 24 Hz HDMI (most sets will not lock).
+// CEA 720p24 (30000) mixed two pictures in one frame and unique 23.4.
+inline constexpr const char* kVideoModeCmd720p =
+    "video_mode 1280,110,40,220,720,5,5,20,74250";
+// CEA 720p24. Legal; unused on L4 (HDMI tear + unique 23.4).
 inline constexpr const char* kVideoModeCmd720p24 =
     "video_mode 1280,110,40,220,720,5,5,28,30000";
 

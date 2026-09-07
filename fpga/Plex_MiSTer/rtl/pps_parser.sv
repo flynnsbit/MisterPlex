@@ -10,11 +10,14 @@ module pps_parser (
 	input  wire        cap_end,
 
 	output reg         valid,
+	output reg         error,
 	output reg  [7:0]  pps_id,
 	output reg  [7:0]  sps_id,
 	output reg         entropy_cabac,
 	output reg  [7:0]  num_ref_l0,
 	output reg  signed [7:0] pic_init_qp,
+	output reg  signed [7:0] chroma_qp_index_offset,
+	output reg         constrained_intra_pred,
 	output reg         deblock_ctrl,
 	output reg         busy
 );
@@ -22,6 +25,7 @@ module pps_parser (
 	localparam int MAXB = 24;
 	reg [7:0] mem [0:MAXB-1];
 	reg [4:0] len;
+	reg overflow;
 
 	reg [4:0] bbyte;
 	reg [2:0] bpos;
@@ -55,7 +59,9 @@ module pps_parser (
 		ST_CI      = 5'd17,
 		ST_RED     = 5'd18,
 		ST_DONE    = 5'd19,
-		ST_FAIL    = 5'd20;
+		ST_FAIL    = 5'd20,
+		ST_STOP    = 5'd21,
+		ST_PAD     = 5'd22;
 
 	function automatic signed [7:0] se_of;
 		input [15:0] k;
@@ -68,24 +74,29 @@ module pps_parser (
 	endfunction
 
 	always @(posedge clk) begin
-		if (reset || cap_clear)
+		if (reset || cap_clear) begin
 			len <= 0;
+			overflow <= 0;
+		end
 		else if (cap_en && len < MAXB[4:0]) begin
 			mem[len] <= cap_data;
 			len <= len + 1'd1;
-		end
+		end else if (cap_en) overflow <= 1;
 	end
 
 	always @(posedge clk) begin
-		if (reset) begin
+		if (reset || cap_clear) begin
 			st <= ST_IDLE;
 			valid <= 0;
+			error <= 0;
 			busy <= 0;
 			pps_id <= 0;
 			sps_id <= 0;
 			entropy_cabac <= 0;
 			num_ref_l0 <= 0;
 			pic_init_qp <= 8'sd26;
+			chroma_qp_index_offset <= 0;
+			constrained_intra_pred <= 0;
 			deblock_ctrl <= 0;
 			bbyte <= 0;
 			bpos <= 3'd7;
@@ -99,7 +110,9 @@ module pps_parser (
 			case (st)
 			ST_IDLE: begin
 				busy <= 0;
-				if (cap_end && len >= 5'd2) begin
+				if (cap_end && (({1'b0, len} + (cap_en ? 6'd1 : 6'd0)) < 6'd2 ||
+				    overflow || (cap_en && len == MAXB))) st <= ST_FAIL;
+				else if (cap_end) begin
 					busy <= 1'b1;
 					bbyte <= 0;
 					bpos <= 3'd7;
@@ -140,41 +153,54 @@ module pps_parser (
 			end
 
 			ST_UE_V: begin
-				ue_val <= ((16'd1 << zcnt) - 16'd1) + acc;
-				st <= ue_cont;
+				if (zcnt == 16 && acc != 0) st <= ST_FAIL;
+				else begin
+					ue_val <= ((17'd1 << zcnt) - 17'd1) + acc;
+					st <= ue_cont;
+				end
 			end
 
-			ST_PPSID: begin pps_id <= ue_val[7:0]; zcnt <= 0; ue_cont <= ST_SPSID; st <= ST_UE_Z; end
-			ST_SPSID: begin sps_id <= ue_val[7:0]; nleft <= 5'd1; acc <= 0; cont <= ST_ENT; st <= ST_GETBITS; end
-			ST_ENT: begin entropy_cabac <= acc[0]; nleft <= 5'd1; acc <= 0; cont <= ST_BOT; st <= ST_GETBITS; end
-			ST_BOT: begin zcnt <= 0; ue_cont <= ST_SG; st <= ST_UE_Z; end
+			ST_PPSID: begin pps_id <= ue_val[7:0]; zcnt <= 0; ue_cont <= ST_SPSID; st <= (ue_val > 255) ? ST_FAIL : ST_UE_Z; end
+			ST_SPSID: begin sps_id <= ue_val[7:0]; nleft <= 5'd1; acc <= 0; cont <= ST_ENT; st <= (ue_val > 31) ? ST_FAIL : ST_GETBITS; end
+			ST_ENT: begin entropy_cabac <= acc[0]; nleft <= 5'd1; acc <= 0; cont <= ST_BOT; st <= acc[0] ? ST_FAIL : ST_GETBITS; end
+			ST_BOT: begin zcnt <= 0; ue_cont <= ST_SG; st <= acc[0] ? ST_FAIL : ST_UE_Z; end
 			ST_SG: begin
 				if (ue_val != 0) st <= ST_FAIL;
 				else begin zcnt <= 0; ue_cont <= ST_NRL0; st <= ST_UE_Z; end
 			end
-			ST_NRL0: begin num_ref_l0 <= ue_val[7:0]; zcnt <= 0; ue_cont <= ST_NRL1; st <= ST_UE_Z; end
-			ST_NRL1: begin nleft <= 5'd1; acc <= 0; cont <= ST_WP; st <= ST_GETBITS; end
-			ST_WP: begin nleft <= 5'd2; acc <= 0; cont <= ST_WBI; st <= ST_GETBITS; end
-			ST_WBI: begin zcnt <= 0; ue_cont <= ST_QP; st <= ST_UE_Z; end
+			ST_NRL0: begin num_ref_l0 <= ue_val[7:0]; zcnt <= 0; ue_cont <= ST_NRL1; st <= (ue_val != 0) ? ST_FAIL : ST_UE_Z; end
+			ST_NRL1: begin nleft <= 5'd1; acc <= 0; cont <= ST_WP; st <= (ue_val != 0) ? ST_FAIL : ST_GETBITS; end
+			ST_WP: begin nleft <= 5'd2; acc <= 0; cont <= ST_WBI; st <= acc[0] ? ST_FAIL : ST_GETBITS; end
+			ST_WBI: begin zcnt <= 0; ue_cont <= ST_QP; st <= (acc != 0) ? ST_FAIL : ST_UE_Z; end
 			ST_QP: begin
 				pic_init_qp <= 8'sd26 + se_of(ue_val);
-				zcnt <= 0; ue_cont <= ST_QS; st <= ST_UE_Z;
+				zcnt <= 0; ue_cont <= ST_QS; st <= (ue_val > 52 || se_of(ue_val) > 25) ? ST_FAIL : ST_UE_Z;
 			end
-			ST_QS: begin zcnt <= 0; ue_cont <= ST_CHR; st <= ST_UE_Z; end
-			ST_CHR: begin nleft <= 5'd1; acc <= 0; cont <= ST_DB; st <= ST_GETBITS; end
+			ST_QS: begin zcnt <= 0; ue_cont <= ST_CHR; st <= (ue_val > 52 || se_of(ue_val) > 25) ? ST_FAIL : ST_UE_Z; end
+			ST_CHR: begin chroma_qp_index_offset <= se_of(ue_val); nleft <= 5'd1; acc <= 0; cont <= ST_DB; st <= (ue_val > 24) ? ST_FAIL : ST_GETBITS; end
 			ST_DB: begin
 				deblock_ctrl <= acc[0];
 				nleft <= 5'd1; acc <= 0; cont <= ST_CI; st <= ST_GETBITS;
 			end
-			ST_CI: begin nleft <= 5'd1; acc <= 0; cont <= ST_RED; st <= ST_GETBITS; end
-			ST_RED: begin st <= ST_DONE; end
+			ST_CI: begin constrained_intra_pred <= acc[0]; nleft <= 5'd1; acc <= 0; cont <= ST_RED; st <= ST_GETBITS; end
+			ST_RED: begin nleft <= 1; acc <= 0; cont <= ST_STOP; st <= acc[0] ? ST_FAIL : ST_GETBITS; end
+			ST_STOP: begin
+				if (acc != 1) st <= ST_FAIL;
+				else st <= ST_PAD;
+			end
+			ST_PAD: begin
+				if (oob) st <= ST_DONE;
+				else if (bitv || bpos == 7) st <= ST_FAIL;
+				else if (bpos == 0) begin bpos <= 7; bbyte <= bbyte + 1'b1; end
+				else bpos <= bpos - 1'b1;
+			end
 			ST_DONE: begin
 				busy <= 0;
 				st <= ST_IDLE;
 				if (!entropy_cabac)
 					valid <= 1'b1;
 			end
-			ST_FAIL: begin busy <= 0; st <= ST_IDLE; end
+			ST_FAIL: begin busy <= 0; valid <= 0; error <= 1; end
 			default: st <= ST_IDLE;
 			endcase
 		end

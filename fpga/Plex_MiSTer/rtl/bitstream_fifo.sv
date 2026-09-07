@@ -31,6 +31,7 @@ module bitstream_fifo #(
 	(* preserve *) reg        ever_wr;
 
 	wire clr = reset | wr_flush;
+	wire [AW:0] level = wr_ptr - rd_ptr;
 
 	assign wr_full =
 		(wr_ptr[AW-1:0] == rd_ptr[AW-1:0]) && (wr_ptr[AW] != rd_ptr[AW]);
@@ -69,7 +70,9 @@ module bitstream_fifo #(
 		if (clr)
 			wr_level <= 0;
 		else
-			wr_level <= wr_ptr[AW-1:0] - rd_ptr[AW-1:0];
+			// Keep the existing 16-bit status ABI without wrapping full64KiB
+			// to zero; occupancy decisions use the full-width pointers.
+			wr_level <= 32'(level) > 32'd65535 ? 16'hffff : 16'(level);
 	end
 
 endmodule

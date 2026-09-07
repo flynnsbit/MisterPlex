@@ -6,7 +6,7 @@ set_clock_groups -asynchronous or set_false_path to silence violations without
 fixing the underlying timing issue. When paths disappear from the STA report,
 the violation disappears too — but the silicon bug remains.
 
-Two independent checks:
+Three independent checks:
 1. SDC EXCLUSION AUDIT — every set_clock_groups, set_false_path, set_max_delay,
    and set_multicycle_path in the constraint tree is inventoried and compared
    against a committed baseline. New exclusions fail unless accompanied by an
@@ -14,6 +14,8 @@ Two independent checks:
 2. STA COVERAGE — the timing report must contain slack rows for a minimum set of
    expected clock domains. If a domain that was previously analysed disappears,
    that is evidence of exclusion and fails the gate.
+3. EFFECTIVE EVIDENCE — when requested, bind actual SDC execution and resolved
+   endpoint/clock-group inventories to the frozen sources and timing sidecar.
 
 Exit codes:
   0 = PASS
@@ -29,6 +31,8 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from quartus_sta_report import SLACK_SECTIONS, parse_sta_report
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE = ROOT / "tests" / "fixtures" / "timing_exclusion_baseline.json"
@@ -48,6 +52,8 @@ class StaCoverage:
     clocks: set[str] = field(default_factory=set)
     sections: set[str] = field(default_factory=set)
     total_rows: int = 0
+    model_clocks: dict[str, set[str]] = field(default_factory=dict)
+    model_rows: dict[str, int] = field(default_factory=dict)
 
 
 def fingerprint(text: str) -> str:
@@ -145,24 +151,17 @@ def parse_sta_clocks(path: Path) -> StaCoverage:
     cov = StaCoverage()
     if not path.exists():
         return cov
-    section = ""
-    saw_header = False
-    for line in path.read_text(errors="ignore").splitlines():
-        m = re.match(r"; (Setup|Hold|Recovery|Removal|Minimum Pulse Width) Summary\s+;", line)
-        if m:
-            section = m.group(1)
-            cov.sections.add(section)
-            saw_header = False
-            continue
-        if section and "Clock" in line and "Slack" in line:
-            saw_header = True
-            continue
-        if section and saw_header and line.startswith(";"):
-            parts = [c.strip() for c in line.strip().strip(";").split(";")]
-            if len(parts) >= 3 and parts[0] and not parts[0].startswith("+") and parts[0] != "Clock":
-                cov.clocks.add(parts[0])
-                cov.total_rows += 1
-            continue
+    report = parse_sta_report(path)
+    for model, sections in report.sections.items():
+        if sections & SLACK_SECTIONS:
+            cov.model_clocks[model] = set()
+            cov.model_rows[model] = 0
+            cov.sections.update(sections & SLACK_SECTIONS)
+    for row in report.slack_rows:
+        cov.clocks.add(row.clock)
+        cov.total_rows += 1
+        cov.model_clocks[row.model].add(row.clock)
+        cov.model_rows[row.model] += 1
     return cov
 
 
@@ -183,6 +182,51 @@ def format_exclusion_table(exclusions: list[Exclusion], baseline_fps: dict[str, 
     return "\n".join(lines)
 
 
+def effective_exclusions(directory: Path, project: Path, sdcs: list[Path]) -> tuple[list[str], int, int]:
+    from check_quartus_timing import parse_detailed_rows, read_evidence
+
+    parse_detailed_rows(directory)
+    manifest = json.loads(read_evidence(directory / "manifest.json", 8 * 1024**2))
+    if manifest["schema"] != "misterplex.timing-paths.v2":
+        raise ValueError("effective exception evidence requires the extended timing sidecar")
+    evidence = manifest["extended"]
+    inputs = json.loads(read_evidence(directory.parent / "inputs.json", 4 * 1024**2))
+    root = project.resolve()
+    provided = {path.resolve() for path in sdcs}
+    expected = set()
+    for relative in evidence["active_sdc_files"]:
+        path = root / relative
+        if path.is_symlink() or not path.resolve().is_relative_to(root) or path.resolve() not in provided:
+            raise ValueError(f"active SDC is outside the supplied frozen sources: {relative}")
+        data = read_evidence(path, 1024**2)
+        if hashlib.sha256(data).hexdigest() != inputs["input_files"][relative]:
+            raise ValueError(f"active SDC input hash mismatch: {relative}")
+        expected.update((relative, item.line_no, "set_" + item.kind)
+                        for item in parse_sdc_exclusions(path))
+    actual = {(item["file"], item["line"], item["kind"]) for item in evidence["exceptions"]}
+    if len(actual) != len(evidence["exceptions"]):
+        raise ValueError("repeated exception execution at one source location needs explicit accounting")
+    if actual != expected:
+        raise ValueError(f"SDC execution coverage mismatch: missing={sorted(expected - actual)}, "
+                         f"unexpected={sorted(actual - expected)}")
+    errors = []
+    empty_arguments = 0
+    for item in evidence["exceptions"]:
+        if item["kind"] == "set_clock_groups":
+            groups = [argument for argument in item["arguments"] if argument["option"] == "-group"]
+            if len(groups) < 2 or any(group["count"] == 0 for group in groups):
+                errors.append(f"{item['file']}:{item['line']}: empty/incomplete resolved clock groups")
+        for argument in item["arguments"]:
+            if argument["mode"] == "implicit_all_keepers":
+                continue
+            if argument["count"] == 0:
+                empty_arguments += 1
+            if argument["explicit_decoder_objects"]:
+                errors.append(f"{item['file']}:{item['line']}: {item['kind']} "
+                              f"{argument['option']} explicitly excludes decoder keepers")
+    return errors, len(actual), empty_arguments
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sdc", type=Path, action="append", default=[],
@@ -192,7 +236,14 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     ap.add_argument("--update-baseline", action="store_true",
                     help="write current exclusions as the new baseline (for initial setup)")
+    ap.add_argument("--effective-dir", type=Path,
+                    help="Require source-bound actual exception/endpoint inventories from timing/")
+    ap.add_argument("--project", type=Path, help="Frozen compiler project for effective SDC source binding")
     args = ap.parse_args(argv[1:])
+    if bool(args.effective_dir) != bool(args.project) or (args.effective_dir and args.update_baseline):
+        print("TIMING_EXCLUSION_REFUSED(exit=4): effective evidence requires --project "
+              "and cannot update the source baseline", file=sys.stderr)
+        return 4
 
     sdc_files = args.sdc or discover_sdc_files(ROOT)
     if not sdc_files:
@@ -271,7 +322,11 @@ def main(argv: list[str]) -> int:
         if not args.sta_rpt.exists():
             print(f"TIMING_EXCLUSION_REFUSED(exit=4): STA report not found: {args.sta_rpt}", file=sys.stderr)
             return 4
-        cov = parse_sta_clocks(args.sta_rpt)
+        try:
+            cov = parse_sta_clocks(args.sta_rpt)
+        except (OSError, ValueError) as exc:
+            print(f"TIMING_EXCLUSION_REFUSED(exit=4): {exc}", file=sys.stderr)
+            return 4
         print(f"STA coverage: {cov.total_rows} slack rows, "
               f"{len(cov.clocks)} clocks ({', '.join(sorted(cov.clocks))}), "
               f"sections: {', '.join(sorted(cov.sections))}")
@@ -287,6 +342,15 @@ def main(argv: list[str]) -> int:
                     f"expected clock '{expected_clk}' missing from STA report: "
                     f"it may have been excluded by a new set_clock_groups or set_false_path"
                 )
+        for model, clocks in cov.model_clocks.items():
+            if not model:
+                continue
+            print(f"STA model coverage: {model}: {cov.model_rows[model]} slack rows, {len(clocks)} clocks")
+            if min_sta_rows > 0 and cov.model_rows[model] < min_sta_rows:
+                errors.append(f"STA model '{model}' row count {cov.model_rows[model]} < baseline minimum {min_sta_rows}")
+            for expected_clk in expected_clocks:
+                if expected_clk not in clocks:
+                    errors.append(f"expected clock '{expected_clk}' missing from STA model '{model}'")
 
         # Empty STA (zero analysed rows) is always an error
         if cov.total_rows == 0:
@@ -301,16 +365,30 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
 
+    if args.effective_dir:
+        try:
+            effective_errors, active_count, empty_count = effective_exclusions(
+                args.effective_dir, args.project, sdc_files)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"TIMING_EXCLUSION_REFUSED(exit=4): {exc}", file=sys.stderr)
+            return 4
+        errors.extend(effective_errors)
+        print(f"Effective SDC coverage: {active_count} executed source exclusions; "
+              f"{len(all_exclusions) - active_count} unsourced exclusions; "
+              f"{empty_count} explicit empty collections retained with ignored-SDC reports")
+        print("Clock-group evidence: resolved membership; not a Spectra-Q path-report claim")
+
     if errors:
         print("TIMING_EXCLUSION_REJECTED(exit=1):", file=sys.stderr)
         for err in errors:
             print(f"  {err}", file=sys.stderr)
         return 1
 
-    print(
-        f"PASS timing exclusion audit: {len(all_exclusions)} SDC exclusion(s) all in baseline; "
-        f"no new exclusions; blind_spot=only_checks_SDC_text_not_Quartus_internal_optimisations"
-    )
+    coverage = ("source-bound execution/resolved-object and ignored-SDC evidence retained"
+                if args.effective_dir else
+                "blind_spot=only_checks_SDC_text_not_Quartus_internal_optimisations")
+    print(f"PASS timing exclusion audit: {len(all_exclusions)} SDC exclusion(s) all in baseline; "
+          f"no new exclusions; {coverage}")
     return 0
 
 

@@ -1616,6 +1616,22 @@ audio_out audio_out
 );
 
 
+`ifdef FPGA_VIDEO_320
+	wire         mpx_audio_reset;
+	wire         mpx_audio_ctrl_toggle;
+	wire [216:0] mpx_audio_ctrl_data;
+	wire         mpx_audio_ctrl_ack_toggle;
+	wire         mpx_audio_snapshot_toggle;
+	wire         mpx_audio_snapshot_ack_toggle;
+	wire [447:0] mpx_audio_snapshot_data;
+	// Core menu/button resets must also retire MrAudio's outstanding DMA.
+	reg [1:0] mpx_audio_reset_sync = 2'b11;
+	always @(posedge clk_audio or posedge mpx_audio_reset) begin
+		if (mpx_audio_reset) mpx_audio_reset_sync <= 2'b11;
+		else mpx_audio_reset_sync <= {mpx_audio_reset_sync[0], 1'b0};
+	end
+`endif
+
 `ifndef MISTER_DISABLE_ALSA
 	wire aspi_sck,aspi_mosi,aspi_ss,aspi_miso;
 	cyclonev_hps_interface_peripheral_spi_master spi
@@ -1636,9 +1652,19 @@ audio_out audio_out
 
 	wire [15:0] alsa_l, alsa_r;
 
-	alsa alsa
+	alsa #(
+`ifdef FPGA_VIDEO_320
+		.SESSION_CONTROL(1'b1)
+`else
+		.SESSION_CONTROL(1'b0)
+`endif
+	) alsa
 	(
+`ifdef FPGA_VIDEO_320
+		.reset(mpx_audio_reset_sync[1]),
+`else
 		.reset(reset),
+`endif
 		.clk(clk_audio),
 
 		.ram_address(alsa_address),
@@ -1652,7 +1678,20 @@ audio_out audio_out
 		.spi_miso(aspi_miso),
 
 		.pcm_l(alsa_l),
-		.pcm_r(alsa_r)
+		.pcm_r(alsa_r),
+`ifdef FPGA_VIDEO_320
+		.audio_ctrl_toggle(mpx_audio_ctrl_toggle),
+		.audio_ctrl_data(mpx_audio_ctrl_data),
+		.audio_ctrl_ack_toggle(mpx_audio_ctrl_ack_toggle),
+		.audio_snapshot_toggle(mpx_audio_snapshot_toggle),
+		.audio_snapshot_ack_toggle(mpx_audio_snapshot_ack_toggle),
+		.audio_snapshot_data(mpx_audio_snapshot_data)
+`else
+		.audio_ctrl_toggle(1'b0), .audio_ctrl_data(217'd0),
+		.audio_ctrl_ack_toggle(),
+		.audio_snapshot_toggle(1'b0), .audio_snapshot_ack_toggle(),
+		.audio_snapshot_data()
+`endif
 	);
 `endif
 
@@ -1753,6 +1792,9 @@ wire [13:0] fb_stride;
 	assign fb_stride = 0;
 `endif
 
+// Board ADC data is input-only; the generic core ADC bus is bidirectional.
+wire core_adc_sdo = ADC_SDO;
+
 emu emu
 (
 	.CLK_50M(FPGA_CLK2_50),
@@ -1817,8 +1859,17 @@ emu emu
 	.AUDIO_R(audio_r),
 	.AUDIO_S(audio_s),
 	.AUDIO_MIX(audio_mix),
+`ifdef FPGA_VIDEO_320
+	.MPX_AUDIO_RESET(mpx_audio_reset),
+	.MPX_AUDIO_CTRL_TOGGLE(mpx_audio_ctrl_toggle),
+	.MPX_AUDIO_CTRL_DATA(mpx_audio_ctrl_data),
+	.MPX_AUDIO_CTRL_ACK_TOGGLE(mpx_audio_ctrl_ack_toggle),
+	.MPX_AUDIO_SNAPSHOT_TOGGLE(mpx_audio_snapshot_toggle),
+	.MPX_AUDIO_SNAPSHOT_ACK_TOGGLE(mpx_audio_snapshot_ack_toggle),
+	.MPX_AUDIO_SNAPSHOT_DATA(mpx_audio_snapshot_data),
+`endif
 
-	.ADC_BUS({ADC_SCK,ADC_SDO,ADC_SDI,ADC_CONVST}),
+	.ADC_BUS({ADC_SCK,core_adc_sdo,ADC_SDI,ADC_CONVST}),
 
 	.DDRAM_CLK(ram_clk),
 	.DDRAM_ADDR(ram_address),

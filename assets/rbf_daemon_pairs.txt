@@ -4,3 +4,4 @@
 4d6efef954acf7b33747f35ac2878c1b /media/fat/misterplex/bin/misterplexd.240p15 crt240p15
 61db00e7d54efad7c1a456b127b798bd /media/fat/misterplex/bin/misterplexd.480i crt480i
 0eea3580a5a0dacf60bf65c50499bcc9 /media/fat/misterplex/bin/misterplexd.720p24 l4
+98f2e1252974d6ff20158f24960b891b /media/fat/misterplex/bin/misterplexd.720p24 l4

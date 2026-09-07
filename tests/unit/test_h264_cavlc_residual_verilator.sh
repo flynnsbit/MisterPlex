@@ -71,3 +71,22 @@ if [[ "$POS_RC" -ne 0 ]]; then
   exit "$POS_RC"
 fi
 assert_sim_executed "h264_cavlc_residual_pos" "$POS_OUT" "Verilator PASS"
+
+for addr_w in 13 14 16; do
+  syntax_build="$ROOT/build/verilator/h264_syntax_lane_$addr_w"
+  mkdir -p "$syntax_build"
+  "$RUN_VERILATOR" --cc --exe --build -j 2 --Mdir "$syntax_build" \
+    --top-module h264_syntax_lane_tb_top -GADDR_W="$addr_w" -Wno-fatal \
+    -I"$ROOT/fpga/Plex_MiSTer/rtl" \
+    -CFLAGS "-std=c++17 -O2 -I$ROOT/host" \
+    "$ROOT/tests/rtl/h264_syntax_lane_tb_top.sv" \
+    "$ROOT/tests/rtl/h264_syntax_lane_tb.cpp" \
+    "$ROOT/fpga/Plex_MiSTer/rtl/h264_bit_reader.sv" \
+    "$ROOT/fpga/Plex_MiSTer/rtl/h264_slice_rbsp_ram.sv" \
+    "$ROOT/fpga/Plex_MiSTer/rtl/h264_residual_seq.sv" \
+    "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv" \
+    "$ROOT/fpga/Plex_MiSTer/rtl/sps_parser.sv" \
+    "$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv"
+  "$syntax_build/Vh264_syntax_lane_tb_top" \
+    "$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264"
+done

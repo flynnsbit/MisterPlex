@@ -1,5 +1,6 @@
 #include "misterplexd/plex_resolve.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
+#include "libmisterplex/ddr_bitstream_ring.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -14,6 +15,7 @@
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr size_t kMaxNalBytes = misterplex::ddr_bitstream_ring::kMaxAccessUnitBytes;
 
 std::string envOrEmpty(const char* name) {
     const char* v = std::getenv(name);
@@ -48,6 +50,7 @@ struct NalStats {
     int pps = 0;
     int other = 0;
     int pclose_rc = 0;
+    std::string failure;
 };
 
 uint64_t microsSince(Clock::time_point start, Clock::time_point now) {
@@ -55,57 +58,16 @@ uint64_t microsSince(Clock::time_point start, Clock::time_point now) {
         std::chrono::duration_cast<std::chrono::microseconds>(now - start).count());
 }
 
-bool runFfmpegNalStats(const std::string& url, const std::string& headers, int seconds,
-                       NalStats& stats) {
-    std::ostringstream cmd;
-    cmd << "ffmpeg -hide_banner -loglevel error -nostdin"
-        << " -headers " << shellQuote(headers)
-        << " -i " << shellQuote(url)
-        << " -map 0:v:0 -t " << seconds
-        << " -c:v copy -an -f h264 - 2>/dev/null";
-
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe)
-        return false;
-
-    misterplex::h264stream::AnnexBFramer framer;
+bool collectNalStats(FILE* input, NalStats& stats, size_t maxNalBytes, size_t maxSamples) {
+    misterplex::h264stream::AnnexBFramer framer(maxNalBytes);
     const auto t0 = Clock::now();
-    char buf[16384];
-    while (true) {
-        const size_t n = std::fread(buf, 1, sizeof(buf), pipe);
-        if (n > 0) {
-            const auto now = Clock::now();
-            stats.stdout_bytes += n;
-            const bool ok = framer.push(reinterpret_cast<const uint8_t*>(buf), n,
-                                        [&](const uint8_t* p, size_t len) {
-                                            const uint8_t type =
-                                                misterplex::h264stream::annexBNalType(p, len);
-                                            stats.samples.push_back(
-                                                {microsSince(t0, now), len, type});
-                                            stats.nal_bytes += len;
-                                            if (type == 1 || type == 5)
-                                                ++stats.vcl;
-                                            if (type == 5)
-                                                ++stats.idr;
-                                            else if (type == 7)
-                                                ++stats.sps;
-                                            else if (type == 8)
-                                                ++stats.pps;
-                                            else if (type != 1)
-                                                ++stats.other;
-                                        });
-            if (!ok)
-                break;
+    auto onNal = [&](const uint8_t* p, size_t len) -> bool {
+        if (stats.samples.size() >= maxSamples) {
+            stats.failure = "NAL sample limit reached; incomplete measurement";
+            return false;
         }
-        if (n < sizeof(buf)) {
-            if (std::feof(pipe) || std::ferror(pipe))
-                break;
-        }
-    }
-    const auto now = Clock::now();
-    framer.finish([&](const uint8_t* p, size_t len) {
         const uint8_t type = misterplex::h264stream::annexBNalType(p, len);
-        stats.samples.push_back({microsSince(t0, now), len, type});
+        stats.samples.push_back({microsSince(t0, Clock::now()), len, type});
         stats.nal_bytes += len;
         if (type == 1 || type == 5)
             ++stats.vcl;
@@ -117,9 +79,59 @@ bool runFfmpegNalStats(const std::string& url, const std::string& headers, int s
             ++stats.pps;
         else if (type != 1)
             ++stats.other;
-    });
+        return true;
+    };
+    char buf[16384];
+    while (true) {
+        const size_t n = std::fread(buf, 1, sizeof(buf), input);
+        if (n > 0) {
+            stats.stdout_bytes += n;
+            if (!framer.push(reinterpret_cast<const uint8_t*>(buf), n, onNal)) {
+                if (stats.failure.empty())
+                    stats.failure = framer.errorText();
+                return false;
+            }
+        }
+        if (n < sizeof(buf)) {
+            if (std::ferror(input)) {
+                stats.failure = "Annex-B input read failed";
+                return false;
+            }
+            if (std::feof(input))
+                break;
+        }
+    }
+    if (!framer.finish(onNal)) {
+        if (stats.failure.empty())
+            stats.failure = framer.errorText();
+        return false;
+    }
+    if (stats.samples.empty()) {
+        stats.failure = "no Annex-B NAL units observed";
+        return false;
+    }
+    return true;
+}
+
+bool runFfmpegNalStats(const std::string& url, const std::string& headers, int seconds,
+                       NalStats& stats, size_t maxNalBytes, size_t maxSamples) {
+    std::ostringstream cmd;
+    cmd << "ffmpeg -hide_banner -loglevel error -nostdin"
+        << " -headers " << shellQuote(headers)
+        << " -i " << shellQuote(url)
+        << " -map 0:v:0 -t " << seconds
+        << " -c:v copy -an -f h264 - 2>/dev/null";
+
+    FILE* pipe = popen(cmd.str().c_str(), "r");
+    if (!pipe) {
+        stats.failure = "cannot start FFmpeg";
+        return false;
+    }
+    const bool complete = collectNalStats(pipe, stats, maxNalBytes, maxSamples);
     stats.pclose_rc = pclose(pipe);
-    return !stats.samples.empty();
+    if (stats.pclose_rc != 0 && stats.failure.empty())
+        stats.failure = "FFmpeg extraction failed";
+    return complete && stats.pclose_rc == 0;
 }
 
 template <typename T>
@@ -160,6 +172,8 @@ uint64_t nextPow2(uint64_t v) {
 int usage(const char* argv0) {
     std::cerr << "usage: " << argv0 << " --base URL --token TOKEN --key /library/metadata/N "
               << "[--seconds N]\n"
+              << "       " << argv0 << " --annexb FILE (offline byte-size probe, not arrival timing)\n"
+              << "       [--max-nal-bytes 1.." << kMaxNalBytes << "] [--max-samples 1..65536]\n"
               << "       Env equivalents: PLEX_BASE, PLEX_TOKEN, MISTERPLEX_BASELINE_KEY\n";
     return 2;
 }
@@ -170,6 +184,8 @@ int main(int argc, char** argv) {
     std::string base = envOrEmpty("PLEX_BASE");
     std::string token = envOrEmpty("PLEX_TOKEN");
     std::string key = envOrEmpty("MISTERPLEX_BASELINE_KEY");
+    std::string annexb;
+    size_t maxNalBytes = kMaxNalBytes, maxSamples = 65536;
     int seconds = 30;
 
     for (int i = 1; i < argc; ++i) {
@@ -189,6 +205,18 @@ int main(int argc, char** argv) {
         } else if (a == "--key") {
             if (!needValue(key))
                 return usage(argv[0]);
+        } else if (a == "--annexb") {
+            if (!needValue(annexb))
+                return usage(argv[0]);
+        } else if (a == "--max-nal-bytes" || a == "--max-samples") {
+            std::string value;
+            if (!needValue(value) || value.empty() ||
+                value.find_first_not_of("0123456789") != std::string::npos || value.size() > 6)
+                return usage(argv[0]);
+            const auto limit = static_cast<size_t>(std::stoul(value));
+            if (limit == 0 || limit > (a == "--max-nal-bytes" ? kMaxNalBytes : 65536u))
+                return usage(argv[0]);
+            (a == "--max-nal-bytes" ? maxNalBytes : maxSamples) = limit;
         } else if (a == "--seconds") {
             std::string v;
             if (!needValue(v))
@@ -203,7 +231,7 @@ int main(int argc, char** argv) {
     }
 
     base = misterplex::normalizePlexBase(base);
-    if (base.empty() || token.empty() || key.empty()) {
+    if (annexb.empty() && (base.empty() || token.empty() || key.empty())) {
         std::cerr << "SKIP-NOT-PASS pms_nal_stats: live PMS inputs missing; set PLEX_BASE, "
                      "PLEX_TOKEN, and MISTERPLEX_BASELINE_KEY. This is not a pass.\n";
         return 77;
@@ -213,25 +241,39 @@ int main(int argc, char** argv) {
     if (seconds > 120)
         seconds = 120;
 
-    misterplex::WeakLadder weak;
-    if (!misterplex::applyPlexTranscodeProfile("480p", weak)) {
-        std::cerr << "FAIL pms_nal_stats: built-in 480p transcode profile missing\n";
-        return 1;
-    }
-
-    const std::string session = "mplex-nal-stats";
-    const std::string startUrl =
-        misterplex::buildUniversalTranscodeUrl(base, key, token, session, 0, weak);
-    if (!misterplex::ensureUniversalDecision(startUrl, session, token, weak)) {
-        std::cerr << "FAIL pms_nal_stats: PMS universal decision request failed before stream fetch\n";
-        return 1;
-    }
-
     NalStats stats;
-    if (!runFfmpegNalStats(startUrl, misterplex::plexFfmpegHeaders(session, token, weak), seconds,
-                           stats)) {
-        std::cerr << "FAIL pms_nal_stats: no Annex-B NAL units observed; pclose_rc="
-                  << stats.pclose_rc << " stdout_bytes=" << stats.stdout_bytes << "\n";
+    bool complete = false;
+    if (!annexb.empty()) {
+        FILE* input = std::fopen(annexb.c_str(), "rb");
+        if (!input) {
+            stats.failure = "cannot open Annex-B input";
+        } else {
+            complete = collectNalStats(input, stats, maxNalBytes, maxSamples);
+            if (std::fclose(input) != 0) {
+                complete = false;
+                stats.failure = "cannot close Annex-B input";
+            }
+        }
+    } else {
+        misterplex::WeakLadder weak;
+        if (!misterplex::applyPlexTranscodeProfile("480p", weak)) {
+            std::cerr << "FAIL pms_nal_stats: built-in 480p transcode profile missing\n";
+            return 1;
+        }
+        const std::string session = "mplex-nal-stats";
+        const std::string startUrl =
+            misterplex::buildUniversalTranscodeUrl(base, key, token, session, 0, weak);
+        if (!misterplex::ensureUniversalDecision(startUrl, session, token, weak)) {
+            std::cerr << "FAIL pms_nal_stats: PMS universal decision request failed before stream fetch\n";
+            return 1;
+        }
+        complete = runFfmpegNalStats(startUrl, misterplex::plexFfmpegHeaders(session, token, weak),
+                                    seconds, stats, maxNalBytes, maxSamples);
+    }
+    if (!complete) {
+        std::cerr << "FAIL pms_nal_stats: " << stats.failure << "; pclose_rc="
+                  << stats.pclose_rc << " stdout_bytes=" << stats.stdout_bytes
+                  << " partial_samples=" << stats.samples.size() << "\n";
         return 1;
     }
 
@@ -256,6 +298,7 @@ int main(int argc, char** argv) {
     const uint64_t suggested = nextPow2(std::max<uint64_t>(maxNal, burst500) * 2u);
 
     std::cout << "PMS_NAL_STATS seconds=" << seconds << " nals=" << stats.samples.size()
+              << " origin=" << (annexb.empty() ? "live" : "offline")
               << " vcl=" << stats.vcl << " idr=" << stats.idr << " sps=" << stats.sps
               << " pps=" << stats.pps << " other=" << stats.other
               << " stdout_bytes=" << stats.stdout_bytes << " nal_bytes=" << stats.nal_bytes

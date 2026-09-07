@@ -17,9 +17,13 @@
 //
 //     rptr: 234576, wptr: 234576, len:      0, comp: 0
 //
-// `len` is (wptr - rptr) wrapped — bytes queued but not yet played, i.e. the
-// output latency in bytes. Reading it turns the submitted-byte counter into a
-// real playback position, and makes the overwrite case observable.
+// `len` is (wptr - rptr) wrapped — bytes not yet requested from DDR. ALSA
+// advances rptr before the response and prefetches two stereo samples, so this
+// is a queue/overwrite bound, NOT an exact consumed clock or session ACK.
+// The FPGA-H264 path uses audio_session.hpp feedback for actual consumption.
+// open()/release do not reset or move the DMA origin. Only device_write()
+// publishes full SPI buffer metadata; there is no periodic publisher to wait
+// for after quiescing the producer. Audio control carries the stable wptr.
 
 #include <cstdint>
 
@@ -94,7 +98,7 @@ inline int64_t parseMrAudioQueuedBytes(const char* s, int64_t n) {
     return parseMrAudioUnsignedField(s, n, "len:", 4, false);
 }
 
-// Audible playback position (ms) = what we handed the driver, minus what is
+// Legacy playback estimate (ms) = what we handed the driver, minus what is
 // still sitting in the ring. `queuedBytes` < 0 means "unknown", in which case we
 // fall back to the submitted-byte clock so a kernel without this line still
 // plays (just with the old hand-tuned offset).

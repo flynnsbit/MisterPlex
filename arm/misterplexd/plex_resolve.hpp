@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "libmisterplex/source_aspect.hpp"
+#include "libmisterplex/video_backend.hpp"
 
 namespace misterplex {
 
@@ -119,19 +120,30 @@ struct WeakLadder {
     // Phase 4: ask PMS to burn subtitles into the universal ladder when set.
     bool burnSubtitles = false;
     int subtitleStreamId = -1; // -1 = PMS default / first
+    int fpgaFpsNum = 0;
+    int fpgaFpsDen = 0;
 };
 
 // Guard rails for built-in and configured ladders.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+// Experimental 240p only. Does not advertise higher decoded modes or alter FPS.
+bool applyFpgaPlexProfile(WeakLadder& weak, const std::string& prototype,
+                          int fpsNum, int fpsDen, bool filteringOff,
+                          std::string* why = nullptr);
 // Fit the PMS transcode raster inside the configured ladder without adding bars.
 // The host expands this anamorphically to the FPGA bank and MiSTer restores DAR.
 WeakLadder fitWeakLadderToAspect(const WeakLadder& weak, const SourceAspect& aspect);
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
+inline bool isFpgaPlexProfile(const WeakLadder& weak) {
+    return weak.clientProfileName.rfind("MiSTerPlex-FPGA-", 0) == 0;
+}
 // 480p gold: omit caps when Profile-Name is MiSTerPlex (XML on that PMS).
 // 720p: remote PMS has no MiSTerPlex.xml and emits 640x480 unless we advertise
 // 1280x720 (40868 probe=640x480 → unique ~15).
 inline bool plexSendClientLadderCaps(const WeakLadder& weak) {
+    if (isFpgaPlexProfile(weak))
+        return false; // The selected client XML is authoritative for this family.
     return weak.clientProfileName != "MiSTerPlex" ||
            weak.videoResolution == "1280x720";
 }
@@ -141,6 +153,10 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
                                        const std::string& session,
                                        int64_t offsetMs,
                                        const WeakLadder& weak);
+std::string buildUniversalDecisionUrl(const std::string& startUrl,
+                                      const std::string& sessionId,
+                                      const std::string& token,
+                                      const WeakLadder& weak);
 
 // True when metadata Media@videoCodec looks like H.264/AVC (direct Part friendly for STREAM).
 bool mediaVideoIsH264(const std::string& plexMetadataXml);

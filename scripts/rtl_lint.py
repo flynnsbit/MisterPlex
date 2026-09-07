@@ -119,6 +119,62 @@ def is_excluded(path: Path) -> bool:
     )
 
 
+def intel_pll_stub() -> str:
+    """Declare the generated PLL interfaces for lint, not clock simulation."""
+    params = {
+        "fractional_vco_multiplier": '"false"',
+        "reference_clock_frequency": '"50.0 MHz"',
+        "operation_mode": '"direct"',
+        "number_of_clocks": "1",
+        "pll_type": '"General"',
+        "pll_subtype": '"General"',
+        "pll_fractional_cout": "0",
+        "pll_dsm_out_sel": '"1st_order"',
+        "pll_vco_div": "1",
+        "pll_cp_current": "0",
+        "pll_bwctrl": "0",
+        "pll_output_clk_frequency": '"0 MHz"',
+        "pll_fractional_division": '"0"',
+        "mimic_fbclk_type": '"none"',
+        "pll_fbclk_mux_1": '"glb"',
+        "pll_fbclk_mux_2": '"m_cnt"',
+        "pll_m_cnt_in_src": '"ph_mux_clk"',
+        "pll_slf_rst": '"false"',
+    }
+    for counter in ("m", "n"):
+        params.update({
+            f"{counter}_cnt_hi_div": "1",
+            f"{counter}_cnt_lo_div": "1",
+            f"{counter}_cnt_bypass_en": '"false"',
+            f"{counter}_cnt_odd_div_duty_en": '"false"',
+        })
+    for clock in range(18):
+        params.update({
+            f"output_clock_frequency{clock}": '"0 MHz"',
+            f"phase_shift{clock}": '"0 ps"',
+            f"duty_cycle{clock}": "50",
+            f"c_cnt_hi_div{clock}": "1",
+            f"c_cnt_lo_div{clock}": "1",
+            f"c_cnt_prst{clock}": "1",
+            f"c_cnt_ph_mux_prst{clock}": "0",
+            f"c_cnt_in_src{clock}": '"ph_mux_clk"',
+            f"c_cnt_bypass_en{clock}": '"false"',
+            f"c_cnt_odd_div_duty_en{clock}": '"false"',
+        })
+    declarations = ",\n".join(f"    parameter {name} = {value}"
+                             for name, value in params.items())
+    return f"""
+module altera_pll #(
+{declarations}
+) (
+    input refclk, input rst, input fbclk,
+    output [number_of_clocks-1:0] outclk, output locked, output fboutclk,
+    input [63:0] reconfig_to_pll, output [63:0] reconfig_from_pll
+);
+endmodule
+"""
+
+
 def write_intel_stubs() -> Path:
     stub = ROOT / "build" / "rtl_lint_intel_stubs.sv"
     stub.parent.mkdir(exist_ok=True)
@@ -149,7 +205,7 @@ module arriav_lcell_comb #(parameter lut_mask = 64'h0, parameter dont_touch = "o
 module arriavgz_lcell_comb #(parameter lut_mask = 64'h0, parameter dont_touch = "off") (input dataa, input datab, input datac, input datad, input datae, input dataf, output combout); endmodule
 module cyclonev_lcell_comb #(parameter lut_mask = 64'h0, parameter dont_touch = "off") (input dataa, input datab, input datac, input datad, input datae, input dataf, output combout); endmodule
 module altera_std_synchronizer #(parameter depth = 2) (input clk, input reset_n, input din, output dout); endmodule
-module altera_pll (input refclk, input rst, output outclk_0, output outclk_1, output outclk_2, output locked); endmodule
+''' + intel_pll_stub() + r'''
 module altddio_out #(parameter extend_oe_disable = "", parameter intended_device_family = "", parameter invert_output = "", parameter lpm_hint = "", parameter lpm_type = "", parameter oe_reg = "", parameter power_up_high = "", parameter width = 1) (input datain_h, input datain_l, input outclock, output dataout, input aclr, input aset, input oe, input outclocken, input sclr, input sset); endmodule
 ''')
     return stub
