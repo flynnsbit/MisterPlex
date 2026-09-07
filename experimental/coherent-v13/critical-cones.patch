@@ -1,0 +1,193 @@
+--- a/rtl/h264_cavlc_residual.sv
++++ b/rtl/h264_cavlc_residual.sv
+@@ -88,7 +88,9 @@
+         ST_FAIL       = 5'd14,
+         ST_WIN_SELECT = 5'd15,
+         ST_WIN_ALIGN  = 5'd16,
+-        ST_LVL_CHECK  = 5'd17;
++        ST_LVL_CHECK  = 5'd17,
++        ST_PLACE_SUM = 5'd18,
++        ST_PLACE_MAP = 5'd19;
+ 
+     reg [4:0] st;
+     reg [BIT_W:0] bit_pos;
+@@ -819,22 +821,29 @@
+     reg [3:0] place_index [0:15];
+     reg [15:0] place_valid;
+     reg place_bad;
++    reg [8:0] place_sum [0:15];
++    wire [8:0] place_term [0:15], place_pair [0:15], place_quad [0:15];
++    wire [8:0] place_octet [0:15], place_total [0:15];
++    genvar place_src;
++    generate for (place_src = 0; place_src < 16; place_src = place_src + 1) begin : g_place_prefix
++        assign place_term[place_src] = tc_r > 5'(place_src) ?
++            {5'd0, run_dbg[place_src]} + 9'd1 : 9'd0;
++        if (place_src + 1 < 16) begin : g_pair
++            assign place_pair[place_src] = place_term[place_src] + place_term[place_src+1];
++        end else assign place_pair[place_src] = place_term[place_src];
++        if (place_src + 2 < 16) begin : g_quad
++            assign place_quad[place_src] = place_pair[place_src] + place_pair[place_src+2];
++        end else assign place_quad[place_src] = place_pair[place_src];
++        if (place_src + 4 < 16) begin : g_octet
++            assign place_octet[place_src] = place_sum[place_src] + place_sum[place_src+4];
++        end else assign place_octet[place_src] = place_sum[place_src];
++        if (place_src + 8 < 16) begin : g_total
++            assign place_total[place_src] = place_octet[place_src] + place_octet[place_src+8];
++        end else assign place_total[place_src] = place_octet[place_src];
++    end endgenerate
++
+     always @* begin : place_one_hot
+         integer src, dst;
+-        reg signed [5:0] cnum;
+-        cnum = -6'sd1;
+-        place_valid = 16'd0;
+-        place_bad = 1'b0;
+-        for (src = 15; src >= 0; src = src - 1) begin
+-            place_index[src] = 4'd0;
+-            if (src < tc_r && !place_bad) begin
+-                cnum = cnum + {2'd0, run_dbg[src]} + 6'sd1;
+-                if (cnum >= 0 && cnum < $signed({1'b0, max_coeff})) begin
+-                    place_index[src] = cnum[3:0];
+-                    place_valid[src] = 1'b1;
+-                end else place_bad = 1'b1;
+-            end
+-        end
+         // Nonnegative runs make all valid destinations distinct. Use an OR
+         // selection, not sixteen ordered variable-index writes per output.
+         for (dst = 0; dst < 16; dst = dst + 1) begin
+@@ -865,6 +874,8 @@
+             bit_pos <= 10'd0;
+             bit_offset_end <= 10'd0;
+             window_valid <= 1'b0;
++            place_valid <= 16'd0;
++            place_bad <= 1'b0;
+             total_coeff <= 5'd0;
+             trailing_ones <= 2'd0;
+             total_zeros <= 4'd0;
+@@ -897,7 +908,7 @@
+                 ST_LVL_PRE, ST_LVL_SUF, ST_LVL_STORE, ST_LVL_CHECK: cy_level <= cy_level + 16'd1;
+                 ST_TZ_BIT, ST_TZ_CHK:       cy_total_zeros <= cy_total_zeros + 16'd1;
+                 ST_RUN_BIT, ST_RUN_CHK:     cy_run_before <= cy_run_before + 16'd1;
+-                ST_PLACE_INIT, ST_PLACE_STEP: cy_place <= cy_place + 16'd1;
++                ST_PLACE_INIT, ST_PLACE_SUM, ST_PLACE_MAP, ST_PLACE_STEP: cy_place <= cy_place + 16'd1;
+                 default:                    cy_other <= cy_other + 16'd1;
+                 endcase
+             end
+@@ -907,6 +918,8 @@
+                 busy <= 1'b0;
+                 if (start) begin
+                     window_valid <= 1'b0;
++                    place_valid <= 16'd0;
++                    place_bad <= 1'b0;
+                     busy <= 1'b1;
+                     ok <= 1'b0;
+                     bit_pos <= bit_offset_start;
+@@ -1339,6 +1352,31 @@
+ 
+             ST_PLACE_INIT: begin
+                 for (ci = 0; ci < 16; ci = ci + 1)
++                    place_sum[ci] <= place_quad[ci];
++                st <= ST_PLACE_SUM;
++            end
++
++            ST_PLACE_SUM: begin
++                for (ci = 0; ci < 16; ci = ci + 1)
++                    place_sum[ci] <= place_total[ci];
++                st <= ST_PLACE_MAP;
++            end
++
++            ST_PLACE_MAP: begin
++                // Positive, nonwrapping prefixes cannot become valid again
++                // after crossing max_coeff. This preserves fail/partial scatter
++                // without a sixteen-coefficient poison/adder dependency chain.
++                for (ci = 0; ci < 16; ci = ci + 1) begin
++                    place_index[ci] <= place_sum[ci][3:0] - 4'd1;
++                    place_valid[ci] <= 5'(ci) < tc_r && place_sum[ci] != 0 &&
++                        place_sum[ci] <= {4'd0, max_coeff};
++                end
++                place_bad <= place_sum[0] > {4'd0, max_coeff};
++                st <= ST_PLACE_STEP;
++            end
++
++            ST_PLACE_STEP: begin
++                for (ci = 0; ci < 16; ci = ci + 1)
+                     coeff[ci] <= placed_coeff[ci];
+                 if (place_bad) st <= ST_FAIL;
+                 else begin
+@@ -1348,8 +1386,6 @@
+                 end
+             end
+ 
+-            ST_PLACE_STEP: st <= ST_FAIL; // unused (bulk place)
+-
+             ST_DONE: begin
+                 busy <= 1'b0;
+                 done <= 1'b1;
+--- a/rtl/h264_dpb.sv
++++ b/rtl/h264_dpb.sv
+@@ -106,6 +106,7 @@
+ 	reg [8:0] index;
+ 	reg [1:0] issue_plane, outstanding;
+ 	reg [8:0] issue_index;
++	reg [4:0] issue_col, issue_row;
+ 	reg issue_finished;
+ 	reg packed_copy;
+ 	reg frame_done_d, promote_pending, poisoned;
+@@ -152,14 +153,14 @@
+ 	endfunction
+ 	wire signed [16:0] sx = issue_plane == 0 ?
+ 		$signed({luma_origin_x[15], luma_origin_x}) +
+-		(packed_copy ? $signed({13'd0, issue_index[3:0]}) : $signed({8'd0, issue_index % 9'd21}) - 17'sd2) :
++		($signed({12'd0, issue_col}) - (packed_copy ? 17'sd0 : 17'sd2)) :
+ 		$signed({chroma_origin_x[15], chroma_origin_x}) +
+-		(packed_copy ? $signed({14'd0, issue_index[2:0]}) : $signed({8'd0, issue_index % 9'd9}));
++		$signed({12'd0, issue_col});
+ 	wire signed [16:0] sy = issue_plane == 0 ?
+ 		$signed({luma_origin_y[15], luma_origin_y}) +
+-		(packed_copy ? $signed({13'd0, issue_index[7:4]}) : $signed({8'd0, issue_index / 9'd21}) - 17'sd2) :
++		($signed({12'd0, issue_row}) - (packed_copy ? 17'sd0 : 17'sd2)) :
+ 		$signed({chroma_origin_y[15], chroma_origin_y}) +
+-		(packed_copy ? $signed({14'd0, issue_index[5:3]}) : $signed({8'd0, issue_index / 9'd9}));
++		$signed({12'd0, issue_row});
+ 	wire [15:0] rx = clamp_coord(sx, issue_plane == 0 ? int'(reference_width) : int'(reference_width)/2);
+ 	wire [15:0] ry = clamp_coord(sy, issue_plane == 0 ? int'(reference_height) : int'(reference_height)/2);
+ 	h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_read_addr (
+@@ -175,6 +176,8 @@
+ 	                                                       (packed_copy ? 9'd63 : 9'd80));
+ 	wire last_issue = issue_index == (issue_plane == 0 ? (packed_copy ? 9'd255 : 9'd440) :
+ 	                                                               (packed_copy ? 9'd63 : 9'd80));
++	wire last_issue_col = issue_col == (issue_plane == 0 ? (packed_copy ? 5'd15 : 5'd20) :
++	                                                                    (packed_copy ? 5'd7 : 5'd8));
+ 	wire supported_fetch = fetch_part_mode == 0 && fetch_part_idx == 0 &&
+ 		fetch_part_w == 16 && fetch_part_h == 16 &&
+ 		{4'd0, fetch_mb_x} < coded_width[15:4] &&
+@@ -205,6 +208,7 @@
+ 			cache_mv_x <= 0; cache_mv_y <= 0;
+ 			plane <= 0; index <= 0; packed_copy <= 0;
+ 			issue_plane <= 0; issue_index <= 0; issue_finished <= 0; outstanding <= 0;
++			issue_col <= 0; issue_row <= 0;
+ 			luma_frac_x <= 0; luma_frac_y <= 0;
+ 			chroma_frac_x <= 0; chroma_frac_y <= 0;
+ 			luma_origin_x <= 0; luma_origin_y <= 0;
+@@ -215,6 +219,13 @@
+ 			frame_done_d <= frame_done;
+ 			outstanding <= outstanding_next[1:0];
+ 			if (read_accept) begin
++				// Accepted raster context replaces division/modulo in the
++				// address-to-RAM-enable cone. Backpressure holds both contexts.
++				if (last_issue) begin
++					issue_col <= 0; issue_row <= 0;
++				end else if (last_issue_col) begin
++					issue_col <= 0; issue_row <= issue_row + 1'b1;
++				end else issue_col <= issue_col + 1'b1;
+ 				if (last_issue) begin
+ 					if (issue_plane == 2) issue_finished <= 1;
+ 					else begin issue_plane <= issue_plane + 1'b1; issue_index <= 0; end
+@@ -268,6 +279,7 @@
+ 						packed_copy <= fetch_mv_x_qpel == 0 && fetch_mv_y_qpel == 0;
+ 						plane <= 0; index <= 0;
+ 						issue_plane <= 0; issue_index <= 0; issue_finished <= 0;
++						issue_col <= 0; issue_row <= 0;
+ 						state <= READ; fetch_busy <= 1;
+ 					end
+ 				end
