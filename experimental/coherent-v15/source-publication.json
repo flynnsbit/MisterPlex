@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-fpga-source-only",
+  "public_branch_base_commit": "87236b428e751364b94bec45a2a7ac87d5cfff18",
+  "source_sha256": "4f09a4176a6b954463e0d6b7484c3d421efdb686421bcf67f7bf254bf34604ef",
+  "manifest_sha256": "b32dd240e54cbafca70262bf4d149b2fb5d5ca877c6b86d4b05cda5b49417a51",
+  "source_archive_sha256": "7c68c129c201c59b767aea6b1642684bd746c3ffccb80443970ba32cab6b18f5",
+  "inputs_archive_sha256": "f9ccd38a41ad12a7f8359d59cd9023459a1b83053bea6dfd3870e61fb8063096",
+  "inputs_json_sha256": "45beb03f791b0f23bbdb529a59741bebfe7a71ff763ee889f52006f4d975e306",
+  "patch_sha256": "058f7c3a44e327ac68ab958b283363b605330cfa92c66b922d2f8338976141a7",
+  "validation_archive_sha256": "e90cff0b26ded98d2b141fdde1eebcfce553d1390f84f49bdf310778eb005da3",
+  "original_added_benches_archive_sha256": "0842a02f5f648fbf570552baedfe85360e8bb3515c5e4ad7114f94c2adcf5cb5",
+  "review_receipt_sha256": "4556dfdabb9a8852a11fda77b976ee17fb5491976ccc5a1f750e807400ad3f30",
+  "review_outcome": "READY_FOR_SOURCE_PUBLICATION",
+  "binding": "149 source/150 effective, five-member delta plus build ID;73 validation members and95 unchanged prior fixtures; no hidden budget or fixture weakening",
+  "source_delta": [
+    "rtl/ddr_frame_store.sv",
+    "rtl/h264_i16_dc_hadamard.sv",
+    "rtl/h264_inter_pred.sv",
+    "rtl/h264_mb_ctrl.sv",
+    "rtl/present_core.sv"
+  ],
+  "functional_limit": "Inherited legacy full-range equal-token refresh red96 versus about217 remains unfixed/unwaived, identically reproduced onV14. Later warm-reset variants were not run; no wholly-passing legacy-suite claim.",
+  "latency_limit": "Additional0..486 SYS to promotion in35 primary CSV rows, unchanged display/cadence. Full240IDR+3 versusV14/+68343 versusV13; prior one-period startup shift is not extra per-frame compute.",
+  "review_limits": {
+    "source_publication_approved": true,
+    "physical_or_deployment_approved": false,
+    "physical_limit": "No timing/area/Fmax/hardware/playback/deployment approval",
+    "legacy_frame_refresh_defect_unfixed": true,
+    "live_controls_observed_but_performance_unaccepted": true
+  },
+  "current_priority": "Complete existing FPGA functionality, then real DE10-Nano operation; FPS tuning and optional overlays/features come afterward",
+  "physical_state_summary": {
+    "rbf": "86fb35567a0967fa5154736cf037f8a67c42f94453e958c1efbfed73238e3b95",
+    "approval": "UNAPPROVED_DO_NOT_DEPLOY",
+    "setup_slacks_ns": [
+      -0.452,
+      -1.746,
+      -12.462,
+      -12.243
+    ],
+    "retained_db_files": 601,
+    "native_instrumented_semantic_mismatches": 0,
+    "observer_hierarchy": "Passed with captured fpga320 profile; timing still failed",
+    "owned_jobs": [],
+    "raw_physical_payloads": "LOCAL_ONLY"
+  },
+  "live_pair_summary": {
+    "core": "3ee7bed5bbf1cece2e4a31887f08d37c5ef15bc0242c97696783099666c8dcde",
+    "companion": "cc7d7d1eee9190066e0ed3303473301b834c7c5cde64603b084a054928b16f77",
+    "controls": "Actual LAN Web/cast Play/Pause/footerResume/seek/UIStop observed; owned session/capture cleanup completed",
+    "seek_limit": "Requested offset1000 briefly reported stopped at4421 before resuming; preserved, not hidden",
+    "performance": "Prior about20fps/audio-gap result remains unaccepted; no new candidate deployed"
+  },
+  "included_records": {
+    "manifest_json_sha256": "b32dd240e54cbafca70262bf4d149b2fb5d5ca877c6b86d4b05cda5b49417a51",
+    "source_map_json_sha256": "c3bdd1904b2d76d4b629ec1d46ef73e78bfa4569c8bc2fdca17759da1705e669",
+    "effective_input_map_json_sha256": "c527388b2a1cff2900b1dcfbe21af995e56a7ab7ec44552721fe63fc44710f35",
+    "validation_source_map_json_sha256": "0364b2936722a89849989e2f4b6d4df92d56b514a4979993a627a8e04875ac61",
+    "member_preservation_json_sha256": "c7a1f9d27e32df9a2ffe7a3e8a24075ee3ca5d4211dfc7224b21510a8dc0f548",
+    "fixture_preservation_json_sha256": "e4afaa65f7ad457538d58346c00563ce36e48014416f2894f29305fdc8d5b98c",
+    "source_freeze_json_sha256": "d2bad0addc02b10b6955f252511882a961fd625dbf9d60af2d954af04372a1d8",
+    "file_map_json_sha256": "361a4d711be1098ff464d6b5f38aa81f586947207b50f736b25adff2e9fab6c6",
+    "source_tar_sha256": "7c68c129c201c59b767aea6b1642684bd746c3ffccb80443970ba32cab6b18f5",
+    "inputs_tar_sha256": "f9ccd38a41ad12a7f8359d59cd9023459a1b83053bea6dfd3870e61fb8063096",
+    "inputs_json_sha256": "45beb03f791b0f23bbdb529a59741bebfe7a71ff763ee889f52006f4d975e306",
+    "validation_code_tar_sha256": "e90cff0b26ded98d2b141fdde1eebcfce553d1390f84f49bdf310778eb005da3",
+    "original_added_benches_tar_sha256": "0842a02f5f648fbf570552baedfe85360e8bb3515c5e4ad7114f94c2adcf5cb5",
+    "review_receipt_json_sha256": "4556dfdabb9a8852a11fda77b976ee17fb5491976ccc5a1f750e807400ad3f30"
+  },
+  "restoration": {
+    "full_source_tree": "project/fpga/Plex_MiSTer/** from source.tar",
+    "validation_source_tree": "plain extracted validation-code.tar members plus original-added-benches.tar provenance archive",
+    "exact_reconstruction_requirement": "Use source.tar + validation-code.tar + inputs.tar with file-map.json, source-map.json, validation-source-map.json and effective-input-map.json to reconstruct the sealed cohort over a checked-out repository.",
+    "effective_build_input_note": "inputs.tar and inputs.json remain authoritative for the 150-member effective fit cohort, including build_id.v and the effective QSF.",
+    "fixture_oracle_bytes_not_bundled": true
+  },
+  "public_plain_tree": {
+    "reviewed_source_members": 149,
+    "validation_source_members": 73,
+    "duplicate_original_added_bench_members_preserved_by_archive_only": [
+      "project/tests/rtl/ddr_frame_store_warm_reset_tb.cpp",
+      "project/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv",
+      "project/tests/rtl/decode_stub_recon_tb.cpp",
+      "project/tests/rtl/decode_stub_recon_tb_top.sv",
+      "project/tests/rtl/h264_iq_idct_4x4_tb.cpp",
+      "project/tests/rtl/h264_iq_idct_4x4_tb_top.sv",
+      "project/tests/unit/test_ddr_frame_store_warm_reset.sh",
+      "project/tests/unit/test_fpga_video_publish.sh",
+      "project/tests/unit/test_p3_idct_rtl_sim.sh"
+    ],
+    "results_tar_included": false
+  }
+}

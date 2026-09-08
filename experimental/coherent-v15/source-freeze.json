@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-fpga-source-only",
+  "created_at": "2026-09-08T04:48:53.641776+00:00",
+  "public_branch_base_commit": "87236b428e751364b94bec45a2a7ac87d5cfff18",
+  "source_release": ".worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/critical-cones-v15-5754/release-v15",
+  "source_sha256": "4f09a4176a6b954463e0d6b7484c3d421efdb686421bcf67f7bf254bf34604ef",
+  "manifest_sha256": "b32dd240e54cbafca70262bf4d149b2fb5d5ca877c6b86d4b05cda5b49417a51",
+  "patch_sha256": "058f7c3a44e327ac68ab958b283363b605330cfa92c66b922d2f8338976141a7",
+  "source_archive_sha256": "7c68c129c201c59b767aea6b1642684bd746c3ffccb80443970ba32cab6b18f5",
+  "inputs_archive_sha256": "f9ccd38a41ad12a7f8359d59cd9023459a1b83053bea6dfd3870e61fb8063096",
+  "inputs_json_sha256": "45beb03f791b0f23bbdb529a59741bebfe7a71ff763ee889f52006f4d975e306",
+  "validation_archive_sha256": "e90cff0b26ded98d2b141fdde1eebcfce553d1390f84f49bdf310778eb005da3",
+  "original_added_benches_archive_sha256": "0842a02f5f648fbf570552baedfe85360e8bb3515c5e4ad7114f94c2adcf5cb5",
+  "review_receipt_sha256": "4556dfdabb9a8852a11fda77b976ee17fb5491976ccc5a1f750e807400ad3f30",
+  "review_outcome": "READY_FOR_SOURCE_PUBLICATION",
+  "source_members": 149,
+  "validation_source_members": 73,
+  "effective_input_members": 150,
+  "duplicate_original_added_bench_members": 9,
+  "restoration": {
+    "plain_tree_contains": [
+      "project/fpga/Plex_MiSTer from source.tar",
+      "project/host, project/scripts, project/tests and freeze helpers from validation-code.tar"
+    ],
+    "exact_reconstruction_requirement": "Ordinary Git cannot recreate the original read-only sealing or the extra effective build_id.v input. Use source.tar, validation-code.tar, inputs.tar, inputs.json and the accompanying maps for byte-exact replay.",
+    "effective_input_note": "The authoritative 150-member fit input cohort is preserved by inputs.tar + inputs.json + effective-input-map.json; build_id.v is not represented as a normal tracked source file in this public tree.",
+    "excluded_from_public_plain_tree": [
+      "results.tar",
+      "raw simulated/captured media and fixture-oracle bytes",
+      "actual DB/RBF/raw physical reports"
+    ]
+  }
+}

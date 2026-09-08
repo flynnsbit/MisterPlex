@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "reviewer": "810c5e71-2ba2-41a3-95f8-b71e039bd260",
+  "persistence": "Completed read-only result persisted by coordinator",
+  "verdict": "READY_FOR_SOURCE_PUBLICATION",
+  "source_sha256": "4f09a4176a6b954463e0d6b7484c3d421efdb686421bcf67f7bf254bf34604ef",
+  "manifest_sha256": "b32dd240e54cbafca70262bf4d149b2fb5d5ca877c6b86d4b05cda5b49417a51",
+  "patch_sha256": "058f7c3a44e327ac68ab958b283363b605330cfa92c66b922d2f8338976141a7",
+  "source_archive_sha256": "7c68c129c201c59b767aea6b1642684bd746c3ffccb80443970ba32cab6b18f5",
+  "inputs_archive_sha256": "f9ccd38a41ad12a7f8359d59cd9023459a1b83053bea6dfd3870e61fb8063096",
+  "binding": "149 source/150 effective, five-member delta plus build ID;73 validation members and95 unchanged prior fixtures; no hidden budget or fixture weakening",
+  "latency_limit": "Additional0..486 SYS to promotion in35 primary CSV rows, unchanged display/cadence. Full240IDR+3 versusV14/+68343 versusV13; prior one-period startup shift is not extra per-frame compute.",
+  "functional_limit": "Inherited legacy full-range equal-token refresh red96 versus about217 remains unfixed/unwaived, identically reproduced onV14. Later warm-reset variants were not run; no wholly-passing legacy-suite claim.",
+  "physical_limit": "No timing/area/Fmax/hardware/playback/deployment approval",
+  "reviewer_execution": "NONE",
+  "owned_jobs": []
+}

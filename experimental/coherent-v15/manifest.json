@@ -1,0 +1,93 @@
+{
+  "Quartus_or_hardware_invoked": false,
+  "actual_test_results": {
+    "Hadamard_reset_replays": 20,
+    "added_Hadamard_cases": 2388,
+    "additional_controller_pictures": 16,
+    "controller_Hadamard_cancel_replays": 14,
+    "dense_colour_returns": 4096,
+    "original_composed": {
+      "coded_samples": 4346880,
+      "counted_legacy_RGB565_pixels": 2652160,
+      "native_RGB_samples": 8768704,
+      "pictures": 38,
+      "visible_samples": 4323840
+    },
+    "signed16_MV_cases": 175616
+  },
+  "artifacts_sha256": {
+    "critical-cones.patch": "058f7c3a44e327ac68ab958b283363b605330cfa92c66b922d2f8338976141a7",
+    "effective-input-map.json": "c527388b2a1cff2900b1dcfbe21af995e56a7ab7ec44552721fe63fc44710f35",
+    "fixture-preservation.json": "e4afaa65f7ad457538d58346c00563ce36e48014416f2894f29305fdc8d5b98c",
+    "inputs.json": "45beb03f791b0f23bbdb529a59741bebfe7a71ff763ee889f52006f4d975e306",
+    "inputs.tar": "f9ccd38a41ad12a7f8359d59cd9023459a1b83053bea6dfd3870e61fb8063096",
+    "member-preservation.json": "c7a1f9d27e32df9a2ffe7a3e8a24075ee3ca5d4211dfc7224b21510a8dc0f548",
+    "original-added-benches.tar": "0842a02f5f648fbf570552baedfe85360e8bb3515c5e4ad7114f94c2adcf5cb5",
+    "results.json": "d3a2af854927dcd2484305249f1e582ce98c7d0bcdf9b073a407905d43303010",
+    "results.tar": "42f4d7d425eb46ef69a49cf77444417649b2616d5fa4105d400d7047420c6b6f",
+    "source-map.json": "c3bdd1904b2d76d4b629ec1d46ef73e78bfa4569c8bc2fdca17759da1705e669",
+    "source.tar": "7c68c129c201c59b767aea6b1642684bd746c3ffccb80443970ba32cab6b18f5",
+    "validation-code.tar": "e90cff0b26ded98d2b141fdde1eebcfce553d1390f84f49bdf310778eb005da3",
+    "validation-source-map.json": "0364b2936722a89849989e2f4b6d4df92d56b514a4979993a627a8e04875ac61",
+    "witnesses.json": "ae0d099e1d5480ffd215472bef010cb3757493943c70c8709d4b2e8066d49e50"
+  },
+  "authority_registry_sha256_at_freeze": "74871a82a1f4280799f9520a13e9ab0bfea9b514676ff91506ec69377af23aea",
+  "base_release_manifest_sha256": "be4dc86497aab4db2ae9c337d78ce19976b120de1220d07cd07a7b21650677a9",
+  "base_source_sha256": "df9edd2c2c283ca574706401c1d253a5ca976394d8d33acf9456c18f2bb1ec59",
+  "baseline_failure_disposition": "Legacy equal-token-refresh fails identically on complete V14 and V15; unfixed/unwaived.",
+  "capability": 0,
+  "clock_profile": "SYS120/DDR90/native20",
+  "curated_evidence_members": 125,
+  "effective_input_members": 150,
+  "fit_grant": null,
+  "grant": "v15-measured-hadamard-return-mv-cones-5754",
+  "historical_base_driver_sha256": "febf2ba063e5760e70804a52e7a123458ca0b5bc8c861b8b10c9f976d17aeeb2",
+  "image_id": "sha256:1fba8b9347973365e9f7851d73f7cb035e38fefb827cbf0ed2ea291b48bdf6dd",
+  "input_delta": [
+    "Plex.qsf",
+    "rtl/ddr_frame_store.sv",
+    "rtl/h264_i16_dc_hadamard.sv",
+    "rtl/h264_inter_pred.sv",
+    "rtl/h264_mb_ctrl.sv",
+    "rtl/present_core.sv"
+  ],
+  "lane": "coherent-fpga-integration",
+  "latency_disposition": {
+    "cadence": "Every measured display_interval, native timebase, prediction/fractional work count, nonzero-P work count and filter-write count is unchanged.",
+    "compute_cost": "VCL-to-promotion delta0..486 modeled SYS cycles. Full240 IDR adds3. Legacy PMS139 second VCL starts116 SYS later and promotes224 SYS later in absolute time, of which108 are its own compute delta.",
+    "per_picture_cycle_coverage": "All35 primary per-picture CSV records are compared exactly against V14. Three recovery pictures have complete YUV/error/ownership checks but no separate historical per-picture CSV baseline.",
+    "prior_cost": "V14 versus V13 full240 IDR +68340 SYS and one modeled native-period startup shift remain. V15 full240 IDR is therefore +68343 SYS versus V13; no additional whole-frame display-start shift occurred in these fixtures.",
+    "required_campaign": "Original11 cases,35 primary pictures plus3 recovery pictures, all38 complete picture comparisons pass with original fixtures/PTS and budgets.",
+    "startup_and_boundaries": "All35 primary display_cycle, publication_retired_cycle and checker_retired_cycle values are unchanged versus V14. Limited-range pixel return itself is one SYS stage later, with paired metadata."
+  },
+  "legacy_build_date": "260906",
+  "media_policy": "Source, maps, simulation text/CSV and compiler provenance only. Fixture media/oracles, raw native reports, physical outputs and runtime/browser/config data are not bundled.",
+  "owner": "ce6e3c70-35d0-47b7-a3b9-c1704c76e2be",
+  "physical_area_timing_result": "UNMEASURED; no capacity, Fmax, timing or playback acceptance.",
+  "physical_tool_owner": null,
+  "processors": 2,
+  "proposed_build_id": "4f09a417",
+  "publication": "LOCAL_FROZEN_ONLY; parent assigns independent review/publication and any physical scope.",
+  "remaining_physical_witnesses": [
+    "Completed V14 fit/native STA still fails setup -15.073/-15.858/-4.015/-2.029ns; RBFfcb3c75f remains unapproved.",
+    "V15 is source-only: no Quartus/STA/netlist/fit/area/Fmax/hardware/ARM/capture/deployment result.",
+    "DDR/HDMI and other native physical paths, including legitimate zero-logic/top-level/self-feedback paths, are not waived; separately granted physical flow must measure the new cohort.",
+    "No R4 observer, hierarchy floor, clock, SDC, seed, capability or memory-function change was made.",
+    "Identical inherited legacy equal-token-refresh failure remains on V14 and V15; its later red variants did not run.",
+    "V14 full240 +68340 SYS/+one-native-period startup cost remains; V15 adds +3 full240 IDR compute SYS but no measured additional display-period shift."
+  ],
+  "restricted_profile": "progressive8bit420 I4/I16/P16/Pskip one-reference one-slice CAVLC window8 one-lane full-frame filter; 8192AU/VCL independently",
+  "running_commands": [],
+  "seed": 6,
+  "source_delta": [
+    "rtl/ddr_frame_store.sv",
+    "rtl/h264_i16_dc_hadamard.sv",
+    "rtl/h264_inter_pred.sv",
+    "rtl/h264_mb_ctrl.sv",
+    "rtl/present_core.sv"
+  ],
+  "source_generator_sha256": "df708305e00d4dab7d91d5d9a0e4f0347b178406f019b763087c91262320a440",
+  "source_members": 149,
+  "source_sha256": "4f09a4176a6b954463e0d6b7484c3d421efdb686421bcf67f7bf254bf34604ef",
+  "validation_source_members": 73
+}

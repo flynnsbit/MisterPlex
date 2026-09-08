@@ -1,0 +1,54 @@
+{
+  "all_other_members_byte_identical": true,
+  "base_source_sha256": "df9edd2c2c283ca574706401c1d253a5ca976394d8d33acf9456c18f2bb1ec59",
+  "effective_input_members": 150,
+  "existing_validation_source_delta": [
+    "guarded_campaign.py",
+    "project/tests/rtl/fpga_video_publish_tb.cpp",
+    "project/tests/rtl/h264_inter_reference_tb.cpp",
+    "project/tests/rtl/p2_intra_controller_tb.cpp",
+    "project/tests/rtl/p2_intra_controller_tb.sv"
+  ],
+  "input_delta": [
+    "Plex.qsf",
+    "rtl/ddr_frame_store.sv",
+    "rtl/h264_i16_dc_hadamard.sv",
+    "rtl/h264_inter_pred.sv",
+    "rtl/h264_mb_ctrl.sv",
+    "rtl/present_core.sv"
+  ],
+  "module_ports_and_registration_unchanged": true,
+  "original_fixture_oracle_budgets_and_work_counts_preserved": true,
+  "protected_members_unchanged": [
+    "rtl/h264_cavlc_residual.sv",
+    "rtl/h264_recon.sv",
+    "rtl/h264_iq_idct_4x4.sv",
+    "rtl/h264_dpb.sv",
+    "rtl/h264_deblock.sv",
+    "rtl/h264_deblock_frame.sv",
+    "rtl/h264_intra_pred.sv",
+    "rtl/stream_path.sv",
+    "rtl/decode_stub.sv",
+    "rtl/line_buf_ram.sv",
+    "rtl/plex_performance_clock.svh",
+    "Plex.qsf",
+    "files.qip"
+  ],
+  "source_SDC_sha256": {
+    "Plex.sdc": "89cb176f5eeb8c2adf59d758e56a605bd711631a4bccb92e77c77f995b62e71f",
+    "Plex_clk_pix.sdc": "16e3f8c267b4ef4f25906f703ff4adeba20c76a4471fb514db0ba13472bacd77",
+    "sys/sys_top.sdc": "0a5fa4015b82ad7ce38e56d1ae4aadea6209af59c5dd9eff56a11139cf16ce86"
+  },
+  "source_delta": [
+    "rtl/ddr_frame_store.sv",
+    "rtl/h264_i16_dc_hadamard.sv",
+    "rtl/h264_inter_pred.sv",
+    "rtl/h264_mb_ctrl.sv",
+    "rtl/present_core.sv"
+  ],
+  "source_exclusion_clauses": 52,
+  "source_members": 149,
+  "source_sha256": "4f09a4176a6b954463e0d6b7484c3d421efdb686421bcf67f7bf254bf34604ef",
+  "unchanged_effective_members": 144,
+  "unchanged_source_members": 144
+}
