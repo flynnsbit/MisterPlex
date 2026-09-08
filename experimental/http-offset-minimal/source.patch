@@ -1,0 +1,75 @@
+--- a/arm/misterplexd/plex_resolve.cpp
++++ b/arm/misterplexd/plex_resolve.cpp
+@@ -490,7 +490,7 @@
+     }
+     // PMS universal offset is SECONDS (companion / scrubber use ms).
+     const int64_t offSec = universalOffsetSeconds(offsetMs);
+-    if (offSec > 0)
++    if (isFpgaPlexProfile(weak) || offSec > 0)
+         q << "&offset=" << offSec;
+     if (!token.empty() && !isFpgaPlexProfile(weak))
+         q << "&X-Plex-Token=" << urlEncodeQuery(token);
+@@ -699,6 +699,9 @@
+         decisionUrl << "&container=mpegts&audioChannels=2&videoFrameRate="
+                     << urlEncodeQuery(weak.fpgaFpsDen == 1 ? std::to_string(weak.fpgaFpsNum)
+                         : std::to_string(weak.fpgaFpsNum) + "/" + std::to_string(weak.fpgaFpsDen));
++        const auto offset = qparam("offset");
++        if (!offset.empty())
++            decisionUrl << "&offset=" << offset;
+     }
+     if (!token.empty() && !isFpgaPlexProfile(weak))
+         decisionUrl << "&X-Plex-Token=" << urlEncodeQuery(token);
+--- a/tests/unit/test_resolve.cpp
++++ b/tests/unit/test_resolve.cpp
+@@ -136,6 +136,11 @@
+         "fpga-session", 0, fpgaProfile);
+     const auto fpgaDecision = buildUniversalDecisionUrl(
+         fpgaStart, "fpga-session", "header-only-token", fpgaProfile);
++    const auto fpgaSeekStart = buildUniversalTranscodeUrl(
++        "http://pms.example:32400", "/library/metadata/3", "header-only-token",
++        "fpga-session-seek", 234500, fpgaProfile);
++    const auto fpgaSeekDecision = buildUniversalDecisionUrl(
++        fpgaSeekStart, "fpga-session-seek", "header-only-token", fpgaProfile);
+     for (const auto& url : {fpgaStart, fpgaDecision}) {
+         CHECK(!url.empty());
+         CHECK(url.find("directPlay=0&directStream=0") != std::string::npos);
+@@ -143,9 +148,12 @@
+         CHECK(url.find("audioChannels=2") != std::string::npos);
+         CHECK(url.find("videoResolution=320x240") != std::string::npos);
+         CHECK(url.find("videoFrameRate=24000%2F1001") != std::string::npos);
++        CHECK(url.find("offset=0") != std::string::npos);
+         CHECK(url.find("X-Plex-Token") == std::string::npos);
+         CHECK(url.find("header-only-token") == std::string::npos);
+     }
++    CHECK(fpgaSeekStart.find("offset=235") != std::string::npos);
++    CHECK(fpgaSeekDecision.find("offset=235") != std::string::npos);
+     const auto fpgaHeaders = plexFfmpegHeaders("fpga-session", "header-only-token", fpgaProfile);
+     CHECK(fpgaHeaders.find("X-Plex-Token: header-only-token\r\n") != std::string::npos);
+     CHECK(fpgaHeaders.find("X-Plex-Client-Profile-Name: " + fpgaProfile.clientProfileName) !=
+@@ -171,6 +179,15 @@
+                 "http://pms.example:32400", "/library/metadata/3", "fixture-token",
+                 "profile-test", 0, selected);
+             CHECK(ensureUniversalDecision(start, "profile-test", "fixture-token", selected));
++            const auto decision =
++                buildUniversalDecisionUrl(start, "profile-test", "fixture-token", selected);
++            if (isFpgaPlexProfile(selected)) {
++                CHECK(start.find("offset=0") != std::string::npos);
++                CHECK(!decision.empty());
++                CHECK(decision.find("offset=0") != std::string::npos);
++            } else {
++                CHECK(start.find("offset=") == std::string::npos);
++            }
+             std::ifstream arguments(fakeCurl.string() + ".args");
+             std::string argument;
+             unsigned profilesSent = 0;
+@@ -231,6 +248,10 @@
+     CHECK(start480.find("videoProfile=baseline") != std::string::npos);
+     CHECK(start480.find("videoLevel=30") != std::string::npos);
+     CHECK(start480.find("offset=2") != std::string::npos);
++    const auto start480Zero =
++        buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/3", "tok",
++                                   "sess480zero", 0, w480);
++    CHECK(start480Zero.find("offset=") == std::string::npos);
+ 
+     const auto extra480 = plexClientProfileExtra(w480);
+     CHECK(extra480.find("container=mpegts") != std::string::npos);

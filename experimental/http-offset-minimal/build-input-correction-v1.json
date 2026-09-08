@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "purpose": "Preserve the actual live trace configuration in the minimal offset-only ARM build; no source/archive change.",
+  "source_manifest": "55fa84b8c6359200b305a311140504d8a125094f6fd474feec4259af6b1a80a5",
+  "source_archive": "b0f5fe51c912d131d10d9ac62cf8dc957fe7cbed2d73bb5b485744b8f21556bd",
+  "original_build_inputs_sha256": "903b13b39b5a92854bf1d11073f0804b16c0fb0d0d8ab00cd697955ec83e6c3f",
+  "reviewer": "40af03a8-4dcc-4f65-9bfa-f7f98363e303",
+  "live_flag_evidence": "Memory/lab/fpga-h264-30ff2997/live-av-trace-v2-1/build-provenance.json:41-49",
+  "required_make_variables": {
+    "ARM_PLEXD_AV_TRACE": "1",
+    "ARM_FFMPEG_PREFIX": "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/deps/ffmpeg-arm-static-safe"
+  },
+  "required_effective_define": "MPX_FPGA_AV_TRACE=1",
+  "target": "arm-plexd-daemon",
+  "jobs": 1,
+  "compiler": "/home/flynnsbit/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin/arm-none-linux-gnueabihf-g++",
+  "compiler_sha256": "be15c3a459cd9d4c220f2455888edaf7707b63df18d4e343196540616f66fbb8",
+  "output_policy": "Set ARM_PLEXD_OUTPUT to an absolute new owned output, never a shared/default output. Stage exact82 source in an isolated project; preserve all38 previous outputs.",
+  "other_inputs": "All original compiler/static-library/source/build-input pins and flags remain authoritative; do not rebuild or replace the existing four static FFmpeg archives.",
+  "superseded_part_only": "Original build-inputs recommended command omitted ARM_PLEXD_AV_TRACE and would select0. Keep that frozen record unchanged; this correction supplies explicit1.",
+  "deployment_approved": false
+}

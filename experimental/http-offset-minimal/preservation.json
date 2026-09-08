@@ -1,0 +1,42 @@
+{
+  "mission": "minimal-original-http-offset-source-5754",
+  "no_other_source_or_runtime_artifacts_modified": true,
+  "owner": "8f57f066-5a9e-4c97-b5a2-c4a1f09ef306",
+  "preserved_prior_artifacts": [
+    {
+      "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/eof-transport-revision-03/release/source-manifest.json",
+      "sha256": "6a314a76c4019bb3e3c7434e092aac47a57acbdeb64688a2f4107288446dad56"
+    },
+    {
+      "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/eof-transport-revision-03/release/source.patch",
+      "sha256": "4b410156847bdb73b46b982386bb428fc25c070a075f0b9cb63915b2ff804f0c"
+    },
+    {
+      "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/eof-transport-revision-03/release/source.tar.gz",
+      "sha256": "eda65ccbf506509beabbc59a78286c6408911f93b06a0498981ba9ab65a82961"
+    },
+    {
+      "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/reviews/offset-r4-review.json",
+      "sha256": "00bcd13e03547cedb19bcd0ca2b74eb63ca8c5a8f6e0a27c7dc183b720b8b7d8"
+    },
+    {
+      "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/http-offset-accepted.json",
+      "sha256": "0803a7b2259d1af79a19ce5758bcde81424f655682682dfa0712406b5e020eb1"
+    },
+    {
+      "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/lab/preservation.json",
+      "sha256": "9ef9a5343537ef56313df0db1c49434f1ea4a8efd43e99c1c3cdb39d2470305b"
+    }
+  ],
+  "rejected_package_retained": {
+    "old_archive_sha256": "55b5fd8f70a7221dbaa805c1a4e0d835a89f19de99f84593c1e77411280b7bae",
+    "old_manifest_sha256": "c0cde58dd1a64217e3d82d242eb4afb53fb0abaf0b2414e3cc335e251c9b2882",
+    "reason": "241 regular files instead of intended86; extra155 are R3 build/test artifacts including3 ELF executables,10 MPEG-TS files, playlists and outputs. Archived R3 resolver binary is stale, unlike separately retained real R4 validation executable.",
+    "review": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/reviews/offset-r4-review.json"
+  },
+  "schema": 1,
+  "scope_writes_limited_to": [
+    "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/http-offset-minimal",
+    "Memory/lab/fpga-h264-30ff2997/handoff/agents/http-offset-minimal-5754.md"
+  ]
+}

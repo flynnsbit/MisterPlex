@@ -1,0 +1,137 @@
+{
+  "directories": {
+    ".": "0555",
+    "docs": "0555",
+    "scripts": "0555",
+    "tests": "0555",
+    "tests/fixtures": "0555",
+    "tests/unit": "0555"
+  },
+  "files": {
+    "docs/rtl-simulation.md": {
+      "bytes": 30566,
+      "mode": "0444",
+      "sha256": "b53c5d6908986f538e8544ca68d8218d21cae670f17df8de2c981d8a470dc22f"
+    },
+    "scripts/build_rbf.sh": {
+      "bytes": 2051,
+      "mode": "0555",
+      "sha256": "36b802ca55c1983b7441539e1640f869db243e27d2d51b5d1eebee18d13d433e"
+    },
+    "scripts/build_rbf_remote.sh": {
+      "bytes": 275,
+      "mode": "0555",
+      "sha256": "9f4741f844690a536be57ec5f5008f929c156d1f28c7d50174161e4c97048166"
+    },
+    "scripts/check_quartus_fit_hierarchy.py": {
+      "bytes": 17883,
+      "mode": "0555",
+      "sha256": "9a93d2544b4ecea76c16bdec7fa563f18150c0e07bc7d28dcec4a6310b9f12eb"
+    },
+    "scripts/check_quartus_timing.py": {
+      "bytes": 25029,
+      "mode": "0555",
+      "sha256": "98f0695036669a6d116b82565f3d50f79b09ddbfb06ccda7889c6d0b0d1d671d"
+    },
+    "scripts/check_timing_exclusions.py": {
+      "bytes": 18961,
+      "mode": "0555",
+      "sha256": "6d311b26a4a1a206630d00e4f1da5c6a25c81f9d06589a93a2a93123e66f6c46"
+    },
+    "scripts/quartus_hdl_source.py": {
+      "bytes": 2704,
+      "mode": "0444",
+      "sha256": "61ddfe7fe7d83899ddf8f1e09266bac3b75411bf7a4b4f3ee1d20eca7ec2a63b"
+    },
+    "scripts/quartus_sta_report.py": {
+      "bytes": 5342,
+      "mode": "0444",
+      "sha256": "1eb5c1b5e2d0aab3118cbb8b50ae0d0262fab14370e4334635d90933bb8d6510"
+    },
+    "scripts/quartus_timing_observer.py": {
+      "bytes": 19685,
+      "mode": "0444",
+      "sha256": "7d803f46b75424f2b007074949740ea776bf675d4070c63892c28511f69f7aa6"
+    },
+    "scripts/quartus_timing_paths.tcl": {
+      "bytes": 24159,
+      "mode": "0444",
+      "sha256": "cc0e38fbf0f8dbe31e795a025da4217027d4ff43c9f96941cd65576934f69f79"
+    },
+    "scripts/quartus_timing_sdk.py": {
+      "bytes": 8499,
+      "mode": "0444",
+      "sha256": "88a245e299f8901d7e9b5832fabb96745c3b4781ac69fe117f6df3a3a6f6cb84"
+    },
+    "scripts/rbf_build.py": {
+      "bytes": 64997,
+      "mode": "0444",
+      "sha256": "0be637ccb53ecb6bd1335b53bec7bdef1a87bbb8671c3e1c055172ca32441e16"
+    },
+    "scripts/run_instrumented_sta.sh": {
+      "bytes": 2133,
+      "mode": "0555",
+      "sha256": "6bb45ccad27edcbdc29af026606a9e922e5b52e27f87a368dd702aa6dce835e9"
+    },
+    "tests/fixtures/critical_fit_hierarchy.json": {
+      "bytes": 1256,
+      "mode": "0444",
+      "sha256": "197d470400dbddab7dcececdb564d026fb727ca5386d1cd095a1b522fb1db2f3"
+    },
+    "tests/fixtures/quartus_hdl_observer_failure.json": {
+      "bytes": 1662,
+      "mode": "0444",
+      "sha256": "f2733e3ed7adad94bee2145f9f1c6b4ed88bf5a2b5127398c75afe66e3f29675"
+    },
+    "tests/fixtures/quartus_sta_multicorner.json": {
+      "bytes": 3336,
+      "mode": "0444",
+      "sha256": "2f21b9302881b60fc6964d4d75d348a6f09fc1984a13ce1f60afbdc06ad142b8"
+    },
+    "tests/fixtures/quartus_timing_mock.tcl": {
+      "bytes": 12031,
+      "mode": "0444",
+      "sha256": "22a9f30688e09eadc581c4031a9876032f71694c757398f8638a97b65fcf6487"
+    },
+    "tests/fixtures/quartus_timing_path_headers.json": {
+      "bytes": 870,
+      "mode": "0444",
+      "sha256": "221786dcb7407062ceb820462f738c94a3ba5e1f66aab371d58a782d34e20cb4"
+    },
+    "tests/fixtures/timing_exclusion_baseline.json": {
+      "bytes": 7395,
+      "mode": "0444",
+      "sha256": "38879d76db4282a7944dca9366bde15d08d7efd2e482b54e03129dcb93958530"
+    },
+    "tests/unit/phase1a_rbf_ban.txt": {
+      "bytes": 785,
+      "mode": "0444",
+      "sha256": "a87779fdc5ae55df346c996d3d1766344fec8e725b2bcfffec06a0e0e6f52362"
+    },
+    "tests/unit/test_phase1a_rbf_ban.sh": {
+      "bytes": 4737,
+      "mode": "0555",
+      "sha256": "3e903af2d9b033664123b418fa9ae97381352d170848631c77f688eef4cc06f6"
+    },
+    "tests/unit/test_quartus_fit_hierarchy.py": {
+      "bytes": 15855,
+      "mode": "0444",
+      "sha256": "b9de76abf9418aadb6c3332da41e5d5b52e8944d9fecc8009ad3a08263c06203"
+    },
+    "tests/unit/test_quartus_timing.py": {
+      "bytes": 29964,
+      "mode": "0444",
+      "sha256": "a89e0eba8cf791d574d1a07505778a5f7297442e87c32bd4556320f4e54f6116"
+    },
+    "tests/unit/test_rbf_build.py": {
+      "bytes": 93280,
+      "mode": "0444",
+      "sha256": "ca0c890524cb9e1797fb5513f2d30b3ef6715d3220e42158449dd20ee34f2cc2"
+    },
+    "tests/unit/test_timing_observer.py": {
+      "bytes": 38972,
+      "mode": "0444",
+      "sha256": "479ae0429a1d6ba0f9964235efb7fbd76ab272a4d086fd28d8a8f3f6f3c4b1de"
+    }
+  }
+}

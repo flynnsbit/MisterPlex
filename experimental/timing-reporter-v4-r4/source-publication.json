@@ -1,0 +1,250 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-tool-source-only",
+  "public_branch_base_commit": "1453d4c31dc13975fc166177f3a457e475a244a3",
+  "manifest_sha256": "0befbd3bbfea1d6a0aad2a28acd18e6c9ca99258ac7ead48493a695c614a9a9d",
+  "source_sha256": "ab1d8301d76b2281d8e1bc904d3a4e7b8ee84e2a787a94b6e732a6721a893d27",
+  "source_archive_sha256": "48292a5b9dc7b9ce3cc6bffce894fc91e2f9d82460a4c65e8b17eadf36fe2180",
+  "driver_sha256": "0be637ccb53ecb6bd1335b53bec7bdef1a87bbb8671c3e1c055172ca32441e16",
+  "checker_sha256": "9a93d2544b4ecea76c16bdec7fa563f18150c0e07bc7d28dcec4a6310b9f12eb",
+  "launcher_sha256": "6bb45ccad27edcbdc29af026606a9e922e5b52e27f87a368dd702aa6dce835e9",
+  "review_receipt_sha256": "305497e259f5b7612375f0bf5d69aa4beb1e72038bc8cc40cf54b420d967b8b5",
+  "review_outcome": "SOURCE_PUBLICATION_READY_BOUNDED_HOST_CORRECTION",
+  "revision_lineage": {
+    "r3_manifest_sha256": "530b2addc834d7f83d99b6329c471d1e3f861f07073bbf8e51abce097ef683ca",
+    "r3_source_sha256": "92580fbc869b70561d437cc8b779fbefae258cfad98f6050f098fdab54d6c876",
+    "r3_driver_sha256": "ea39c0f3867c61a63c87bf7a4593d865c99697967ea0ccbcfbfdd7fa2d7d8e1b"
+  },
+  "review_limits": {
+    "source_publication_approved": true,
+    "physical_execution_approved": false,
+    "new_whole_r4_sdk_execution": false,
+    "sdk_component_reuse_only": true,
+    "approval_limits": [
+      "No new whole-R4 SDK/physical execution",
+      "No recovered historical validator argv provenance",
+      "Old V13 shell failure and missing afterhash preserved",
+      "V13 timing remains FAIL and RBF unapproved"
+    ]
+  },
+  "included_records": {
+    "manifest_json_sha256": "0befbd3bbfea1d6a0aad2a28acd18e6c9ca99258ac7ead48493a695c614a9a9d",
+    "file_map_json_sha256": "d918955de321c4d956b33120981f913adafb85c63586ce742013386fb9524259",
+    "source_freeze_json_sha256": "b8f7867702f9f90b430d0b738860cf946da1efffba602e9990b212b25a14cc00",
+    "source_tar_sha256": "48292a5b9dc7b9ce3cc6bffce894fc91e2f9d82460a4c65e8b17eadf36fe2180",
+    "source_delta_from_v3_json_sha256": "4cd8ece7db4427a32e3ed5410de50c99cd71a70809488e7cb5486d15fe751263",
+    "source_delta_from_v3_patch_sha256": "e4c11cb621d63966c6fac2dd5da1291a6aba10adbcd1764d8b1b79314958567f",
+    "source_delta_from_v4_r3_json_sha256": "b8196dc5ff499c2c78996c693c82099d4c2b1c7f62fff49c543d1e47882c7a38",
+    "source_delta_from_v4_r3_patch_sha256": "64f67c587aefaea4e9c827fd38b96933481b0f7d42f5c219596ae37d5df7d9bc",
+    "launcher_delta_from_v13_patch_sha256": "7bcac85c64ef0501da8be5b80a85fb8b71d24285e3c36a36a869c87931d8e01d"
+  },
+  "usage": {
+    "restore_requirement": "Use source.tar with file-map.json to reconstruct the exact sealed source over a checked-out MisterPlex tree before executing tests or scripts.",
+    "unit_tests_after_restore": "python3 -m unittest tests/unit/test_quartus_fit_hierarchy.py tests/unit/test_quartus_timing.py tests/unit/test_rbf_build.py tests/unit/test_timing_observer.py",
+    "local_retained_project_example": "MISTERPLEX_ALLOW_LOCAL_FIT=1 scripts/build_rbf.sh --backend local-container SLOT PROJECT_PATH --retain-project",
+    "driver_example": "python3 scripts/rbf_build.py local-container SLOT PROJECT_PATH --retain-project",
+    "retain_project_scope": "--retain-project remains local-container only and keeps a same-netlist database for a separately granted future physical analysis."
+  },
+  "files": {
+    "project/docs/rtl-simulation.md": {
+      "origin_archive": "source.tar",
+      "origin_member": "docs/rtl-simulation.md",
+      "sha256": "b53c5d6908986f538e8544ca68d8218d21cae670f17df8de2c981d8a470dc22f",
+      "bytes": 30566,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/scripts/build_rbf.sh": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/build_rbf.sh",
+      "sha256": "36b802ca55c1983b7441539e1640f869db243e27d2d51b5d1eebee18d13d433e",
+      "bytes": 2051,
+      "sealed_mode": "0555",
+      "git_executable": true
+    },
+    "project/scripts/build_rbf_remote.sh": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/build_rbf_remote.sh",
+      "sha256": "9f4741f844690a536be57ec5f5008f929c156d1f28c7d50174161e4c97048166",
+      "bytes": 275,
+      "sealed_mode": "0555",
+      "git_executable": true
+    },
+    "project/scripts/check_quartus_fit_hierarchy.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/check_quartus_fit_hierarchy.py",
+      "sha256": "9a93d2544b4ecea76c16bdec7fa563f18150c0e07bc7d28dcec4a6310b9f12eb",
+      "bytes": 17883,
+      "sealed_mode": "0555",
+      "git_executable": true
+    },
+    "project/scripts/check_quartus_timing.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/check_quartus_timing.py",
+      "sha256": "98f0695036669a6d116b82565f3d50f79b09ddbfb06ccda7889c6d0b0d1d671d",
+      "bytes": 25029,
+      "sealed_mode": "0555",
+      "git_executable": true
+    },
+    "project/scripts/check_timing_exclusions.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/check_timing_exclusions.py",
+      "sha256": "6d311b26a4a1a206630d00e4f1da5c6a25c81f9d06589a93a2a93123e66f6c46",
+      "bytes": 18961,
+      "sealed_mode": "0555",
+      "git_executable": true
+    },
+    "project/scripts/quartus_hdl_source.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/quartus_hdl_source.py",
+      "sha256": "61ddfe7fe7d83899ddf8f1e09266bac3b75411bf7a4b4f3ee1d20eca7ec2a63b",
+      "bytes": 2704,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/scripts/quartus_sta_report.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/quartus_sta_report.py",
+      "sha256": "1eb5c1b5e2d0aab3118cbb8b50ae0d0262fab14370e4334635d90933bb8d6510",
+      "bytes": 5342,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/scripts/quartus_timing_observer.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/quartus_timing_observer.py",
+      "sha256": "7d803f46b75424f2b007074949740ea776bf675d4070c63892c28511f69f7aa6",
+      "bytes": 19685,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/scripts/quartus_timing_paths.tcl": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/quartus_timing_paths.tcl",
+      "sha256": "cc0e38fbf0f8dbe31e795a025da4217027d4ff43c9f96941cd65576934f69f79",
+      "bytes": 24159,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/scripts/quartus_timing_sdk.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/quartus_timing_sdk.py",
+      "sha256": "88a245e299f8901d7e9b5832fabb96745c3b4781ac69fe117f6df3a3a6f6cb84",
+      "bytes": 8499,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/scripts/rbf_build.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/rbf_build.py",
+      "sha256": "0be637ccb53ecb6bd1335b53bec7bdef1a87bbb8671c3e1c055172ca32441e16",
+      "bytes": 64997,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/scripts/run_instrumented_sta.sh": {
+      "origin_archive": "source.tar",
+      "origin_member": "scripts/run_instrumented_sta.sh",
+      "sha256": "6bb45ccad27edcbdc29af026606a9e922e5b52e27f87a368dd702aa6dce835e9",
+      "bytes": 2133,
+      "sealed_mode": "0555",
+      "git_executable": true
+    },
+    "project/tests/fixtures/critical_fit_hierarchy.json": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/fixtures/critical_fit_hierarchy.json",
+      "sha256": "197d470400dbddab7dcececdb564d026fb727ca5386d1cd095a1b522fb1db2f3",
+      "bytes": 1256,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/fixtures/quartus_hdl_observer_failure.json": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/fixtures/quartus_hdl_observer_failure.json",
+      "sha256": "f2733e3ed7adad94bee2145f9f1c6b4ed88bf5a2b5127398c75afe66e3f29675",
+      "bytes": 1662,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/fixtures/quartus_sta_multicorner.json": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/fixtures/quartus_sta_multicorner.json",
+      "sha256": "2f21b9302881b60fc6964d4d75d348a6f09fc1984a13ce1f60afbdc06ad142b8",
+      "bytes": 3336,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/fixtures/quartus_timing_mock.tcl": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/fixtures/quartus_timing_mock.tcl",
+      "sha256": "22a9f30688e09eadc581c4031a9876032f71694c757398f8638a97b65fcf6487",
+      "bytes": 12031,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/fixtures/quartus_timing_path_headers.json": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/fixtures/quartus_timing_path_headers.json",
+      "sha256": "221786dcb7407062ceb820462f738c94a3ba5e1f66aab371d58a782d34e20cb4",
+      "bytes": 870,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/fixtures/timing_exclusion_baseline.json": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/fixtures/timing_exclusion_baseline.json",
+      "sha256": "38879d76db4282a7944dca9366bde15d08d7efd2e482b54e03129dcb93958530",
+      "bytes": 7395,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/unit/phase1a_rbf_ban.txt": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/unit/phase1a_rbf_ban.txt",
+      "sha256": "a87779fdc5ae55df346c996d3d1766344fec8e725b2bcfffec06a0e0e6f52362",
+      "bytes": 785,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/unit/test_phase1a_rbf_ban.sh": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/unit/test_phase1a_rbf_ban.sh",
+      "sha256": "3e903af2d9b033664123b418fa9ae97381352d170848631c77f688eef4cc06f6",
+      "bytes": 4737,
+      "sealed_mode": "0555",
+      "git_executable": true
+    },
+    "project/tests/unit/test_quartus_fit_hierarchy.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/unit/test_quartus_fit_hierarchy.py",
+      "sha256": "b9de76abf9418aadb6c3332da41e5d5b52e8944d9fecc8009ad3a08263c06203",
+      "bytes": 15855,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/unit/test_quartus_timing.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/unit/test_quartus_timing.py",
+      "sha256": "a89e0eba8cf791d574d1a07505778a5f7297442e87c32bd4556320f4e54f6116",
+      "bytes": 29964,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/unit/test_rbf_build.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/unit/test_rbf_build.py",
+      "sha256": "ca0c890524cb9e1797fb5513f2d30b3ef6715d3220e42158449dd20ee34f2cc2",
+      "bytes": 93280,
+      "sealed_mode": "0444",
+      "git_executable": false
+    },
+    "project/tests/unit/test_timing_observer.py": {
+      "origin_archive": "source.tar",
+      "origin_member": "tests/unit/test_timing_observer.py",
+      "sha256": "479ae0429a1d6ba0f9964235efb7fbd76ab272a4d086fd28d8a8f3f6f3c4b1de",
+      "bytes": 38972,
+      "sealed_mode": "0444",
+      "git_executable": false
+    }
+  }
+}

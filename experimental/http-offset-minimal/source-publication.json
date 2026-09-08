@@ -1,0 +1,716 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-original-http-source-only",
+  "public_branch_base_commit": "1453d4c31dc13975fc166177f3a457e475a244a3",
+  "manifest_sha256": "55fa84b8c6359200b305a311140504d8a125094f6fd474feec4259af6b1a80a5",
+  "source_archive_sha256": "b0f5fe51c912d131d10d9ac62cf8dc957fe7cbed2d73bb5b485744b8f21556bd",
+  "source_patch_sha256": "fde1fc209945486fcdac9cb150ae77e6d0c13007ce6591bba9eaf44470d766e3",
+  "review_receipt_sha256": "0ad57b2091a287f26b430decb0d340f8c446ac93d6bfab3dadf6da330932b0e5",
+  "review_outcome": "SOURCE_ARCHIVE_READY_BUILD_REQUIRES_EXPLICIT_LIVE_TRACE_FLAG",
+  "binding": "82 files/11 directories, bytes/modes/reconstruction/no-extras verified; baseline62/62 compile inputs and15/15 audited files match live00e938e6.",
+  "safe_http_basis": {
+    "audio_span_seconds": 16.021166,
+    "body_bytes": 1535396,
+    "body_sha256": "484f3a132811636b31d7759506dba15908a4bed37418263b199e259a26674e3f",
+    "source_sha256": "a89d4437fe551ee6906c373e71068caa1e7610771c9c2dbf0920ebd22ab8631f",
+    "video_aus": 384
+  },
+  "review_limits": {
+    "source_publication_approved": true,
+    "arm_build_allowed_only_with_correction": true,
+    "runtime_or_playback_approved": false,
+    "hls_adoption_included": false
+  },
+  "included_records": {
+    "source_manifest_json_sha256": "55fa84b8c6359200b305a311140504d8a125094f6fd474feec4259af6b1a80a5",
+    "file_map_json_sha256": "6f02c3dfa99a40217eefb4d79d31948c4d471551c7b4211a9131a2ec6d3030ec",
+    "source_freeze_json_sha256": "1bc2199f3e08cdd919ba4a613fd432695ee471e8c02fa871033e36bdd99e95b2",
+    "source_tar_gz_sha256": "b0f5fe51c912d131d10d9ac62cf8dc957fe7cbed2d73bb5b485744b8f21556bd",
+    "source_patch_sha256": "fde1fc209945486fcdac9cb150ae77e6d0c13007ce6591bba9eaf44470d766e3",
+    "preservation_json_sha256": "3d67814adc6722f2a0c3bc0c6da41b17413f80b58793142a7680618b98480a8f",
+    "test_provenance_json_sha256": "b0d585df011dff717f98b0baf6ed5063b5fdb4858b2837bcc57da498ab0ceea4",
+    "build_input_correction_v1_sha256": "23379d7b8aa3aa08c5a19d969721c3284c45ef0eb334b8e65895f6c615ed24c6"
+  },
+  "restoration": {
+    "source_restore_requirement": "Restore source.tar.gz with file-map.json over a checked-out MisterPlex tree before building or diffing against canonical source.",
+    "restore_command_example": "tar -xzf source.tar.gz --strip-components=1 -C /path/to/MisterPlex",
+    "directly_changed_vs_live_http_baseline": [
+      "arm/misterplexd/plex_resolve.cpp",
+      "tests/unit/test_resolve.cpp"
+    ],
+    "hls_experiments_preserved_but_not_adopted": [
+      "arm/misterplexd/finite_hls_io.hpp",
+      "docs/fpga-hls-transport.md",
+      "tests/unit/test_finite_hls.cpp",
+      "tests/unit/test_finite_hls.py"
+    ]
+  },
+  "authoritative_next_build_configuration": {
+    "correction_file": "build-input-correction-v1.json",
+    "original_build_input_pins_sha256": "903b13b39b5a92854bf1d11073f0804b16c0fb0d0d8ab00cd697955ec83e6c3f",
+    "required_make_variables": {
+      "ARM_PLEXD_AV_TRACE": "1",
+      "ARM_FFMPEG_PREFIX": "/home/flynnsbit/Projects/MisterPlex/.worktrees/fpga-h264-fleet-30ff2997/build/deps/ffmpeg-arm-static-safe"
+    },
+    "required_effective_define": "MPX_FPGA_AV_TRACE=1",
+    "output_policy": "Set ARM_PLEXD_OUTPUT to an absolute new owned output, never a shared/default output. Stage exact82 source in an isolated project; preserve all38 previous outputs."
+  },
+  "files": {
+    "project/Makefile": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/Makefile",
+      "sha256": "9e06e860ce7096a0cc2c9e45990b7cd58debdbeb354fa1c70c357418a1f2b551",
+      "bytes": 36455,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/av_inproc_decode.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/av_inproc_decode.cpp",
+      "sha256": "9c34597fe47dc9d20f7f8a2f0ae037d8279b6120c1ef469fe926a7e173776fde",
+      "bytes": 69984,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/companion.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/companion.cpp",
+      "sha256": "8017f25775d9f06b5b13024da0af605da05411ad41f3cc213611cec62309cca8",
+      "bytes": 66331,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/companion.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/companion.hpp",
+      "sha256": "8749a2c0aa1d4152869dcd4957358542b73f9ec78f7b79d0e84bf2361fba035e",
+      "bytes": 9405,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/fb_present.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/fb_present.cpp",
+      "sha256": "f506afc0c924466ddd450f0f4ae01485e10cf90363b33f6408d2cef1d62e31cd",
+      "bytes": 9706,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/fb_present.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/fb_present.hpp",
+      "sha256": "cd6ee69e2d46f3d8b4c5ec6a425d54cd08601ab60e1e61b483c5b778fa01e036",
+      "bytes": 1491,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/fpga_spi.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/fpga_spi.cpp",
+      "sha256": "20843a15c5241353180eaba6481c6019e58d520518dcfe22774d9883aede1a37",
+      "bytes": 113479,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/fpga_spi.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/fpga_spi.hpp",
+      "sha256": "9e6f8b990ca8abdf0deda284e1432f4326d8da3fd7d8c985e78e06aab3b19f37",
+      "bytes": 22136,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/log_redact.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/log_redact.hpp",
+      "sha256": "fec2fd31df175f2a811285e90f699ea72453191494cfc1b0676ccbf5f3e62dce",
+      "bytes": 3050,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/main.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/main.cpp",
+      "sha256": "be369ec58e562d5051ebfbe9d68c292b17cac6b000a6035bb2844f91aaa7aaf6",
+      "bytes": 82087,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/media_player.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/media_player.cpp",
+      "sha256": "81086c37bcd7485fd30577acaee49d31bd924646c510acd9fa616054d334dae2",
+      "bytes": 338468,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/media_player.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/media_player.hpp",
+      "sha256": "3caa162accc4c928f954c48e2b948c1a6b21eca30729a2988154ac304560acdd",
+      "bytes": 27600,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/natural_eof.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/natural_eof.hpp",
+      "sha256": "b29ba8096c4f1d910c7b99e03f1dbbf3cd38dbf00486958a844814faf5f0fc6b",
+      "bytes": 1339,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/playback_controls.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/playback_controls.hpp",
+      "sha256": "9e62d6d346622197726ba1c8d6214565c53d3b2b19422a1207a2cefac77677e7",
+      "bytes": 4673,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/plex_resolve.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/plex_resolve.cpp",
+      "sha256": "ad7de00f1d31a467d2d99ed66dfd5717113908bf6ff23956d1dab3c8873082d7",
+      "bytes": 66808,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/plex_resolve.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/plex_resolve.hpp",
+      "sha256": "737487eb08cada3ae55e11a7112eb807a1516a21cf422489d3c1495a66c6e8e4",
+      "bytes": 12719,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/pms_timeline.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/pms_timeline.cpp",
+      "sha256": "5570426295854a36df5edcdb402c3717f4d0863df955b0dc726e437ec47f1426",
+      "bytes": 8202,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/arm/misterplexd/pms_timeline.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/arm/misterplexd/pms_timeline.hpp",
+      "sha256": "6c05353742242b5bd2f462f23d24ef19f069ce2b8088342f611c92a650fa066c",
+      "bytes": 2914,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-off.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-off.xml",
+      "sha256": "1e2f75f30699aa71936c2d29f083437daad8e47688b887fd72f7619b444eb6c7",
+      "bytes": 2201,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-on.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-23976-filter-on.xml",
+      "sha256": "bc2dda8ca0c316acd798ddd3211ecaa79571869d912487b5fcf523f430032024",
+      "bytes": 2200,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-off.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-off.xml",
+      "sha256": "9f381e3b3392f7b876b2fae60a7d9062694ff4aba70b5979ce4d8dc88c956e45",
+      "bytes": 2190,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-on.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IDR-240p-24-filter-on.xml",
+      "sha256": "28f08b9f677de7867f948b0383c1117e36ed53da07798b4cf830c237ba6fe566",
+      "bytes": 2189,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-off.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-off.xml",
+      "sha256": "cb835f5efe17076e7f3095b8f39a9fa4923034714f934318b3cecdcf3092a635",
+      "bytes": 2202,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-on.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-23976-filter-on.xml",
+      "sha256": "066331081d92a22521e0966c6fe2ff3bee5b87c048ea6ffcfa99bb052f786898",
+      "bytes": 2201,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-off.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-off.xml",
+      "sha256": "352f03156d0185c093060c71852f2e0d73734b61d00cbdc6604801f41b7f4950",
+      "bytes": 2191,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-on.xml": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/MiSTerPlex-FPGA-IP-240p-24-filter-on.xml",
+      "sha256": "da97e391c7c0d06eaf57b3e3041a062d885c95460262ceb11a36bdf84bd20771",
+      "bytes": 2190,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/assets/plex-profiles/fpga_profile.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/assets/plex-profiles/fpga_profile.hpp",
+      "sha256": "701167293ef4390c0ea241c7bd0ffe3cffa9a71283d15bcd0f014d83c2891f54",
+      "bytes": 2467,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/docs/prebuilt-candidate-deployment.md": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/docs/prebuilt-candidate-deployment.md",
+      "sha256": "5b653f4649e5233b6941ee95d361f8f47bc2bf54f3934f190c4f0249e36f8aa9",
+      "bytes": 36003,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/audio_session.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/audio_session.hpp",
+      "sha256": "3fbb9fcfcb9dbeb9a40cd3f6628dcbd8fa44faff39941555539276fe5f050a7c",
+      "bytes": 5370,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/av_clock.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/av_clock.hpp",
+      "sha256": "c438e6c6098086be7804818cc764dd3b48bbdae9e5d3c2f5f22408df39ce827c",
+      "bytes": 6615,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/av_inproc_decode.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/av_inproc_decode.hpp",
+      "sha256": "a8a393819b5559d81414a7be888abceba7e343846c67e1e483f74fefc7069593",
+      "bytes": 20421,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/cached_src_phys.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/cached_src_phys.hpp",
+      "sha256": "655ccdf303d511b6730d6efacb109d4cf7a5ee2c9b1c5e928a48bf3dfba0de39",
+      "bytes": 3366,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/cadence.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/cadence.hpp",
+      "sha256": "2ee5ac18553cff18d78b9fab7188076c0369f0979e17939fbb71028290729990",
+      "bytes": 1581,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/ddr_bitstream_ring.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/ddr_bitstream_ring.hpp",
+      "sha256": "a8d9bdf85f8f39b1869f3fff451459bad62988b3dd48e1d2cd7873f3ae1289cb",
+      "bytes": 15217,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/ddr_frame_layout.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/ddr_frame_layout.hpp",
+      "sha256": "9133e6378ef4fb9c79425f832bde9b8abd68f3cd24ed3422a3bd7f4ef9b7b4a4",
+      "bytes": 24885,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/ddr_zero_copy_ingest.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/ddr_zero_copy_ingest.hpp",
+      "sha256": "f71d06227ccbbd56759453fee37bfed3d1deb7d944ab982bb16edb3663667425",
+      "bytes": 16588,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/display_raster.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/display_raster.hpp",
+      "sha256": "b39bed0241d832edf2f6a587fa735c4ab723ee89ef2f3992b3c9e72d5f53705c",
+      "bytes": 5648,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/fabric_direct.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/fabric_direct.hpp",
+      "sha256": "08f2ca469e3ab0c40239c4ebb741c2460375e6b3941b334031c38f9274e519f7",
+      "bytes": 5109,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/fpga_av_trace.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/fpga_av_trace.hpp",
+      "sha256": "8e444404f91a8dfb66584735ce42a99c00ce072bbd0785827bacd58ad76c0ed0",
+      "bytes": 15698,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/fpga_playback_overlay.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/fpga_playback_overlay.hpp",
+      "sha256": "8794259390ba30d869a560d5e0591a170d0b0cef7e42f2a6f5ec3e6714702a22",
+      "bytes": 10808,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/fpga_terminal.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/fpga_terminal.hpp",
+      "sha256": "253ed1c7064c8c594614d27467420dde8b593dfdfc39f5297200cafa180212b6",
+      "bytes": 4350,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/gdm_filter.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/gdm_filter.hpp",
+      "sha256": "4a74c0aeff29ad329ba1f4b8201003284036f8a6480af1dacab4c226e7fb1a26",
+      "bytes": 3447,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_bitstream_transport.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_bitstream_transport.hpp",
+      "sha256": "57e3174d6d81952e5b3afba8ec86c2780604675f9153d3571d39d1f32e5f1afb",
+      "bytes": 6350,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_cavlc.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_cavlc.hpp",
+      "sha256": "efed97e7958835c82c6d37cb22eb00c7a383ff01b7f77dcb9381d0c5b3bf1334",
+      "bytes": 23192,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_nal.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_nal.hpp",
+      "sha256": "ff358e3b279bb331b301e9bc7dfa89cdb0efea51baa465e720f1d5ad212a7252",
+      "bytes": 7623,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_nal_dispatch.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_nal_dispatch.hpp",
+      "sha256": "0e2b438411c54926dffe41ed1e7103c37a1534c41ba19316a4c35deeb25da3ff",
+      "bytes": 10656,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_recon.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_recon.hpp",
+      "sha256": "3b95811245e4dc2332014b56ced6c15df338af9a57ae0b46a4bf06a2a6fed03b",
+      "bytes": 56431,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_residual_gold.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_residual_gold.hpp",
+      "sha256": "bd03b38cc189a90b93e90cfcff560fa3a6cb02d54893b7271ef6944298e0c746",
+      "bytes": 6710,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_slice_walk.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_slice_walk.hpp",
+      "sha256": "bd52930714a6afd47d61e630e50ca4ada957f962449cf50fd19192c7362088ff",
+      "bytes": 11613,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/h264_sps.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/h264_sps.hpp",
+      "sha256": "cad197666c0c819a3f6e99a6142975d5d231e171817fa3d554a9e4387dc281c0",
+      "bytes": 5615,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/hdmi_auto_delay.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/hdmi_auto_delay.hpp",
+      "sha256": "24493fdb7c4cfd830bf9a1afa2f5c1f44866ef16833f5477e329dd1e037a241f",
+      "bytes": 3750,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/idle_screen.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/idle_screen.hpp",
+      "sha256": "6ee3581b7d672196b67b960a2abc9e8efb0c9e26b872e332c8a3d162174fc89a",
+      "bytes": 11038,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/input_mailbox.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/input_mailbox.hpp",
+      "sha256": "a9c532daf6ebc237546b66815217dca9bfdf2722f01865cf6c7ad59e8ff4f067",
+      "bytes": 13471,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/library_browser.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/library_browser.hpp",
+      "sha256": "ca62047959b4a196177488840cd7aeece8d11c46c9c1a1ac0e6ad5c060d35c01",
+      "bytes": 10110,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/mailbox_abi_spec.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/mailbox_abi_spec.hpp",
+      "sha256": "ee0807b907a587e076e6eed5673935d84f7238bdac2746595e33e2b8e32e64d9",
+      "bytes": 11143,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/mplex_ddr_abi.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/mplex_ddr_abi.hpp",
+      "sha256": "569c6a60af727fd38b981fa879b9791fb95ebb6bc94fbd4449a988d17aa90f17",
+      "bytes": 591,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/mraudio_status.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/mraudio_status.hpp",
+      "sha256": "d5ae5551d29999d6d50d0096407b86bb14bad206ad85f6d6ed8c64ad31ca9aaa",
+      "bytes": 7894,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/osd_menu.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/osd_menu.hpp",
+      "sha256": "301dd9b75d67d49fb38829b7fbe3e2fbfc7b4b3cdab297710d26ae5002cbbf44",
+      "bytes": 7731,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/p720_audio_keepup.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/p720_audio_keepup.hpp",
+      "sha256": "1c254acfaf2416777d1d339cedf8506f958bc667c666f2060518cbee2bedb1e3",
+      "bytes": 7751,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/p720_e2e_budget.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/p720_e2e_budget.hpp",
+      "sha256": "bae463205be3637d3283653c85b45159876db9c8797ebf65b784e2102863a7ab",
+      "bytes": 9428,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/p720_transcode_vf.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/p720_transcode_vf.hpp",
+      "sha256": "03e945e02758e423305e2feab66df59c80ce956fa6e76815fb9910de6d617f1b",
+      "bytes": 6802,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/pixel_format.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/pixel_format.hpp",
+      "sha256": "14c613e5ff2a023d767c4c67c4e5c82f314d51550ce2b3f50162dddf4bd8d627",
+      "bytes": 2091,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/pl330_mem2mem.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/pl330_mem2mem.hpp",
+      "sha256": "3e65befeaf66b58b7a2af51af39e1aff44ef3d6aedc8260260fa60c04a25cfce",
+      "bytes": 37432,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/playback_overlay.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/playback_overlay.hpp",
+      "sha256": "2deb4d84bb3e695e0b3e233c6c3d434626af7dbb8fddd6435966afb9e85c9195",
+      "bytes": 34250,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/present_bank.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/present_bank.hpp",
+      "sha256": "89fc7c6b5e86b984d864099b5aa649640bd24768cc0bd9b0297cae29b584d8b0",
+      "bytes": 11746,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/sdram_mailbox.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/sdram_mailbox.hpp",
+      "sha256": "691aafea6b4e04208dbe2fe045c47342511e058e7300ef64387037a56cb1d3e9",
+      "bytes": 1975,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/source_aspect.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/source_aspect.hpp",
+      "sha256": "3a1f197db924ad26a78fc92b4b1e35a1e9e95752224e2f4c924347a0c35a3fc3",
+      "bytes": 9032,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/spi_ack_wait.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/spi_ack_wait.hpp",
+      "sha256": "d3a588159b7e5cfa7d2aa81b947de29f44793bda710f4313a6b3779ede9b7454",
+      "bytes": 8305,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/status_telemetry.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/status_telemetry.hpp",
+      "sha256": "0083790636c36b2278f7444df23a084e4d2154640aa7e3edafc4b3b1bf601c2a",
+      "bytes": 2060,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/stick_bank_score.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/stick_bank_score.hpp",
+      "sha256": "8264a8d68c502fb26c1e9035182b797376e604b9117de96e33506de3197e6570",
+      "bytes": 1649,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/host/libmisterplex/video_backend.hpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/host/libmisterplex/video_backend.hpp",
+      "sha256": "82bcf054dca9f61918ecea51be70c22774ce0be3aef21be36ff79e10e5ea89a3",
+      "bytes": 864,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/scripts/build_arm_ffmpeg.sh": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/scripts/build_arm_ffmpeg.sh",
+      "sha256": "86f19b28e26d261edc3d6fd4aa1a097aa5b40e228bad08d04f77d8398266b2dc",
+      "bytes": 3005,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/scripts/check_arm_ffmpeg_static.py": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/scripts/check_arm_ffmpeg_static.py",
+      "sha256": "745668d9feb7935a0a1ebc9d00feccc86872b1910f66555e429815b393a50939",
+      "bytes": 2197,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_arm_ffmpeg_static.py": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_arm_ffmpeg_static.py",
+      "sha256": "d99dd496d5cdbceb138fff1e02f09683fb123284cda3a355c7af0ba636aff109",
+      "bytes": 4249,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_avclock.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_avclock.cpp",
+      "sha256": "e1b494fc82351819ddc5aa27db35b580d05e325636965dec1df8f98fec7c0bf4",
+      "bytes": 14864,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_compressed_demux_progress.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_compressed_demux_progress.cpp",
+      "sha256": "673a3dcefdd3ff54cf314278216988303e7fd364f8a08dc37cfb90f3a6d5a060",
+      "bytes": 24860,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_compressed_input_failure.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_compressed_input_failure.cpp",
+      "sha256": "aaeba399e1f87b9436f85a21fd3e8a8393b9299c0a78a62045dd19a9fbb377ec",
+      "bytes": 11031,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_fpga_av_trace.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_fpga_av_trace.cpp",
+      "sha256": "f9abba2b7efd549f5d20c9cf5559c0e58cc2046520603af8570f33d3fc4475c6",
+      "bytes": 9532,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_fpga_compressed_runtime.sh": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_fpga_compressed_runtime.sh",
+      "sha256": "4340408e4011edbc387e2800031bb4aa64e7e37eaf4682d9b64cd5ca638c8f1f",
+      "bytes": 8391,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_fpga_terminal_accounting.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_fpga_terminal_accounting.cpp",
+      "sha256": "1337208a19a3a481a4a4bd580dd629a934ace3e41444a9cfebed02901e6b8aea",
+      "bytes": 5251,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_resolve.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_resolve.cpp",
+      "sha256": "20e46e31103c9716150978f0c872f4b3c67444a4c1186f07860ac10bca9fcf7c",
+      "bytes": 23107,
+      "sealed_mode": "0644",
+      "git_executable": false
+    },
+    "project/tests/unit/test_sps_parse.cpp": {
+      "origin_archive": "source.tar.gz",
+      "origin_member": "candidate/tests/unit/test_sps_parse.cpp",
+      "sha256": "304c4a32615ce106083d0d1a033d24f5a369a9b975663236f73369d0dc0640bb",
+      "bytes": 13804,
+      "sealed_mode": "0644",
+      "git_executable": false
+    }
+  }
+}

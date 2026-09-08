@@ -1,0 +1,2334 @@
+diff --git a/docs/rtl-simulation.md b/docs/rtl-simulation.md
+--- a/docs/rtl-simulation.md
++++ b/docs/rtl-simulation.md
+@@ -87,6 +87,51 @@
+ gate, and the required reference comparison. These are build gates, not product
+ acceptance or permission to deploy.
+ 
++Hierarchy profile authority comes from the captured QSF and `inputs.json`, never
++the working directory's QSF. The driver supplies both explicitly and writes
++`fit-hierarchy.json`, binding the selected profile, exact QSF/manifest hashes,
++input-map digest, checker/config/report/log hashes, resource policies, observed
++rows and exit status. Publish that receipt, not an independently reconstructed
++profile or stale console summary. Existing baseline and FPGA320 floors remain
++100000 block bits and 81920 block bits/96 M10Ks respectively.
++
++For report-only calls, the checker recognizes captured inputs beside the fit
++report. It prefers `project/Plex.qsf`; after normal local/remote project cleanup,
++it can read the exact `Plex.qsf` member of `inputs.tar` **without extracting it**,
++checking both the archive hash and QSF hash against the captured manifest.
++Unreadable, mismatched, ambiguous or malformed authority is refused, not
++replaced with a working-tree default. An explicitly requested QSF never falls
++back to another file/archive. Legacy report-only callers with no captured-input
++context retain baseline behavior, labeled `legacy-default`; they cannot publish
++a captured result receipt.
++
++For a new host-only evaluation of an existing retained slot:
++
++```bash
++python3 scripts/check_quartus_fit_hierarchy.py --fit-rpt "$slot/Plex.fit.rpt" \
++  --map-rpt "$slot/Plex.map.rpt" --log "$slot/compile.log" \
++  --qsf "$slot/project/Plex.qsf" --input-manifest "$slot/inputs.json" \
++  --result-json NEW_OUTPUT/hierarchy.json
++```
++
++The destination must be new; an existing receipt is never overwritten. A
++hierarchy pass is not a timing pass, fitted-database validation, or deployment
++approval.
++
++`scripts/run_instrumented_sta.sh ANALYSIS_WORK` is a separately packaged
++analysis payload, **not** a grant or ownership/container launcher. A separately
++authorized exclusive analysis owner must provide an empty `ANALYSIS_WORK/output`
++and a bound `ANALYSIS_WORK/reporter` prepared/verified with the frozen driver's
++`prepare_reporting`/`verify_reporter`, and run it from the corresponding fitted
++project in the pinned SDK. Its runtime inputs include `sdk-image.id`,
++`observation.id`, `timing.tcl`, the SDK producer/parser and their captured
++reporter dependencies. SDK/reporter nonzero exits keep their exit receipts;
++diagnostic grep no-match is normal, while matches or grep/file/tool errors fail.
++Normal completion requires matching before/after RBF hashes. The collector and
++both timing/exclusion gates remain separate mandatory checks. Neither a new
++payload nor host mock qualification changes an old failed shell outcome or
++supplies a missing historical hash receipt.
++
+ The timing gate checks both the standard STA summary and **every indexed
+ setup/hold report across every captured clock/corner**. For a retained slot:
+ 
+@@ -106,7 +151,7 @@
+ not create `result.json`. Existing domain-coverage and exclusion checks remain
+ required.
+ 
+-New builds require the v3 timing sidecar (extended evidence v2). Alongside the global top-ten reports,
++New builds require the v4 timing sidecar (extended evidence v2). Alongside the global top-ten reports,
+ it reports the single worst setup/hold path per destination clock in both
+ directions of the decoder keeper scope (`mb_ctrl`, `rbsp`, and `stub`, including
+ their descendants). A complete from/to matrix is required for every operating
+@@ -143,16 +188,73 @@
+ consistent native `12021/12023` compiler definition file/line and `12128`
+ elaboration evidence, bound to the retained compile-log hash. An unused matching
+ source file or the **instantiating** file on a `12128` line is not definition
+-provenance. Missing, duplicate or external definition evidence refuses.
++provenance. Missing or duplicate project definition evidence refuses.
+ The accepted record
+ has origin `hdl`, entity, real HDL file/line, source/attribute/statement hashes,
+ and native log location; no fictitious `.sdc` location or entity whitelist is used.
+ Resolved decoder-exclusion checks still apply to HDL constraints. Only literal
+ Verilog/SystemVerilog attributes are currently attributable. Unsupported syntax,
+ missing frames, ambiguous matches and HDL from an unpinned external SDK library
+-fail closed **after the real setter has run**. A future authorized real-netlist
+-qualification must establish the actual SDK source identity and log/frame
+-behavior; the host mocks do not establish that identity or permission to fit.
++fail closed **after the real setter has run**.
++
++SDK HDL has a separate, explicit proof method: the native Analysis & Synthesis
++**Source Files Read** table must select the source actually used in the netlist.
++The immutable reporter's Python3.5-compatible SDK collector reads those
++dependencies inside the host-verified pinned image before analysis, recording
++SDK-relative paths, file hashes/modes/lengths and literal definition/attribute
++coordinates. It never exports SDK source text. Single-string Verilog
++concatenations (`{"literal"}`) are supported; computed attributes are not.
++The collector rejects missing/duplicate dependencies, malformed or incomplete
++native tables, source escape, and ambiguous project/library definitions. The
++host audit joins the derived literal statement to the **original** Tcl frame
++and native HDL execution messages; there is no module-name whitelist.
++Unknown/compiler-generated origins without supported source evidence still
++fail. A source-file-table record is not represented as a `12023` definition.
++
++The SDK catalog is runtime output from the hash-bound producer in the pinned
++image, not a cryptographic signature or an offline reconstruction of vendor
++bytes. Retain its native report and producer/image identities with the final
++manifest. Both gates rederive its evidence and reject any post-collection
++changes. SDK collection failure or unexpected diagnostics stops the runner.
++SDK-origin attribution does not relax decoder exclusions or negative timing.
++Host mocks using a real SDK-derived catalog establish source/gate behavior,
++**not actual netlist noninterference**.
++
++Normal settled transactions still delete their working `project` directory.
++For a separately authorized **local-container** transaction, opt in explicitly:
++
++```bash
++MISTERPLEX_ALLOW_LOCAL_FIT=1 scripts/build_rbf.sh --backend local-container \
++  NEW_SLOT PROJECT_PATH --retain-project
++```
++
++The wrapper forwards the flag unchanged. It keeps the exact local project,
++inputs and database on **success and failure**, without moving or publishing
++them. `analysis-project.json` records the actual absolute path, last transaction
++stage, input/source/image identity, tool/container identity, stage exits, every
++retained file's SHA-256/length/mode and the database-file subset. Missing
++directories are `missing`; partial/failed compilation is
++`incomplete-or-unvalidated`; successful compilation with database files remains
++`retained-unvalidated`. **No status claims a complete, loadable fitted netlist.**
++Only a separately authorized successful native database load can establish that.
++Inventory I/O or identity failure is explicit and never deletes the retained
++tree. Unresolved ownership keeps the existing leases and project intact; its
++record is `ownership-unresolved`, with no racing inventory of an active project.
++Inventory traversal uses descriptor-relative directory enumeration, stat and
++no-follow opens; nested enumeration/stat/read errors propagate rather than
++silently omitting a subtree. Only verified initial absence is `missing`.
++An inventory failure sets `inventory-incomplete` and fails an otherwise
++successful transaction. If the build was already failing, that original error
++retains precedence and the additional retention failure is reported separately.
++
++This flag is local-only. The remote wrapper still forwards arguments, but the
++driver rejects `--retain-project` for a remote backend before dispatch; remote
++cleanup/transfer behavior is unchanged. Neither the SDK nor the database is
++automatically uploaded or packaged. Use a **new copy** for authorized later STA.
++After independent review/publication, same-netlist uninstrumented/instrumented
++qualification is PENDING a separately granted V13 transaction that retains its
++new database. The absent V12 database is not to be recreated by an extra fit.
++Retention itself grants no Quartus operation, promotion or deployment.
+ 
+ The immutable reporter bundle includes its Python collector, observer verifier,
+ shared STA parser, frozen SDC/HDL source catalog and observation identity, all in
+diff --git a/scripts/build_rbf.sh b/scripts/build_rbf.sh
+--- a/scripts/build_rbf.sh
++++ b/scripts/build_rbf.sh
+@@ -6,12 +6,15 @@
+ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+   cat <<'EOF'
+ Usage: scripts/build_rbf.sh --backend remote SLOT [PROJECT_PATH] [--derive-video-build-id]
+-       MISTERPLEX_ALLOW_LOCAL_FIT=1 scripts/build_rbf.sh --backend local-container SLOT [PROJECT_PATH] [--derive-video-build-id]
++       MISTERPLEX_ALLOW_LOCAL_FIT=1 scripts/build_rbf.sh --backend local-container SLOT [PROJECT_PATH] [--derive-video-build-id] [--retain-project]
+ 
+ No backend/default invocation remains refused. Local permission alone is not
+ backend selection. See docs/rtl-simulation.md for the serial snapshot procedure.
+ --derive-video-build-id renders FPGA_VIDEO_BUILD_ID from original source identity;
+ without it, legacy/oldbaseline video identity, tool, seed and processor defaults remain unchanged.
++--retain-project is local-container only: keep exact project/database on success
++AND failure with analysis-project.json. Default cleanup is unchanged. A retained
++or missing/unvalidated database is never approval to analyze, deploy or publish it.
+ EOF
+   exit 0
+ fi
+diff --git a/scripts/check_quartus_fit_hierarchy.py b/scripts/check_quartus_fit_hierarchy.py
+--- a/scripts/check_quartus_fit_hierarchy.py
++++ b/scripts/check_quartus_fit_hierarchy.py
+@@ -4,10 +4,12 @@
+ 
+ import argparse
+ import hashlib
++import io
+ import json
+ import re
+ import sys
+-from dataclasses import dataclass
++import tarfile
++from dataclasses import asdict, dataclass
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+@@ -79,30 +81,108 @@
+     return rows
+ 
+ 
+-def captured_profile(qsf: Path | None, manifest: Path | None) -> str:
+-    if qsf is None:
++def captured_inputs(qsf: Path | None, manifest: Path | None, report: Path):
++    if qsf is not None or manifest is not None:
++        return qsf, manifest, None
++    # Retained driver outputs carry their own authority. Never look in ROOT/cwd.
++    directory = report.absolute().parent
++    for marker in ("inputs.json", "inputs.tar", "tool.json", "project/Plex.qsf"):
++        try:
++            (directory / marker).lstat()
++        except FileNotFoundError:
++            continue
++        qsf = directory / "project/Plex.qsf"
++        try:
++            qsf.lstat()
++        except FileNotFoundError:
++            # Default local/remote cleanup removes project, not captured inputs.
++            archive = directory / "inputs.tar"
++            try:
++                archive.lstat()
++            except FileNotFoundError:
++                pass
++            else:
++                return None, directory / "inputs.json", archive
++        return qsf, directory / "inputs.json", None
++    return None, None, None
++
++
++def file_binding(path: Path, data: bytes | None = None) -> dict:
++    if data is None:
++        data = path.read_bytes()
++    return {"path": str(path.absolute()), "sha256": hashlib.sha256(data).hexdigest(),
++            "bytes": len(data)}
++
++
++def captured_profile(qsf: Path | None, manifest: Path | None,
++                     evidence: dict | None = None, archive: Path | None = None) -> str:
++    if qsf is not None and archive is not None:
++        raise ValueError("captured QSF and archive authority are mutually exclusive")
++    if qsf is None and archive is None:
+         if manifest is not None:
+             raise ValueError("--input-manifest requires --qsf")
++        if evidence is not None:
++            evidence.update(kind="legacy-default", captured=False)
+         return "baseline"
+     if manifest is None:
+         raise ValueError("--qsf requires its captured --input-manifest")
+-    data = qsf.read_bytes()
+-    inputs = json.loads(manifest.read_text())
+-    if hashlib.sha256(data).hexdigest() != inputs["input_files"]["Plex.qsf"]:
++    manifest_data = manifest.read_bytes()
++    inputs = json.loads(manifest_data)
++    if not isinstance(inputs, dict) or not isinstance(inputs.get("input_files"), dict):
++        raise ValueError("captured input manifest must contain an input_files object")
++    files = inputs["input_files"]
++    if not files or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
++                        for value in files.values()):
++        raise ValueError("captured input_files must contain SHA256 values")
++    input_sha = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
++    if inputs.get("input_sha256") != input_sha:
++        raise ValueError("captured input manifest aggregate hash does not match input_files")
++    if archive is not None:
++        archive_data = archive.read_bytes()
++        archive_binding = file_binding(archive, archive_data)
++        if archive_binding["sha256"] != inputs.get("archive_sha256"):
++            raise ValueError("captured input archive hash does not match input manifest")
++        with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:") as captured:
++            members = [member for member in captured.getmembers() if member.name == "Plex.qsf"]
++            if len(members) != 1 or not members[0].isfile():
++                raise ValueError("captured archive must contain exactly one regular Plex.qsf")
++            with captured.extractfile(members[0]) as stream:
++                data = stream.read()
++        qsf_binding = {"archive": archive_binding, "member": "Plex.qsf",
++                       "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
++    else:
++        data = qsf.read_bytes()
++        qsf_binding = file_binding(qsf, data)
++    if hashlib.sha256(data).hexdigest() != files.get("Plex.qsf"):
+         raise ValueError("captured QSF hash does not match input manifest")
+     values = set()
+-    for line in data.decode().splitlines():
++    assignments = []
++    for number, line in enumerate(data.decode().splitlines(), 1):
++        if not re.match(r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\b', line):
++            continue
+         match = re.match(
+-            r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+(?:"([^"]+)"|\{([^}]+)\}|([^\s#]+))',
++            r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+'
++            r'(?:"((?:\\.|[^"\\])+)"|\{([^{}]+)\}|([^\s#;"{}]+))\s*(?:#.*)?$',
+             line,
+         )
+-        if match:
+-            macro = next(value for value in match.groups() if value is not None)
+-            if macro.startswith("FPGA_VIDEO_320="):
+-                values.add(macro.split("=", 1)[1])
++        if not match:
++            raise ValueError(f"malformed captured VERILOG_MACRO assignment at line {number}")
++        macro = next(value for value in match.groups() if value is not None)
++        if macro == "FPGA_VIDEO_320":
++            raise ValueError("captured FPGA_VIDEO_320 requires an explicit 0/1 value")
++        if macro.startswith("FPGA_VIDEO_320="):
++            values.add(macro.split("=", 1)[1])
++        if macro.startswith(("FPGA_VIDEO_320=", "FRAME_LINES_8=")):
++            assignments.append({"line": number, "literal": macro})
+     if len(values) > 1 or values - {"0", "1"}:
+         raise ValueError("ambiguous FPGA_VIDEO_320 configuration in captured QSF")
+-    return "fpga320" if values == {"1"} else "baseline"
++    profile = "fpga320" if values == {"1"} else "baseline"
++    if evidence is not None:
++        evidence.update(kind="captured-inputs", captured=True, profile=profile,
++                        qsf=qsf_binding, input_manifest=file_binding(manifest, manifest_data),
++                        input_sha256=input_sha, declared_source_sha256=inputs.get("source_sha256"),
++                        literal_assignments=assignments)
++    return profile
+ 
+ 
+ def load_config(path: Path, profile: str = "baseline") -> list[dict[str, object]]:
+@@ -212,6 +292,8 @@
+     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+     ap.add_argument("--qsf", type=Path, help="Captured private QSF; never defaults to the live worktree")
+     ap.add_argument("--input-manifest", type=Path, help="inputs.json binding the captured QSF hash")
++    ap.add_argument("--result-json", type=Path,
++                    help="New immutable result receipt; requires captured QSF/input authority")
+     ap.add_argument(
+         "--allow-missing",
+         action="append",
+@@ -220,28 +302,58 @@
+     )
+     args = ap.parse_args(argv[1:])
+ 
++    result = {"schema": "misterplex.fit-hierarchy-result.v1", "profile": None,
++              "authority": {}, "artifacts": {}, "command": argv}
++
++    def finish(code, errors):
++        result.update(exit_code=code, status={0: "pass", 1: "rejected", 4: "refused"}[code],
++                      errors=errors)
++        if args.result_json:
++            try:
++                with args.result_json.open("x") as stream:
++                    json.dump(result, stream, sort_keys=True, indent=2)
++                    stream.write("\n")
++            except OSError as exc:
++                print(f"FIT_HIERARCHY_REFUSED(exit=4): cannot publish new result: {exc}", file=sys.stderr)
++                return 4
++        return code
++
+     try:
++        qsf, manifest, archive = captured_inputs(args.qsf, args.input_manifest, args.fit_rpt)
++        profile = captured_profile(qsf, manifest, result["authority"], archive)
++        if args.result_json and not result["authority"]["captured"]:
++            raise ValueError("--result-json requires verified captured QSF/input manifest")
++        result["profile"] = profile
++        consumed = {"fit_report": args.fit_rpt, "config": args.config, "checker": Path(__file__)}
++        if args.map_rpt:
++            consumed["map_report"] = args.map_rpt
++        if args.log:
++            consumed["log"] = args.log
++        if qsf is not None:
++            consumed["qsf"] = qsf
++        if archive is not None:
++            consumed["input_archive"] = archive
++        if manifest is not None:
++            consumed["input_manifest"] = manifest
++        result["artifacts"] = {role: file_binding(path) for role, path in consumed.items()}
+         fitted_rows = parse_hierarchy_report(args.fit_rpt)
+         rows = list(fitted_rows)
+         if args.map_rpt:
+             rows += parse_hierarchy_report(args.map_rpt)
+-    except FileNotFoundError as e:
+-        print(f"FIT_HIERARCHY_REFUSED(exit=4): missing report {e.filename}", file=sys.stderr)
+-        return 4
+-
+-    try:
+-        profile = captured_profile(args.qsf, args.input_manifest)
+         specs = load_config(args.config, profile)
+         if profile == "fpga320" and args.allow_missing:
+             raise ValueError("FPGA320 does not permit --allow-missing modules")
+-    except (OSError, ValueError, KeyError) as exc:
++    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError) as exc:
+         print(f"FIT_HIERARCHY_REFUSED(exit=4): {exc}", file=sys.stderr)
+-        return 4
++        return finish(4, [str(exc)])
+     print(f"FIT_HIERARCHY_PROFILE: {profile}")
++    print("FIT_HIERARCHY_AUTHORITY: " + json.dumps(result["authority"], sort_keys=True))
+     if profile == "fpga320":
+         # Mapped estimates cannot satisfy physical FPGA320 presence/M10K floors.
+         rows = fitted_rows
+     found = [(spec, find_row(rows, spec)) for spec in specs]
++    result["modules"] = [{"policy": spec, "observed": asdict(row) if row else None}
++                         for spec, row in found]
+     print("FIT_HIERARCHY_TABLE_BEGIN")
+     print(format_table(found))
+     print("FIT_HIERARCHY_TABLE_END")
+@@ -267,11 +379,23 @@
+             if key in spec and value < float(spec[key]):
+                 errors.append(f"{name}: {field} {value:g} < required {spec[key]}")
+ 
+-    warning_hits = scan_log(args.log, [str(spec.get("name")) for spec in specs])
++    try:
++        warning_hits = scan_log(args.log, [str(spec.get("name")) for spec in specs])
++        comb_hits = scan_comb_loops(args.log, specs)
++        if result["artifacts"] != {role: file_binding(path) for role, path in consumed.items()}:
++            raise ValueError("hierarchy inputs changed during evaluation")
++        if manifest is not None and result["authority"]["input_manifest"] != result["artifacts"]["input_manifest"]:
++            raise ValueError("captured profile authority changed during evaluation")
++        if qsf is not None and result["authority"]["qsf"] != result["artifacts"]["qsf"]:
++            raise ValueError("captured QSF changed during evaluation")
++        if archive is not None and result["authority"]["qsf"]["archive"] != result["artifacts"]["input_archive"]:
++            raise ValueError("captured archive changed during evaluation")
++    except (OSError, ValueError) as exc:
++        print(f"FIT_HIERARCHY_REFUSED(exit=4): {exc}", file=sys.stderr)
++        return finish(4, [str(exc)])
+     if warning_hits:
+         errors.append("critical-module removal/tie-off warning(s):")
+         errors.extend("  " + hit for hit in warning_hits[:20])
+-    comb_hits = scan_comb_loops(args.log, specs)
+     if comb_hits:
+         errors.append("critical-module combinational-loop warning(s):")
+         errors.extend("  " + hit for hit in comb_hits[:20])
+@@ -280,9 +404,11 @@
+         print("FIT_HIERARCHY_REJECTED(exit=1):", file=sys.stderr)
+         for err in errors:
+             print(f"  {err}", file=sys.stderr)
+-        return 1
+-    print("PASS fit hierarchy: critical modules present with non-trivial resource usage")
+-    return 0
++        return finish(1, errors)
++    code = finish(0, [])
++    if code == 0:
++        print("PASS fit hierarchy: critical modules present with non-trivial resource usage")
++    return code
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scripts/check_quartus_timing.py b/scripts/check_quartus_timing.py
+--- a/scripts/check_quartus_timing.py
++++ b/scripts/check_quartus_timing.py
+@@ -247,8 +247,10 @@
+     total += sum(compiler_logs.values())
+     metadata = []
+     for name in ("extended.summary", "audit-index.tsv", "scoped-index.tsv",
+-                 "observer.summary", "observer.complete", "reporter.log"):
+-        data = read_evidence(directory / name, 16 * 1024**2 if name == "reporter.log" else 2 * 1024**2)
++                 "observer.summary", "observer.complete", "reporter.log",
++                 "sdk-catalog.json", "sdk-catalog.log", "sdk-catalog.exit", "Plex.compiled-sources.rpt"):
++        data = read_evidence(directory / name, 32 * 1024**2 if name == "Plex.compiled-sources.rpt"
++                             else 16 * 1024**2 if name in {"reporter.log", "sdk-catalog.json"} else 2 * 1024**2)
+         if total + global_bytes + len(data) > 128 * 1024**2:
+             raise ValueError("observer metadata exceeds complete timing byte budget")
+         total += len(data)
+@@ -281,19 +283,19 @@
+     inputs = json.loads(read_evidence(directory.parent / "inputs.json", 4 * 1024**2))
+     reporter_schemas = {
+         "misterplex.timing-reporter.v1": {"run.sh", "timing.tcl"},
+-        "misterplex.timing-reporter.v3": REPORTER_FILES,
++        "misterplex.timing-reporter.v4": REPORTER_FILES,
+     }
+     if reporter != manifest["reporter"] or reporter["schema"] not in reporter_schemas:
+         raise ValueError("detailed timing reporter provenance mismatch")
+     if manifest["schema"] == "misterplex.timing-paths.v3" and \
+-            reporter["schema"] != "misterplex.timing-reporter.v3":
++            reporter["schema"] != "misterplex.timing-reporter.v4":
+         raise ValueError("extended timing evidence requires the bound Python collector")
+     if reporter["image_id"] != inputs["image_id"] or reporter["input_sha256"] != inputs["input_sha256"]:
+         raise ValueError("detailed timing input/image provenance mismatch")
+     if not isinstance(reporter["files"], dict) or \
+             set(reporter["files"]) != reporter_schemas[reporter["schema"]]:
+         raise ValueError("missing timing reporter files")
+-    if reporter["schema"] == "misterplex.timing-reporter.v3" and \
++    if reporter["schema"] == "misterplex.timing-reporter.v4" and \
+             {path.name for path in reporter_dir.iterdir()} != REPORTER_FILES | {"provenance.json"}:
+         raise ValueError("unlisted timing reporter execution files")
+     for name, expected in reporter["files"].items():
+diff --git a/scripts/check_timing_exclusions.py b/scripts/check_timing_exclusions.py
+--- a/scripts/check_timing_exclusions.py
++++ b/scripts/check_timing_exclusions.py
+@@ -193,6 +193,17 @@
+         if item["origin"] != "hdl":
+             continue
+         proof = item["hdl_source"]
++        if proof["method"] == "pinned-sdk+compiled-source-table+literal-attribute+native-hdl-message+original-tcl-frame-v1":
++            # parse_detailed_rows rederived this entire proof from the bound SDK
++            # producer, native source-file table and original execution journal.
++            # SDK source is not (and must never be copied into) the project tree.
++            compiled = proof["compiled_source"]
++            dependency = compiled["dependency"]
++            if compiled["image_id"] != inputs["image_id"] or \
++                    dependency["sdk_relative"] != proof["file"] or \
++                    dependency["sha256"] != proof["source_sha256"]:
++                raise ValueError("HDL SDK execution provenance identity mismatch")
++            continue
+         path = root / proof["file"]
+         if path.is_symlink() or not path.resolve().is_relative_to(root) or \
+                 proof["source_sha256"] != inputs["input_files"].get(proof["file"]) or \
+diff --git a/scripts/quartus_hdl_source.py b/scripts/quartus_hdl_source.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/quartus_hdl_source.py
+@@ -0,0 +1,57 @@
++"""Literal HDL provenance derivation, compatible with the pinned SDK Python3.5."""
++import hashlib
++from pathlib import Path
++import re
++
++KINDS = {"set_clock_groups", "set_false_path", "set_max_delay",
++         "set_min_delay", "set_multicycle_path"}
++FAILURE_PATTERN = re.compile(
++    r"(?mi)^\s*(?:Error(?:\s*\(\d+\))?\s*:|Critical Warning\s*\(332008\)\s*:|"
++    r"MPX_OBSERVER_FAILURE(?:_SINK)?\b)|Read_sdc failed")
++
++
++def sha(data):
++    return hashlib.sha256(data).hexdigest()
++
++
++def unquote(value):
++    def escape(match):
++        char = match.group(1)
++        if char not in {'"', "\\", "n", "r", "t", "\n"}:
++            raise ValueError("unsupported HDL/attribute escape; no inferred provenance")
++        return {"n": "\n", "r": "\r", "t": "\t", "\n": ""}.get(char, char)
++    return re.sub(r"\\(.)", escape, value, flags=re.S)
++
++
++def hdl_attributes(filename, text):
++    if Path(filename).suffix.lower() not in {".v", ".sv"}:
++        return []
++    token = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.S)
++    blank = lambda value: re.sub(r"[^\n]", " ", value)
++    uncommented = token.sub(
++        lambda match: match.group(0) if match.group(0).startswith('"') else blank(match.group(0)), text)
++    code = token.sub(lambda match: blank(match.group(0)), text)
++    modules = list(re.finditer(r"\b(module\s+([A-Za-z_][A-Za-z0-9_$]*)|endmodule)\b", code))
++    records = []
++    for attr in re.finditer(r"\(\*(.*?)\*\)", uncommented, re.S):
++        owner = next((match for match in reversed(modules) if match.start() < attr.start()), None)
++        if owner is None or owner.group(2) is None:
++            continue
++        for match in re.finditer(
++                r'\baltera_attribute\s*=\s*(?:"((?:\\.|[^"\\])*)"|'
++                r'\{\s*"((?:\\.|[^"\\])*)"\s*\})\s*(?=,|$)', attr.group(1), re.S):
++            value = unquote(match.group(1) if match.group(1) is not None else match.group(2))
++            for statement in re.finditer(
++                    r'(?:^|;)\s*-name\s+SDC_STATEMENT\s+"((?:\\.|[^"\\])*)"\s*(?=;|$)', value, re.S):
++                command = unquote(statement.group(1)).strip()
++                if not command or command.split(None, 1)[0] not in KINDS:
++                    continue
++                records.append({
++                    "file": filename, "source_sha256": sha(text.encode()),
++                    "line": text.count("\n", 0, attr.start()) + 1,
++                    "entity_line": text.count("\n", 0, owner.start()) + 1,
++                    "entity": owner.group(2), "statement": command,
++                    "statement_sha256": sha(command.encode()),
++                    "attribute_sha256": sha(text[attr.start():attr.end()].encode()),
++                })
++    return records
+diff --git a/scripts/quartus_timing_observer.py b/scripts/quartus_timing_observer.py
+--- a/scripts/quartus_timing_observer.py
++++ b/scripts/quartus_timing_observer.py
+@@ -11,12 +11,14 @@
+ import json
+ from pathlib import Path
+ import re
++from quartus_hdl_source import hdl_attributes
+ 
+ KINDS = {"set_clock_groups", "set_false_path", "set_max_delay",
+          "set_min_delay", "set_multicycle_path"}
+ REPORTER_FILES = {"run.sh", "timing.tcl", "check_quartus_timing.py",
+                   "quartus_sta_report.py", "quartus_timing_observer.py",
+-                  "constraint-sources.json", "observation.id"}
++                  "constraint-sources.json", "observation.id",
++                  "quartus_timing_sdk.py", "quartus_hdl_source.py", "sdk-image.id"}
+ FAILURE_PATTERN = re.compile(
+     r"(?mi)^\s*(?:Error(?:\s*\(\d+\))?\s*:|Critical Warning\s*\(332008\)\s*:|"
+     r"MPX_OBSERVER_FAILURE(?:_SINK)?\b)|Read_sdc failed")
+@@ -30,48 +32,6 @@
+     if len(value) % 2 or re.fullmatch(r"[0-9a-f]*", value) is None:
+         raise ValueError("malformed observer hex field")
+     return bytes.fromhex(value).decode("utf-8")
+-
+-
+-def _unquote(value: str) -> str:
+-    def escape(match):
+-        char = match[1]
+-        if char not in {'"', "\\", "n", "r", "t", "\n"}:
+-            raise ValueError("unsupported HDL/attribute escape; no inferred provenance")
+-        return {"n": "\n", "r": "\r", "t": "\t", "\n": ""}.get(char, char)
+-    return re.sub(r"\\(.)", escape, value, flags=re.S)
+-
+-
+-def hdl_attributes(filename: str, text: str) -> list[dict]:
+-    """Recognize literal Verilog attributes only, never evaluate source Tcl."""
+-    if Path(filename).suffix.lower() not in {".v", ".sv"}:
+-        return []
+-    token = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.S)
+-    blank = lambda value: re.sub(r"[^\n]", " ", value)
+-    uncommented = token.sub(lambda m: m[0] if m[0].startswith('"') else blank(m[0]), text)
+-    code = token.sub(lambda m: blank(m[0]), text)
+-    modules = list(re.finditer(r"\b(module\s+([A-Za-z_][A-Za-z0-9_$]*)|endmodule)\b", code))
+-    records = []
+-    for attr in re.finditer(r"\(\*(.*?)\*\)", uncommented, re.S):
+-        owner = next((m for m in reversed(modules) if m.start() < attr.start()), None)
+-        if owner is None or owner[2] is None:
+-            continue
+-        for match in re.finditer(r'\baltera_attribute\s*=\s*"((?:\\.|[^"\\])*)"', attr[1], re.S):
+-            value = _unquote(match[1])
+-            for statement in re.finditer(
+-                    r'(?:^|;)\s*-name\s+SDC_STATEMENT\s+"((?:\\.|[^"\\])*)"\s*(?=;|$)',
+-                    value, re.S):
+-                command = _unquote(statement[1]).strip()
+-                if not command or command.split(maxsplit=1)[0] not in KINDS:
+-                    continue
+-                records.append({
+-                    "file": filename, "source_sha256": sha(text.encode()),
+-                    "line": text.count("\n", 0, attr.start()) + 1,
+-                    "entity_line": text.count("\n", 0, owner.start()) + 1,
+-                    "entity": owner[2], "statement": command,
+-                    "statement_sha256": sha(command.encode()),
+-                    "attribute_sha256": sha(text[attr.start():attr.end()].encode()),
+-                })
+-    return records
+ 
+ 
+ def sdc_directives(text: str) -> list[tuple[int, str, str]]:
+@@ -101,9 +61,9 @@
+     inputs = json.loads(read_evidence(directory.parent / "inputs.json", 4 * 1024**2))
+     if sha(json.dumps(inputs["input_files"], sort_keys=True).encode()) != inputs["input_sha256"]:
+         raise ValueError("frozen input file map hash mismatch")
+-    if reporter["schema"] != "misterplex.timing-reporter.v3" or \
++    if reporter["schema"] != "misterplex.timing-reporter.v4" or \
+             set(reporter["files"]) != REPORTER_FILES:
+-        raise ValueError("observer requires the complete v3 bound reporter")
++        raise ValueError("observer requires the complete v4 bound reporter")
+     if reporter["image_id"] != inputs["image_id"] or \
+             reporter["input_sha256"] != inputs["input_sha256"]:
+         raise ValueError("observer input/image identity mismatch")
+@@ -124,6 +84,9 @@
+                 sha(source["text"].encode()) != source["sha256"]:
+             raise ValueError(f"HDL source is not bound to frozen input bytes: {filename}")
+         records.extend(hdl_attributes(filename, source["text"]))
++    if set(catalog["hdl"]) != {name for name in inputs["input_files"]
++                              if Path(name).suffix.lower() in {".v", ".sv", ".vhd", ".vhdl"}}:
++        raise ValueError("frozen HDL source catalog is incomplete")
+     sdcs = {}
+     for filename, source in catalog["sdc"].items():
+         path = Path(filename)
+@@ -136,7 +99,47 @@
+         sdcs[filename] = source["text"]
+     if set(sdcs) != {name for name in inputs["input_files"] if Path(name).suffix == ".sdc"}:
+         raise ValueError("frozen SDC source catalog is incomplete")
+-    return reporter, records, sdcs
++    sdk_records = bound_sdk_sources(directory, reporter, catalog, read_evidence)
++    return reporter, records + sdk_records, sdcs
++
++
++def bound_sdk_sources(directory, reporter, project_catalog, read_evidence):
++    from quartus_timing_sdk import definitions, validate
++    image = read_evidence(directory.parent / "reporter/sdk-image.id", 128)
++    if image != (reporter["image_id"] + "\n").encode() or \
++            sha(image) != reporter["files"]["sdk-image.id"]:
++        raise ValueError("SDK collector image identity mismatch")
++    if read_evidence(directory / "sdk-catalog.exit", 16) != b"0\n":
++        raise ValueError("SDK dependency collection did not succeed")
++    log = read_evidence(directory / "sdk-catalog.log", 1024 * 1024)
++    if log.strip():
++        raise ValueError("unexpected SDK dependency collector diagnostics")
++    report = read_evidence(directory / "Plex.compiled-sources.rpt", 32 * 1024**2)
++    catalog_bytes = read_evidence(directory / "sdk-catalog.json", 16 * 1024**2)
++    catalog = json.loads(catalog_bytes)
++    attributes = validate(catalog, report, reporter["image_id"])
++    project_definitions = [item["entity"].lower()
++                           for filename, source in project_catalog["hdl"].items()
++                           for item in definitions(filename, source["text"])]
++    sdk_definitions = [item["entity"].lower() for source in catalog["dependencies"]
++                       for item in source["definitions"]]
++    records = []
++    for attribute in attributes:
++        if attribute["entity"].lower() in project_definitions or \
++                sdk_definitions.count(attribute["entity"].lower()) != 1:
++            raise ValueError("SDK entity has ambiguous project/library definitions")
++        source = next(item for item in catalog["dependencies"]
++                      if item["sdk_relative"] == attribute["file"])
++        records.append({**attribute, "sdk_source": {
++            "image_id": reporter["image_id"],
++            "dependency": {key: value for key, value in source.items()
++                           if key not in {"attributes", "definitions"}},
++            "catalog": {"file": "sdk-catalog.json", "bytes": len(catalog_bytes), "sha256": sha(catalog_bytes)},
++            "log": {"file": "Plex.compiled-sources.rpt", "relative_to": "timing",
++                    "bytes": len(report), "sha256": sha(report)},
++            "producer": {"file": "quartus_timing_sdk.py",
++                         "sha256": reporter["files"]["quartus_timing_sdk.py"]}}})
++    return records
+ 
+ 
+ def compiled_hdl_definition(data, source):
+@@ -310,14 +313,20 @@
+                               source["entity"] == pending["entity"] and source["statement"] == raw]
+                 if len(candidates) != 1:
+                     raise ValueError("HDL origin is unknown/unfrozen/ambiguous; exact source attribution required")
+-                if compiler_data is None:
+-                    compiler_data = read_evidence(directory.parent / "compile.log", 32 * 1024**2)
+-                key = candidates[0]["file"], candidates[0]["entity"], candidates[0]["entity_line"]
+-                if key not in compiled_sources:
+-                    compiled_sources[key] = compiled_hdl_definition(compiler_data, candidates[0])
+-                compiled = compiled_sources[key]
+-                proof = {"method": "compiler-definition+native-hdl-message+original-tcl-frame+frozen-attribute-v1",
+-                         **candidates[0], "compiled_source": compiled, "native_log_line": pending["log_line"]}
++                source = dict(candidates[0])
++                if "sdk_source" in source:
++                    compiled = source.pop("sdk_source")
++                    method = "pinned-sdk+compiled-source-table+literal-attribute+native-hdl-message+original-tcl-frame-v1"
++                else:
++                    if compiler_data is None:
++                        compiler_data = read_evidence(directory.parent / "compile.log", 32 * 1024**2)
++                    key = source["file"], source["entity"], source["entity_line"]
++                    if key not in compiled_sources:
++                        compiled_sources[key] = compiled_hdl_definition(compiler_data, source)
++                    compiled = compiled_sources[key]
++                    method = "compiler-definition+native-hdl-message+original-tcl-frame+frozen-attribute-v1"
++                proof = {"method": method, **source, "compiled_source": compiled,
++                         "native_log_line": pending["log_line"]}
+                 item["hdl_source"] = proof
+                 item["origin"] = "hdl"
+                 attributed.append({"id": ci, **proof})
+diff --git a/scripts/quartus_timing_sdk.py b/scripts/quartus_timing_sdk.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/quartus_timing_sdk.py
+@@ -0,0 +1,170 @@
++#!/usr/bin/env python3
++"""Collect minimal SDK source provenance, never vendor source text.
++
++The native Analysis & Synthesis Source Files Read table selects dependencies.
++An immutable image supplies their bytes; literal attributes are derived locally.
++Neither an instantiator location nor a matching module name selects a file.
++"""
++import argparse
++import json
++import os
++from pathlib import Path
++import re
++import stat
++
++from quartus_hdl_source import FAILURE_PATTERN, hdl_attributes, sha
++
++SCHEMA = "misterplex.sdk-constraint-sources.v1"
++HEADER = ["File Name with User-Entered Path", "Used in Netlist", "File Type",
++          "File Name with Absolute Path", "Library"]
++SDK_ROOT = "/opt/intelFPGA"
++
++
++def compiled_sources(data):
++    text = data.decode("utf-8")
++    if FAILURE_PATTERN.search(text):
++        raise ValueError("error-tainted native source-file report")
++    rows, sections, in_section, header, complete = [], 0, False, False, False
++    for number, line in enumerate(text.splitlines(), 1):
++        cells = [cell.strip() for cell in line.strip().split(";")[1:-1]]
++        if cells == ["Analysis & Synthesis Source Files Read"]:
++            sections += 1
++            in_section, header = True, False
++        elif in_section and cells == HEADER:
++            if header:
++                raise ValueError("duplicate native source-file header")
++            header = True
++        elif in_section and header and cells:
++            if len(cells) != 5 or cells[1] not in {"yes", "no"}:
++                raise ValueError("malformed native source-file row")
++            rows.append({"entered": cells[0], "used": cells[1], "type": cells[2],
++                         "absolute": cells[3], "library": cells[4], "report_line": number})
++        elif in_section and header and rows and re.fullmatch(r"\+[-+]+\+", line.strip()):
++            in_section, complete = False, True
++        elif in_section and header and not line.strip():
++            raise ValueError("unterminated native source-file table")
++    if sections != 1 or not rows or not complete:
++        raise ValueError("missing/ambiguous native source-file table")
++    identities = [row["absolute"] for row in rows]
++    if len(identities) != len(set(identities)):
++        raise ValueError("duplicate compiled source dependency")
++    for row in rows:
++        path = Path(row["absolute"])
++        if not row["absolute"] or ".." in path.parts or "\\" in str(path):
++            raise ValueError("unsafe compiled source coordinate")
++    return rows
++
++
++def definitions(filename, text):
++    token = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.S)
++    blank = lambda match: re.sub(r"[^\n]", " ", match.group(0))
++    code = token.sub(blank, text)
++    if Path(filename).suffix.lower() in {".v", ".sv"}:
++        return [{"entity": match.group(1), "line": code.count("\n", 0, match.start()) + 1}
++                for match in re.finditer(r"\bmodule\s+([A-Za-z_][A-Za-z0-9_$]*)\b", code)]
++    if Path(filename).suffix.lower() in {".vhd", ".vhdl"}:
++        code = re.sub(r"--[^\n]*", "", text)
++        return [{"entity": match.group(1), "line": code.count("\n", 0, match.start()) + 1}
++                for match in re.finditer(r"\bentity\s+([A-Za-z_][A-Za-z0-9_]*)\s+is\b", code, re.I)]
++    return []
++
++
++def collect(report, sdk_root, image_id):
++    if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
++        raise ValueError("SDK image must be pinned by full digest")
++    sdk_root = Path(sdk_root).resolve()
++    data = Path(report).read_bytes()
++    rows = compiled_sources(data)
++    dependencies = []
++    for row in rows:
++        if row["used"] != "yes" or not row["absolute"].startswith(SDK_ROOT + "/"):
++            continue
++        relative = row["absolute"][len(SDK_ROOT) + 1:]
++        path = sdk_root / relative
++        try:
++            path.resolve().relative_to(sdk_root)
++        except ValueError:
++            raise ValueError("SDK dependency escapes immutable image root")
++        before = path.stat()
++        if not stat.S_ISREG(before.st_mode) or before.st_size > 32 * 1024**2:
++            raise ValueError("unsupported SDK source dependency")
++        content = path.read_bytes()
++        after = path.stat()
++        if (before.st_ino, before.st_size, before.st_mtime_ns) != \
++                (after.st_ino, after.st_size, after.st_mtime_ns):
++            raise ValueError("SDK dependency changed while reading")
++        attributes, entities = [], []
++        if path.suffix.lower() in {".v", ".sv", ".vhd", ".vhdl"}:
++            text = content.decode("utf-8")
++            attributes = hdl_attributes(relative, text)
++            entities = definitions(relative, text)
++        dependencies.append({"sdk_relative": relative, "sha256": sha(content),
++                             "bytes": len(content), "mode": format(stat.S_IMODE(before.st_mode), "04o"),
++                             "compiled": row, "definitions": entities, "attributes": attributes})
++    return {"schema": SCHEMA, "image_id": image_id, "sdk_root": SDK_ROOT,
++            "native_report": {"sha256": sha(data), "bytes": len(data)},
++            "source_rows": len(rows), "dependencies": dependencies,
++            "source_text_included": False}
++
++
++def validate(catalog, report, image_id):
++    """Validate derivation structure and compiled origin, not source text hashes offline.
++
++    SDK bytes must be re-collected in the pinned image and the resulting catalog
++    bound into reporter provenance by its host driver before using this result.
++    """
++    if catalog.get("schema") != SCHEMA or catalog.get("image_id") != image_id or \
++            catalog.get("sdk_root") != SDK_ROOT or catalog.get("source_text_included") is not False:
++        raise ValueError("SDK identity/schema mismatch")
++    if catalog["native_report"] != {"sha256": sha(report), "bytes": len(report)}:
++        raise ValueError("native SDK source-file report binding mismatch")
++    rows = compiled_sources(report)
++    expected = {row["absolute"]: row for row in rows
++                if row["used"] == "yes" and row["absolute"].startswith(SDK_ROOT + "/")}
++    if catalog["source_rows"] != len(rows) or len(catalog["dependencies"]) != len(expected):
++        raise ValueError("incomplete SDK dependency catalog")
++    seen, attributes = set(), []
++    for dependency in catalog["dependencies"]:
++        relative = dependency["sdk_relative"]
++        path = Path(relative)
++        absolute = SDK_ROOT + "/" + relative
++        if path.is_absolute() or ".." in path.parts or "\\" in relative or \
++                path.as_posix() != relative or absolute in seen:
++            raise ValueError("unsafe/duplicate SDK dependency")
++        seen.add(absolute)
++        if dependency["compiled"] != expected.get(absolute):
++            raise ValueError("SDK source was not selected by native compiled-source evidence")
++        if re.fullmatch(r"[0-9a-f]{64}", dependency["sha256"]) is None or \
++                not isinstance(dependency["bytes"], int) or dependency["bytes"] <= 0 or \
++                re.fullmatch(r"0[0-7]{3}", dependency["mode"]) is None:
++            raise ValueError("invalid SDK dependency identity")
++        for attr in dependency["attributes"]:
++            if attr["file"] != relative or attr["source_sha256"] != dependency["sha256"] or \
++                    attr["statement_sha256"] != sha(attr["statement"].encode()) or \
++                    re.fullmatch(r"[0-9a-f]{64}", attr["attribute_sha256"]) is None or \
++                    {"entity": attr["entity"], "line": attr["entity_line"]} not in dependency["definitions"]:
++                raise ValueError("SDK attribute/definition binding mismatch")
++            if attr["line"] < attr["entity_line"]:
++                raise ValueError("SDK attribute precedes its definition")
++            attributes.append(attr)
++    if seen != set(expected):
++        raise ValueError("missing SDK dependency")
++    return attributes
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--report", type=Path, required=True)
++    parser.add_argument("--image-id", required=True)
++    parser.add_argument("--sdk-root", type=Path, default=Path(SDK_ROOT))
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    catalog = collect(args.report, args.sdk_root, args.image_id)
++    validate(catalog, args.report.read_bytes(), args.image_id)
++    with args.output.open("x") as stream:
++        json.dump(catalog, stream, sort_keys=True, indent=2)
++        stream.write("\n")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/rbf_build.py b/scripts/rbf_build.py
+--- a/scripts/rbf_build.py
++++ b/scripts/rbf_build.py
+@@ -58,6 +58,15 @@
+ status_rc=$?
+ if [ "$compile_rc" -ne 0 ]; then exit "$compile_rc"; fi
+ if [ "$status_rc" -ne 0 ]; then exit "$status_rc"; fi
++reporter_dir=$(dirname "$reporter") || exit 1
++sdk_image=$(cat "$reporter_dir/sdk-image.id") || exit 1
++cp output_files/Plex.map.rpt "$destination/Plex.compiled-sources.rpt" || exit 1
++python3 "$reporter_dir/quartus_timing_sdk.py" \
++    --report "$destination/Plex.compiled-sources.rpt" --image-id "$sdk_image" \
++    --output "$destination/sdk-catalog.json" >"$destination/sdk-catalog.log" 2>&1
++sdk_rc=$?
++printf '%s\\n' "$sdk_rc" >"$destination/sdk-catalog.exit" || exit 1
++if [ "$sdk_rc" -ne 0 ]; then cat "$destination/sdk-catalog.log"; exit "$sdk_rc"; fi
+ sha256sum output_files/Plex.rbf >"$destination/rbf.before.sha256" || exit 1
+ quartus_sta -t "$reporter" "$destination" >"$destination/reporter.log" 2>&1
+ report_rc=$?
+@@ -173,6 +182,154 @@
+ 
+ def write_json(path, value):
+     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
++
++
++def retain_analysis_project(work, stage, exception_type=None, inventory_safe=True, cohort_metadata=None):
++    """Inventory retained local output without claiming a database is fitted."""
++    project = work / "project"
++    record = {
++        "schema": "misterplex.retained-analysis-project.v2",
++        "retention_requested": True, "backend": "local-container",
++        "transaction_path": str(work.absolute()), "project_path": str(project.absolute()),
++        "path": "project", "stage": stage, "exception_type": exception_type,
++        "recorded_at": datetime.now(timezone.utc).isoformat(), "pid": os.getpid(),
++        "cohort": None, "metadata": {}, "files": {}, "database_files": [],
++        "compile_exit": None, "reporter_exit": None, "sdk_catalog_exit": None,
++        "inventory_complete": False, "input_files_match": False,
++        "database_status": "missing", "fitted_database_validated": False,
++        "analysis_or_deployment_approval": "NOT_GRANTED",
++        "publication": "LOCAL_ONLY_NO_AUTOMATIC_DATABASE_OR_SDK_EXPORT",
++    }
++    process_stat = Path("/proc/self/stat").read_text()
++    record["process_birth_ticks"] = int(process_stat[process_stat.rfind(")") + 2:].split()[19])
++    if not inventory_safe:
++        record["database_status"] = "ownership-unresolved"
++        if cohort_metadata is not None:
++            record["cohort"] = {key: cohort_metadata.get(key) for key in (
++                "source_sha256", "input_sha256", "image_id", "archive_sha256",
++                "source_archive_sha256", "fpga_video_build_id")}
++        with (work / "analysis-project.json").open("x") as stream:
++            stream.write(json.dumps(record, sort_keys=True, indent=2) + "\n")
++        return record
++    failure = None
++
++    def optional_stat(path):
++        try:
++            return os.stat(path, follow_symlinks=False)
++        except FileNotFoundError:
++            return None
++
++    def file_identity(path, text_limit=None, parent=None, expected=None):
++        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
++        with os.fdopen(descriptor, "rb") as stream:
++            before = os.fstat(stream.fileno())
++            if not stat.S_ISREG(before.st_mode):
++                raise RuntimeError("REFUSED: nonregular retained project dependency")
++            if expected is not None and (before.st_dev, before.st_ino) != (expected.st_dev, expected.st_ino):
++                raise RuntimeError("REFUSED: retained project dependency changed before opening")
++            if text_limit is not None and before.st_size > text_limit:
++                raise RuntimeError("REFUSED: oversized retained project metadata")
++            value = hashlib.sha256()
++            chunks = []
++            bytes_read = 0
++            for data in iter(lambda: stream.read(1024 * 1024), b""):
++                value.update(data)
++                if text_limit is not None:
++                    bytes_read += len(data)
++                    if bytes_read > text_limit:
++                        raise RuntimeError("REFUSED: retained metadata grew past its byte limit")
++                    chunks.append(data)
++            after = os.fstat(stream.fileno())
++        signature = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
++        if signature(before) != signature(after):
++            raise RuntimeError("REFUSED: retained project dependency changed during hashing")
++        identity = {"sha256": value.hexdigest(), "bytes": after.st_size,
++                    "mode": format(stat.S_IMODE(after.st_mode), "04o")}
++        return identity if text_limit is None else (identity, b"".join(chunks))
++
++    @contextlib.contextmanager
++    def directory(name, expected, parent=None):
++        descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
++        try:
++            actual = os.fstat(descriptor)
++            if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
++                raise RuntimeError("REFUSED: retained project directory changed before opening")
++            yield descriptor
++        finally:
++            os.close(descriptor)
++
++    def inventory(parent, relative=PurePosixPath()):
++        # Unlike Path.rglob/is_dir, these APIs propagate enumeration and stat errors.
++        with os.scandir(parent) as entries:
++            names = sorted(entry.name for entry in entries)
++        for name in names:
++            info = os.stat(name, dir_fd=parent, follow_symlinks=False)
++            path = relative / name
++            if stat.S_ISDIR(info.st_mode):
++                with directory(name, info, parent) as child:
++                    inventory(child, path)
++            elif stat.S_ISREG(info.st_mode):
++                record["files"][str(path)] = file_identity(name, parent=parent, expected=info)
++            else:
++                raise RuntimeError("REFUSED: linked or nonregular retained project dependency")
++
++    try:
++        inputs = None
++        for name in ("inputs.json", "tool.json", "reporter/provenance.json"):
++            path = work / name
++            info = optional_stat(path)
++            if info is not None:
++                record["metadata"][name], content = file_identity(path, 4 * 1024**2, expected=info)
++                if name == "inputs.json":
++                    inputs = json.loads(content)
++                    if digest(json.dumps(inputs["input_files"], sort_keys=True).encode()) != inputs["input_sha256"]:
++                        raise RuntimeError("REFUSED: retained input map identity mismatch")
++                    record["cohort"] = {key: inputs.get(key) for key in (
++                        "source_sha256", "input_sha256", "image_id", "archive_sha256",
++                        "source_archive_sha256", "fpga_video_build_id")}
++                elif name == "tool.json":
++                    tool = json.loads(content)
++                    record["tool_identity"] = {key: tool.get(key) for key in (
++                        "image_id", "container", "container_id", "docker_endpoint", "docker_daemon_id")}
++                    if inputs is not None and tool["image_id"] != inputs["image_id"]:
++                        raise RuntimeError("REFUSED: retained tool/input image identity mismatch")
++        for key, name in (("compile_exit", "compile.exit"), ("reporter_exit", "reporter.exit"),
++                          ("sdk_catalog_exit", "sdk-catalog.exit")):
++            path = work / "timing" / name
++            info = optional_stat(path)
++            if info is not None:
++                record["metadata"]["timing/" + name], content = file_identity(path, 16, expected=info)
++                text = content.decode()
++                if not re.fullmatch(r"[0-9]{1,3}\n", text) or int(text) > 255:
++                    raise RuntimeError("REFUSED: malformed retained stage exit")
++                record[key] = int(text)
++        project_info = optional_stat(project)
++        if project_info is not None and stat.S_ISLNK(project_info.st_mode):
++            raise RuntimeError("REFUSED: linked retained project")
++        if project_info is not None and not stat.S_ISDIR(project_info.st_mode):
++            raise RuntimeError("REFUSED: non-directory retained project")
++        if project_info is not None:
++            with directory(project, project_info) as project_fd:
++                inventory(project_fd)
++            record["input_files_match"] = inputs is not None and all(
++                record["files"].get(name, {}).get("sha256") == expected
++                for name, expected in inputs["input_files"].items())
++        record["inventory_complete"] = True
++    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
++        failure = exc
++        record["inventory_error_type"] = type(exc).__name__
++    record["database_files"] = [name for name in record["files"]
++                                if name.startswith(("db/", "incremental_db/"))]
++    if failure:
++        record["database_status"] = "inventory-incomplete"
++    elif record["database_files"]:
++        record["database_status"] = ("retained-unvalidated" if record["compile_exit"] == 0 and
++                                     record["input_files_match"] else "incomplete-or-unvalidated")
++    with (work / "analysis-project.json").open("x") as stream:
++        stream.write(json.dumps(record, sort_keys=True, indent=2) + "\n")
++    if failure:
++        raise RuntimeError("REFUSED: retained project inventory is incomplete; project was not deleted") from failure
++    return record
+ 
+ 
+ @contextlib.contextmanager
+@@ -485,8 +642,10 @@
+     directory.mkdir()
+     files = {"run.sh": TIMING_RUNNER.encode(),
+              "timing.tcl": Path(__file__).with_name("quartus_timing_paths.tcl").read_bytes()}
+-    for name in ("check_quartus_timing.py", "quartus_sta_report.py", "quartus_timing_observer.py"):
++    for name in ("check_quartus_timing.py", "quartus_sta_report.py", "quartus_timing_observer.py",
++                 "quartus_timing_sdk.py", "quartus_hdl_source.py"):
+         files[name] = Path(__file__).with_name(name).read_bytes()
++    files["sdk-image.id"] = (meta["image_id"] + "\n").encode()
+     if digest((work / "inputs.tar").read_bytes()) != meta["archive_sha256"]:
+         raise RuntimeError("REFUSED: reporter HDL catalog input archive mismatch")
+     hdl_sources, sdc_sources = {}, {}
+@@ -502,7 +661,7 @@
+                 raise RuntimeError("REFUSED: HDL catalog source hash mismatch")
+             if suffix == ".sdc":
+                 sdc_sources[member.name] = {"sha256": digest(data), "text": data.decode("utf-8")}
+-            elif b"SDC_STATEMENT" in data:
++            else:
+                 hdl_sources[member.name] = {"sha256": digest(data), "text": data.decode("utf-8")}
+     files["constraint-sources.json"] = (json.dumps({
+         "schema": "misterplex.constraint-sources.v1", "input_sha256": meta["input_sha256"],
+@@ -514,7 +673,7 @@
+         (directory / name).write_bytes(data)
+         (directory / name).chmod(0o444)
+     write_json(directory / "provenance.json", {
+-        "schema": "misterplex.timing-reporter.v3",
++        "schema": "misterplex.timing-reporter.v4",
+         "files": {name: digest(data) for name, data in files.items()},
+         "driver_sha256": digest(Path(__file__).read_bytes()),
+         "image_id": meta["image_id"], "input_sha256": meta["input_sha256"],
+@@ -531,9 +690,10 @@
+     if provenance["image_id"] != meta["image_id"] or provenance["input_sha256"] != meta["input_sha256"]:
+         raise RuntimeError("REFUSED: timing reporter provenance belongs to different inputs/image")
+     expected_files = {"run.sh", "timing.tcl", "check_quartus_timing.py", "quartus_sta_report.py",
+-                      "quartus_timing_observer.py", "constraint-sources.json", "observation.id"}
+-    if provenance["schema"] != "misterplex.timing-reporter.v3":
+-        raise RuntimeError("REFUSED: current build requires a v3 timing reporter")
++                      "quartus_timing_observer.py", "constraint-sources.json", "observation.id",
++                      "quartus_timing_sdk.py", "quartus_hdl_source.py", "sdk-image.id"}
++    if provenance["schema"] != "misterplex.timing-reporter.v4":
++        raise RuntimeError("REFUSED: current build requires a v4 timing reporter")
+     if set(provenance["files"]) != expected_files:
+         raise RuntimeError("REFUSED: unexpected timing reporter files")
+     if {path.name for path in directory.iterdir()} != expected_files | {"provenance.json"}:
+@@ -626,7 +786,7 @@
+                 "rbf_sha256": after, "reports": records, "timing_acceptance": "NOT_GRANTED"}
+     if not (directory / "extended.summary").is_file():
+         raise RuntimeError("REFUSED: complete v3 observation/scoped evidence is required")
+-    if provenance["schema"] == "misterplex.timing-reporter.v3":
++    if provenance["schema"] == "misterplex.timing-reporter.v4":
+         # The SSH worker is standalone; use only its hash-bound sidecar modules,
+         # not the host's working-tree imports or an inherited PYTHONPATH.
+         collector = (
+@@ -946,7 +1106,8 @@
+     run([sys.executable, root / "scripts/check_quartus_fit_hierarchy.py",
+          "--fit-rpt", work / "Plex.fit.rpt", "--map-rpt", work / "Plex.map.rpt",
+          "--log", work / "compile.log", "--qsf", project / "Plex.qsf",
+-         "--input-manifest", work / "inputs.json", *extra])
++         "--input-manifest", work / "inputs.json",
++         "--result-json", work / "fit-hierarchy.json", *extra])
+     sdcs = [arg for path in sorted(project.rglob("*.sdc")) for arg in ("--sdc", str(path))]
+     if not sdcs:
+         raise RuntimeError("REFUSED: snapshot has no SDC files for exclusion validation")
+@@ -990,10 +1151,14 @@
+     ap.add_argument("--snapshot", type=Path)
+     ap.add_argument("--derive-video-build-id", action="store_true",
+                     help="render nonzero FPGA_VIDEO_BUILD_ID from original source SHA-256 into the snapshot only")
++    ap.add_argument("--retain-project", action="store_true",
++                    help="local-container only: retain exact project/database on success and failure; no fit/analysis approval")
+     args = ap.parse_args(argv)
+     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]*", args.slot):
+         ap.error("slot must start with a letter, digit, underscore or hyphen; no path components")
+     local = args.backend == "local-container"
++    if args.retain_project and not local:
++        ap.error("--retain-project is local-container only; remote cleanup and transfer policy are unchanged")
+     if local and os.environ.get("MISTERPLEX_ALLOW_LOCAL_FIT") != "1":
+         raise RuntimeError("REFUSED: local fit requires MISTERPLEX_ALLOW_LOCAL_FIT=1")
+     project = args.project.resolve()
+@@ -1027,6 +1192,8 @@
+                                       "backend": args.backend, "phase": "transaction-started"})
+         frozen_reference = None
+         execution = None
++        meta = None
++        stage = "transaction-started"
+         try:
+             if reference:
+                 frozen_reference = out / "reference.rbf"
+@@ -1037,9 +1204,13 @@
+                     docker = require_local_daemon()
+                     image = image_id(docker, os.environ.get("MISTERPLEX_QUARTUS_IMAGE", IMAGE))
+                     date = container_build_date(docker, image) if not args.snapshot and (project / "sys/build_id.tcl").is_file() else None
++                    stage = "snapshot"
+                     meta = snapshot(project, out, image, processors, args.snapshot, args.derive_video_build_id, date)
++                    stage = "prepare-reporting"
+                     prepare_reporting(out, meta)
++                    stage = "compile-and-report"
+                     compile_snapshot(out, meta, execution, docker)
++                    stage = "validate"
+                     validate(ROOT, out, frozen_reference)
+             else:
+                 host = os.environ.get("MISTER_REMOTE_HOST", "docker")
+@@ -1068,12 +1239,27 @@
+                     (out / name).unlink()
+             print(f"Artifacts: {out}")
+             print("Build only: no promotion/deploy authorized; UNVERIFIED candidates require a serial replay.")
++            stage = "complete"
+         finally:
+             if execution is not None and not execution.safe:
+                 controller.retain(f"execution unresolved; preserve {out}")
+                 repository.retain(f"execution unresolved; preserve {out}")
+-            if controller.safe and repository.safe:
+-                shutil.rmtree(out / "project", ignore_errors=True)
++            safe = controller.safe and repository.safe
++            if args.retain_project:
++                original_error = sys.exc_info()[1]
++                try:
++                    retain_analysis_project(out, stage, type(original_error).__name__ if original_error is not None else None,
++                                            inventory_safe=safe, cohort_metadata=meta)
++                except (OSError, RuntimeError, ValueError) as retention_error:
++                    if original_error is None:
++                        raise
++                    try:
++                        print(f"Retention failed; preserving original build failure: {retention_error}", file=sys.stderr)
++                    except OSError:
++                        pass  # A secondary diagnostic sink cannot replace the original failure.
++            if safe:
++                if not args.retain_project:
++                    shutil.rmtree(out / "project", ignore_errors=True)
+                 if frozen_reference:
+                     frozen_reference.unlink(missing_ok=True)
+                 controller.confirmed()
+diff --git a/scripts/run_instrumented_sta.sh b/scripts/run_instrumented_sta.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/run_instrumented_sta.sh
+@@ -0,0 +1,47 @@
++#!/bin/sh
++set -eu
++work=$1
++reporter=$work/reporter
++out=$work/output
++for entry in "$out"/* "$out"/.[!.]* "$out"/..?*; do
++    if [ -e "$entry" ] || [ -L "$entry" ]; then
++        echo "REFUSED: instrumented timing destination is not empty" >&2
++        exit 1
++    fi
++done
++sdk_image=$(cat "$reporter/sdk-image.id") || exit 1
++cp output_files/Plex.sta.rpt "$out/Plex.sta.rpt"
++cp output_files/Plex.sta.rpt "$out/Plex.compile-produced.sta.rpt"
++cp output_files/Plex.fit.rpt "$out/Plex.fit.rpt"
++cp output_files/Plex.map.rpt "$out/Plex.map.rpt"
++cp output_files/Plex.map.rpt "$out/Plex.compiled-sources.rpt"
++sdk_rc=0
++python3 "$reporter/quartus_timing_sdk.py" --report "$out/Plex.compiled-sources.rpt" --image-id "$sdk_image" --output "$out/sdk-catalog.json" >"$out/sdk-catalog.log" 2>&1 || sdk_rc=$?
++printf '%s\n' "$sdk_rc" >"$out/sdk-catalog.exit"
++if [ "$sdk_rc" -ne 0 ]; then cat "$out/sdk-catalog.log"; exit "$sdk_rc"; fi
++sha256sum output_files/Plex.rbf >"$out/rbf.before.sha256"
++cp output_files/Plex.rbf "$out/Plex.rbf"
++report_rc=0
++quartus_sta -t "$reporter/timing.tcl" "$out" >"$out/reporter.log" 2>&1 || report_rc=$?
++printf '%s\n' "$report_rc" >"$out/reporter.exit"
++if [ "$report_rc" -ne 0 ]; then cat "$out/reporter.log"; exit "$report_rc"; fi
++identity=$(cat "$reporter/observation.id") || exit 1
++completion=$(cat "$out/observer.complete") || exit 1
++if [ "$completion" != "misterplex.timing-observer.v1:$identity" ]; then
++    echo "REFUSED: timing observation did not complete" >&2
++    exit 1
++fi
++diagnostic_rc=0
++grep -Ei '^[[:space:]]*(Error([[:space:]]*\([0-9]+\))?[[:space:]]*:|Critical Warning[[:space:]]*\(332008\)[[:space:]]*:|MPX_OBSERVER_FAILURE)|Read_sdc failed' "$out/reporter.log" || diagnostic_rc=$?
++if [ "$diagnostic_rc" -eq 0 ]; then
++    echo "REFUSED: failed/unreadable timing observation diagnostics" >&2
++    exit 1
++elif [ "$diagnostic_rc" -ne 1 ]; then
++    echo "REFUSED: diagnostic grep failed" >&2
++    exit "$diagnostic_rc"
++fi
++sha256sum output_files/Plex.rbf >"$out/rbf.after.sha256"
++if ! cmp -s "$out/rbf.before.sha256" "$out/rbf.after.sha256"; then
++    echo "REFUSED: timing reporter changed Plex.rbf" >&2
++    exit 1
++fi
+diff --git a/tests/unit/test_quartus_fit_hierarchy.py b/tests/unit/test_quartus_fit_hierarchy.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/test_quartus_fit_hierarchy.py
+@@ -0,0 +1,295 @@
++#!/usr/bin/env python3
++"""Captured-mode hierarchy policy fixtures; never invokes Quartus."""
++import hashlib
++import contextlib
++import importlib.util
++import io
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import sys
++import tarfile
++import unittest
++from unittest import mock
++import uuid
++
++ROOT = Path(__file__).resolve().parents[2]
++CHECKER = ROOT / "scripts/check_quartus_fit_hierarchy.py"
++CONFIG = ROOT / "tests/fixtures/critical_fit_hierarchy.json"
++spec = importlib.util.spec_from_file_location("hierarchy_captured_test", CHECKER)
++hierarchy = importlib.util.module_from_spec(spec)
++sys.modules[spec.name] = hierarchy
++spec.loader.exec_module(hierarchy)
++
++
++class HierarchyProfiles(unittest.TestCase):
++    def setUp(self):
++        self.work = Path(os.environ.get("MISTERPLEX_TEST_WORK", ROOT / "build")) / (
++            "hierarchy-policy-" + uuid.uuid4().hex)
++        self.work.mkdir(parents=True)
++        self.config = json.loads(CONFIG.read_text())
++
++    def tearDown(self):
++        shutil.rmtree(self.work)
++
++    def report(self, bits=81920, m10ks=96, registers=500, missing=None):
++        rows = ["; Compilation Hierarchy Node ; Full Hierarchy Name ; Entity Name ; "
++                "Combinational ALUTs ; Dedicated Logic Registers ; Block Memory Bits ; M10Ks ; DSP Blocks ;"]
++        for spec in self.config["modules"]:
++            if spec["name"] == missing:
++                continue
++            frame = spec["name"] == "ddr_frame_store"
++            rows.append(
++                f"; |{spec['hierarchy_contains']}| ; |sys_top|{spec['hierarchy_contains']} ; {spec['entity']} ; "
++                f"{spec.get('min_comb_aluts', 0)} ; {registers if frame else spec.get('min_registers', 0)} ; "
++                f"{bits if frame else 0} ; {m10ks if frame else 0} ; 0 ;")
++        path = self.work / "Plex.fit.rpt"
++        path.write_text("\n".join(rows) + "\n")
++        return path
++
++    def check(self, qsf=None, bad_hash=False, no_manifest=False, extra=(), **resources):
++        args = [sys.executable, str(CHECKER), "--fit-rpt", str(self.report(**resources)), *extra]
++        if qsf is not None:
++            path = self.work / "Plex.qsf"
++            path.write_text(qsf)
++            manifest = self.work / "inputs.json"
++            self.manifest(path, manifest, bad_hash=bad_hash)
++            args.extend(("--qsf", str(path)))
++            if not no_manifest:
++                args.extend(("--input-manifest", str(manifest)))
++        return subprocess.run(args, text=True, capture_output=True)
++
++    def manifest(self, qsf, manifest=None, bad_hash=False):
++        manifest = manifest or self.work / "inputs.json"
++        files = {"Plex.qsf": "0" * 64 if bad_hash else hashlib.sha256(qsf.read_bytes()).hexdigest()}
++        data = {"input_files": files,
++                "input_sha256": hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()}
++        manifest.write_text(json.dumps(data))
++        return data
++
++    def captured(self, value=1):
++        qsf = self.work / "project/Plex.qsf"
++        qsf.parent.mkdir(exist_ok=True)
++        qsf.write_text(f'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320={value}"\n'
++                       'set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"\n')
++        self.manifest(qsf)
++        return qsf
++
++    def published(self, cwd=None, **resources):
++        receipt = self.work / (uuid.uuid4().hex + ".json")
++        command = [sys.executable, str(CHECKER), "--fit-rpt", str(self.report(**resources)),
++                   "--result-json", str(receipt)]
++        result = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
++        return result, json.loads(receipt.read_text())
++
++    def test_baseline_floor_is_unchanged(self):
++        frame = next(spec for spec in self.config["modules"] if spec["name"] == "ddr_frame_store")
++        self.assertEqual(frame["min_block_memory_bits"], 100000)
++        result = self.check()
++        self.assertEqual(result.returncode, 1)
++        self.assertIn("required 100000", result.stderr)
++        self.assertEqual(self.check(bits=100000).returncode, 0)
++
++    def test_only_captured_enabled_macro_selects_fpga320(self):
++        enabled = 'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n'
++        result = self.check(qsf=enabled)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn("PROFILE: fpga320", result.stdout)
++        for literal in ('"FPGA_VIDEO_320=1"', "{FPGA_VIDEO_320=1}", "FPGA_VIDEO_320=1"):
++            self.assertEqual(self.check(qsf=f"set_global_assignment -name VERILOG_MACRO {literal} # captured\n").returncode, 0)
++        for qsf in ("#" + enabled, enabled.replace("=1", "=0"), "# no feature macro\n"):
++            result = self.check(qsf=qsf)
++            self.assertEqual(result.returncode, 1)
++            self.assertIn("PROFILE: baseline", result.stdout)
++        self.assertEqual(self.check(qsf=enabled, bad_hash=True).returncode, 4)
++        self.assertEqual(self.check(qsf=enabled, no_manifest=True).returncode, 4)
++        self.assertEqual(self.check(qsf=enabled + enabled.replace("=1", "=0")).returncode, 4)
++
++    def test_fpga320_keeps_presence_register_and_m10k_floors(self):
++        qsf = 'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n'
++        for resource in ({"bits": 81919}, {"m10ks": 95}, {"registers": 499},
++                         {"missing": "ddr_frame_store"}, {"missing": "stream_path"},
++                         {"missing": "ddr_bitstream_reader"}):
++            with self.subTest(resource=resource):
++                result = self.check(qsf=qsf, **resource)
++                self.assertEqual(result.returncode, 1, result.stdout)
++        result = self.check(qsf=qsf, missing="stream_path", extra=("--allow-missing", "stream_path"))
++        self.assertEqual(result.returncode, 4)
++
++    def test_removal_and_comb_loop_guards_still_apply(self):
++        log = self.work / "compile.log"
++        for text in (
++            "Warning: ddr_frame_store removed because output is constant GND\n",
++            "Warning (332125): Found combinational loop\n"
++            'Warning (332126): Node "present|ddr_frame_store:fstore|comb"\n',
++        ):
++            log.write_text(text)
++            result = self.check(qsf='set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n',
++                                extra=("--log", str(log)))
++            self.assertEqual(result.returncode, 1)
++
++    def test_mapped_estimate_cannot_hide_undersized_or_missing_fitted_fpga320(self):
++        mapped = self.work / "Plex.map.rpt"
++        mapped.write_text(self.report(bits=159744, m10ks=96, registers=2000).read_text())
++        qsf = 'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n'
++        for resources in ({"bits": 81919}, {"missing": "ddr_frame_store"}):
++            result = self.check(qsf=qsf, extra=("--map-rpt", str(mapped)), **resources)
++            self.assertEqual(result.returncode, 1, result.stdout)
++
++    def test_published_profile_uses_adjacent_capture_not_opposite_working_tree(self):
++        other = self.work / "opposite-worktree"
++        other.mkdir()
++        for captured, opposite, bits in ((1, 0, 81920), (0, 1, 100000)):
++            with self.subTest(captured=captured):
++                qsf = self.captured(captured)
++                (other / "Plex.qsf").write_text(
++                    f'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320={opposite}"\n')
++                result, record = self.published(cwd=other, bits=bits)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(record["profile"], "fpga320" if captured else "baseline")
++                self.assertEqual(record["authority"]["qsf"]["sha256"],
++                                 hashlib.sha256(qsf.read_bytes()).hexdigest())
++                self.assertEqual(record["authority"]["input_manifest"]["sha256"],
++                                 hashlib.sha256((self.work / "inputs.json").read_bytes()).hexdigest())
++                self.assertEqual(record["authority"]["qsf"], record["artifacts"]["qsf"])
++                frame = next(row for row in record["modules"] if row["policy"]["name"] == "ddr_frame_store")
++                self.assertEqual(frame["policy"]["min_block_memory_bits"], 81920 if captured else 100000)
++                if captured:
++                    self.assertEqual(frame["policy"]["min_m10ks"], 96)
++        result, record = self.published(bits=81920)
++        self.assertEqual(result.returncode, 1)
++        self.assertEqual(record["status"], "rejected")
++        self.assertIn("required 100000", result.stderr)
++
++    def test_missing_malformed_or_mismatched_captured_authority_refuses(self):
++        for variant in ("missing-qsf", "missing-manifest", "json-syntax", "json-list",
++                        "bad-files", "bad-aggregate", "bad-qsf-hash", "malformed-qsf", "implicit-macro"):
++            with self.subTest(variant=variant):
++                qsf = self.captured()
++                manifest = self.work / "inputs.json"
++                if variant == "missing-qsf":
++                    qsf.unlink()
++                elif variant == "missing-manifest":
++                    manifest.unlink()
++                elif variant in ("json-syntax", "json-list", "bad-files"):
++                    manifest.write_text({"json-syntax": "{", "json-list": "[]",
++                                         "bad-files": '{"input_files":[]}' }[variant])
++                elif variant == "bad-aggregate":
++                    data = json.loads(manifest.read_text())
++                    data["input_sha256"] = "0" * 64
++                    manifest.write_text(json.dumps(data))
++                elif variant == "bad-qsf-hash":
++                    qsf.write_text("# differs from captured manifest\n")
++                else:
++                    qsf.write_text('set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320' +
++                                   ('=1\n' if variant == "malformed-qsf" else '"\n'))
++                    self.manifest(qsf)
++                result, record = self.published()
++                self.assertEqual(result.returncode, 4, result.stderr)
++                self.assertEqual(record["status"], "refused")
++                self.assertIsNone(record["profile"])
++                self.assertNotIn("FIT_HIERARCHY_PROFILE: baseline", result.stdout)
++
++    def test_unreadable_captured_authority_and_discovery_errors_propagate(self):
++        qsf = self.captured()
++        command = ["hierarchy", "--fit-rpt", str(self.report())]
++        read = Path.read_bytes
++        lstat = Path.lstat
++        for denied in (qsf, self.work / "inputs.json"):
++            def unreadable(path):
++                if path == denied:
++                    raise PermissionError("host fixture denied captured authority")
++                return read(path)
++            with self.subTest(path=denied), mock.patch.object(Path, "read_bytes", unreadable), \
++                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++                self.assertEqual(hierarchy.main(command), 4)
++        def denied_discovery(path):
++            if path == self.work / "inputs.json":
++                raise OSError("host fixture discovery failure")
++            return lstat(path)
++        with mock.patch.object(Path, "lstat", denied_discovery), \
++                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++            self.assertEqual(hierarchy.main(command), 4)
++        archive = self.work / "inputs.tar"
++        with tarfile.open(archive, "w") as tar:
++            tar.add(qsf, arcname="Plex.qsf")
++        manifest = self.work / "inputs.json"
++        data = json.loads(manifest.read_text())
++        data["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
++        manifest.write_text(json.dumps(data))
++        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
++            hierarchy.captured_profile(qsf, manifest, {}, archive)
++        shutil.rmtree(qsf.parent)
++        denied = archive
++        with mock.patch.object(Path, "read_bytes", unreadable), \
++                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++            self.assertEqual(hierarchy.main(command), 4)
++
++    def test_no_capture_cannot_publish_or_replace_an_existing_receipt(self):
++        result, record = self.published(bits=100000)
++        self.assertEqual(result.returncode, 4)
++        self.assertIsNone(record["profile"])
++        self.captured()
++        target = self.work / "prior-result.json"
++        target.write_text("older result, not this transaction\n")
++        result = subprocess.run([sys.executable, str(CHECKER), "--fit-rpt", str(self.report()),
++                                 "--result-json", str(target)], text=True, capture_output=True)
++        self.assertEqual(result.returncode, 4)
++        self.assertEqual(target.read_text(), "older result, not this transaction\n")
++        self.assertNotIn("PASS fit hierarchy", result.stdout)
++
++    def test_normal_cleanup_uses_verified_archive_without_extracting_project(self):
++        for value, bits in ((1, 81920), (0, 100000)):
++            with self.subTest(value=value):
++                qsf = self.captured(value)
++                archive = self.work / "inputs.tar"
++                with tarfile.open(archive, "w") as tar:
++                    tar.add(qsf, arcname="Plex.qsf")
++                manifest = self.work / "inputs.json"
++                data = json.loads(manifest.read_text())
++                data["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
++                manifest.write_text(json.dumps(data))
++                shutil.rmtree(qsf.parent)
++                result, record = self.published(bits=bits)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(record["profile"], "fpga320" if value else "baseline")
++                self.assertEqual(record["authority"]["qsf"]["member"], "Plex.qsf")
++                self.assertEqual(record["authority"]["qsf"]["archive"], record["artifacts"]["input_archive"])
++                self.assertFalse(qsf.parent.exists())
++        archive.write_bytes(b"mismatched captured archive")
++        result, record = self.published()
++        self.assertEqual(result.returncode, 4)
++        self.assertIsNone(record["profile"])
++
++    def test_archive_missing_duplicate_nonregular_or_invalid_qsf_refuses(self):
++        for variant in ("absent", "duplicate", "symlink", "wrong-qsf", "corrupt"):
++            with self.subTest(variant=variant):
++                qsf = self.captured()
++                archive = self.work / "inputs.tar"
++                with tarfile.open(archive, "w") as tar:
++                    if variant == "duplicate":
++                        tar.add(qsf, arcname="Plex.qsf")
++                        tar.add(qsf, arcname="Plex.qsf")
++                    elif variant == "symlink":
++                        member = tarfile.TarInfo("Plex.qsf")
++                        member.type, member.linkname = tarfile.SYMTYPE, "other.qsf"
++                        tar.addfile(member)
++                    elif variant == "wrong-qsf":
++                        qsf.write_text("# wrong QSF\n")
++                        tar.add(qsf, arcname="Plex.qsf")
++                if variant == "corrupt":
++                    archive.write_bytes(b"not a tar")
++                manifest = self.work / "inputs.json"
++                data = json.loads(manifest.read_text())
++                data["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
++                manifest.write_text(json.dumps(data))
++                shutil.rmtree(qsf.parent)
++                result, record = self.published()
++                self.assertEqual(result.returncode, 4, result.stderr)
++                self.assertIsNone(record["profile"])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/unit/test_quartus_timing.py b/tests/unit/test_quartus_timing.py
+--- a/tests/unit/test_quartus_timing.py
++++ b/tests/unit/test_quartus_timing.py
+@@ -174,20 +174,24 @@
+         manifest = json.loads((self.timing / "manifest.json").read_text())
+         reporter = self.work / "reporter"
+         provenance = json.loads((reporter / "provenance.json").read_text())
+-        provenance["schema"] = "misterplex.timing-reporter.v3"
++        provenance["schema"] = "misterplex.timing-reporter.v4"
+         provenance["input_sha256"] = inputs["input_sha256"]
+-        for name in ("check_quartus_timing.py", "quartus_sta_report.py", "quartus_timing_observer.py"):
++        for name in ("check_quartus_timing.py", "quartus_sta_report.py", "quartus_timing_observer.py",
++                     "quartus_timing_sdk.py", "quartus_hdl_source.py"):
+             data = (ROOT / "scripts" / name).read_bytes()
+             (reporter / name).write_bytes(data)
+             provenance["files"][name] = hashlib.sha256(data).hexdigest()
+         (reporter / "observation.id").write_text(identity + "\n")
++        (reporter / "sdk-image.id").write_text(provenance["image_id"] + "\n")
+         (reporter / "constraint-sources.json").write_text(json.dumps({
+             "schema": "misterplex.constraint-sources.v1", "input_sha256": inputs["input_sha256"],
+             "hdl": {}, "sdc": {p.name: {"sha256": inputs["input_files"][p.name], "text": p.read_text()}
+                               for p in (sdc, inactive)}}))
+-        for name in ("observation.id", "constraint-sources.json"):
++        for name in ("observation.id", "constraint-sources.json", "sdk-image.id"):
+             provenance["files"][name] = hashlib.sha256((reporter / name).read_bytes()).hexdigest()
+         (reporter / "provenance.json").write_text(json.dumps(provenance))
++        from test_rbf_build import write_fake_sdk
++        write_fake_sdk(self.timing)
+         (self.timing / "observer.summary").write_text(
+             f"schema=misterplex.timing-observer.v1\nobservation_id={identity}\nstate=complete\n"
+             "failures=0\nenters=2\nleaves=2\nread_enters=1\nread_leaves=1\npending=0\nevents=8\n")
+diff --git a/tests/unit/test_rbf_build.py b/tests/unit/test_rbf_build.py
+--- a/tests/unit/test_rbf_build.py
++++ b/tests/unit/test_rbf_build.py
+@@ -25,8 +25,29 @@
+ build = importlib.util.module_from_spec(spec)
+ spec.loader.exec_module(build)
+ 
++MOCK_SOURCE_TABLE = (
++    "; Analysis & Synthesis Source Files Read ;\n"
++    "; File Name with User-Entered Path ; Used in Netlist ; File Type ; File Name with Absolute Path ; Library ;\n"
++    "; fixture.v ; yes ; User Verilog HDL File ; /build/fixture.v ; work ;\n+---+---+\n\n")
++
++
++def write_fake_sdk(timing):
++    """No vendor dependency: synthetic compiler source inventory only."""
++    from quartus_timing_sdk import SCHEMA, SDK_ROOT
++    report = MOCK_SOURCE_TABLE.encode()
++    image = (timing.parent / "reporter/sdk-image.id").read_text().strip()
++    (timing / "Plex.compiled-sources.rpt").write_bytes(report)
++    (timing / "sdk-catalog.json").write_text(json.dumps({
++        "schema": SCHEMA, "image_id": image, "sdk_root": SDK_ROOT,
++        "native_report": {"bytes": len(report), "sha256": build.digest(report)},
++        "source_rows": 1, "dependencies": [], "source_text_included": False}))
++    (timing / "sdk-catalog.exit").write_text("0\n")
++    (timing / "sdk-catalog.log").write_text("")
++
++
+ def write_fake_extended(timing):
+     """Complete synthetic v3 evidence for command-only Docker/SSH fixtures."""
++    write_fake_sdk(timing)
+     identity = (timing.parent / "reporter/observation.id").read_text().strip()
+     events = [
+         (0, "begin", -1, "observer", 0, identity.encode().hex()),
+@@ -139,7 +160,7 @@
+ 
+     def make_snapshot(self, name="first", **kwargs):
+         dest = self.work / name
+-        meta = build.snapshot(self.project, dest, "sha256:fixture", **kwargs)
++        meta = build.snapshot(self.project, dest, kwargs.pop("image", "sha256:fixture"), **kwargs)
+         build.prepare_reporting(dest, meta)
+         return dest, meta
+ 
+@@ -459,10 +480,11 @@
+             self.assertIn(required, tcl)
+         self.assertNotIn("set_global_assignment", tcl)
+         self.assertNotIn("quartus_fit", tcl)
+-        self.assertEqual(provenance["schema"], "misterplex.timing-reporter.v3")
++        self.assertEqual(provenance["schema"], "misterplex.timing-reporter.v4")
+         self.assertEqual(set(provenance["files"]),
+                          {"run.sh", "timing.tcl", "check_quartus_timing.py", "quartus_sta_report.py",
+-                          "quartus_timing_observer.py", "constraint-sources.json", "observation.id"})
++                          "quartus_timing_observer.py", "constraint-sources.json", "observation.id",
++                          "quartus_timing_sdk.py", "quartus_hdl_source.py", "sdk-image.id"})
+         for name in provenance["files"]:
+             self.assertFalse((work / "reporter" / name).stat().st_mode & 0o222)
+         self.assertEqual(provenance["input_sha256"], meta["input_sha256"])
+@@ -493,6 +515,7 @@
+                 project, timing = work / "project", work / "timing"
+                 project.mkdir()
+                 timing.mkdir()
++                write_fake_sdk(timing)
+                 shutil.copyfile(self.project / "Plex.sdc", project / "Plex.sdc")
+                 result = subprocess.run(
+                     [runner,
+@@ -551,6 +574,9 @@
+             with self.assertRaises(subprocess.CalledProcessError) as failure:
+                 build.validate(ROOT, work, None)
+         self.assertEqual(failure.exception.returncode, 1)
++        self.assertEqual(seen[0][seen[0].index("--qsf") + 1], project / "Plex.qsf")
++        self.assertEqual(seen[0][seen[0].index("--input-manifest") + 1], work / "inputs.json")
++        self.assertEqual(seen[0][seen[0].index("--result-json") + 1], work / "fit-hierarchy.json")
+         self.assertIn("--require-scoped", seen[1])
+         self.assertEqual(Path(seen[2][1]).name, "check_timing_exclusions.py")
+         self.assertIn("--effective-dir", seen[2])
+@@ -558,7 +584,7 @@
+         self.assertFalse((work / "result.json").exists())
+ 
+     def test_reporter_runner_preserves_compile_failure_and_rbf_bytes(self):
+-        work, _ = self.make_snapshot()
++        work, _ = self.make_snapshot(image="sha256:" + "a" * 64)
+         binaries = self.work / "reporter-fakes"
+         binaries.mkdir()
+         compiler = binaries / "quartus_sh"
+@@ -570,6 +596,10 @@
+             "(case/'calls').write_text('compile\\n')\n"
+             "pathlib.Path('output_files').mkdir()\n"
+             "pathlib.Path('output_files/Plex.rbf').write_bytes(b'unchanged RBF')\n"
++            f"pathlib.Path('output_files/Plex.map.rpt').write_text({MOCK_SOURCE_TABLE!r})\n"
++            "if case.name == 'sdk-source-table-error': pathlib.Path('output_files/Plex.map.rpt').write_text('Error (1): source report failed\\n')\n"
++            "if case.name == 'sdk-missing-dependency':\n"
++            " p=pathlib.Path('output_files/Plex.map.rpt'); p.write_text(p.read_text().replace('/build/fixture.v', '/opt/intelFPGA/missing-source.v'))\n"
+             "sys.exit(int(os.environ['REPORTER_TEST_COMPILE_RC']))\n")
+         reporter = binaries / "quartus_sta"
+         reporter.write_text(
+@@ -590,6 +620,7 @@
+             ("success", 0, 0, 0, 0), ("compile-failure", 19, 23, 0, 19),
+             ("reporter-failure", 0, 23, 0, 23), ("changed-rbf", 0, 0, 1, 1),
+             ("missing-observer", 0, 0, 0, 1), ("swallowed-error", 0, 0, 0, 1),
++            ("sdk-source-table-error", 0, 0, 0, 1), ("sdk-missing-dependency", 0, 0, 0, 1),
+         ):
+             with self.subTest(name=name):
+                 case = self.work / name
+@@ -603,9 +634,11 @@
+                                         cwd=project, env=env, capture_output=True, text=True)
+                 self.assertEqual(result.returncode, expected, result.stderr)
+                 self.assertEqual((reports / "compile.exit").read_text().strip(), str(compile_rc))
+-                if compile_rc:
++                if compile_rc or name.startswith("sdk-"):
+                     self.assertEqual((case / "calls").read_text(), "compile\n")
+                     self.assertFalse((reports / "reporter.exit").exists())
++                    if name.startswith("sdk-"):
++                        self.assertEqual((reports / "sdk-catalog.exit").read_text(), "1\n")
+                 else:
+                     self.assertEqual((case / "calls").read_text(), "compile\nreporter\n")
+                 if expected == 0:
+@@ -630,6 +663,108 @@
+                 self.assertEqual(list(reports.iterdir()), [path])
+                 path.unlink()
+ 
++    def test_instrumented_runner_preserves_statuses_and_normal_after_hash(self):
++        launcher = ROOT / "scripts/run_instrumented_sta.sh"
++        sdk_program = (
++            "import json,os,pathlib,sys\n"
++            "case=pathlib.Path(os.environ['INSTRUMENTED_TEST_CASE'])\n"
++            "(case/'calls').write_text('sdk\\n')\n"
++            "assert sys.argv[1]=='--report' and sys.argv[3]=='--image-id' and sys.argv[5]=='--output'\n"
++            "pathlib.Path(sys.argv[6]).write_text(json.dumps({'host_mock_only':True}))\n"
++            "sys.exit(37 if case.name=='sdk-failure' else 0)\n")
++        sta_program = (
++            "#!/usr/bin/env python3\n"
++            "import os,pathlib,sys\n"
++            "case=pathlib.Path(os.environ['INSTRUMENTED_TEST_CASE']); out=pathlib.Path(sys.argv[3])\n"
++            "assert sys.argv[1]=='-t' and pathlib.Path(sys.argv[2]).is_file()\n"
++            "with (case/'calls').open('a') as stream: stream.write('reporter\\n')\n"
++            "if case.name != 'missing-completion':\n"
++            " identity='wrong' if case.name=='wrong-completion' else 'host-mock'\n"
++            " (out/'observer.complete').write_text('misterplex.timing-observer.v1:'+identity+'\\n')\n"
++            "messages={'error':'Error: native failure', 'numbered-error':'Error (332000): native failure',\n"
++            " 'critical-warning':'Critical Warning (332008): native failure',\n"
++            " 'observer-error':'MPX_OBSERVER_FAILURE fixture', 'read-error':'Read_sdc failed'}\n"
++            "print(messages.get(case.name,'host mock reporter completed'))\n"
++            "if case.name=='missing-log': (out/'reporter.log').unlink()\n"
++            "if case.name=='changed-rbf': pathlib.Path('output_files/Plex.rbf').write_bytes(b'changed')\n"
++            "sys.exit(23 if case.name=='reporter-failure' else 0)\n")
++        for name, expected in (
++            ("success-no-diagnostics", 0), ("sdk-failure", 37), ("reporter-failure", 23),
++            ("missing-completion", 1), ("wrong-completion", 1), ("error", 1),
++            ("numbered-error", 1), ("critical-warning", 1), ("observer-error", 1),
++            ("read-error", 1), ("grep-error", 2), ("missing-log", 2),
++            ("missing-fit-report", 1), ("changed-rbf", 1), ("after-hash-tool-error", 17),
++        ):
++            with self.subTest(name=name):
++                case = self.work / name
++                reporter, out, project, binaries = (case / item for item in ("reporter", "output", "project", "bin"))
++                for path in (reporter, out, project / "output_files", binaries):
++                    path.mkdir(parents=True)
++                (reporter / "sdk-image.id").write_text("sha256:" + "a" * 64 + "\n")
++                (reporter / "observation.id").write_text("host-mock\n")
++                (reporter / "timing.tcl").write_text("# Host mock only; never evaluated by Quartus.\n")
++                (reporter / "quartus_timing_sdk.py").write_text(sdk_program)
++                for kind in ("sta", "map", "fit"):
++                    (project / f"output_files/Plex.{kind}.rpt").write_text("Host mock report\n")
++                (project / "output_files/Plex.rbf").write_bytes(b"Host mock unchanged RBF")
++                if name == "missing-fit-report":
++                    (project / "output_files/Plex.fit.rpt").unlink()
++                sta = binaries / "quartus_sta"
++                sta.write_text(sta_program)
++                sta.chmod(0o755)
++                if name == "grep-error":
++                    (binaries / "grep").write_text("#!/bin/sh\nexit 2\n")
++                    (binaries / "grep").chmod(0o755)
++                if name == "after-hash-tool-error":
++                    (binaries / "sha256sum").write_text(
++                        "#!/bin/sh\n"
++                        'if [ -f "$INSTRUMENTED_TEST_CASE/hash-called" ]; then exit 17; fi\n'
++                        ': >"$INSTRUMENTED_TEST_CASE/hash-called"\n'
++                        f'exec {shlex.quote(shutil.which("sha256sum"))} "$@"\n')
++                    (binaries / "sha256sum").chmod(0o755)
++                env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"],
++                           INSTRUMENTED_TEST_CASE=str(case))
++                result = subprocess.run(["/bin/sh", launcher, case], cwd=project, env=env,
++                                        capture_output=True, text=True, timeout=20)
++                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
++                if name == "missing-fit-report":
++                    self.assertFalse((case / "calls").exists())
++                    continue
++                self.assertEqual((out / "sdk-catalog.exit").read_text(), "37\n" if name == "sdk-failure" else "0\n")
++                if name == "sdk-failure":
++                    self.assertEqual((case / "calls").read_text(), "sdk\n")
++                    self.assertFalse((out / "reporter.exit").exists())
++                else:
++                    self.assertEqual((case / "calls").read_text(), "sdk\nreporter\n")
++                    self.assertEqual((out / "reporter.exit").read_text(), "23\n" if name == "reporter-failure" else "0\n")
++                if expected == 0:
++                    self.assertEqual((out / "rbf.before.sha256").read_bytes(), (out / "rbf.after.sha256").read_bytes())
++                    self.assertEqual((out / "Plex.rbf").read_bytes(), (project / "output_files/Plex.rbf").read_bytes())
++                elif name == "changed-rbf":
++                    self.assertNotEqual((out / "rbf.before.sha256").read_bytes(), (out / "rbf.after.sha256").read_bytes())
++                elif name == "after-hash-tool-error":
++                    self.assertEqual((out / "rbf.after.sha256").read_bytes(), b"")
++                else:
++                    self.assertFalse((out / "rbf.after.sha256").exists())
++
++    def test_instrumented_runner_refuses_stale_output_before_any_tool(self):
++        case = self.work / "stale-instrumented"
++        out = case / "output"
++        out.mkdir(parents=True)
++        for name in ("old-result", ".unfinished", "dangling-link"):
++            path = out / name
++            if name == "dangling-link":
++                path.symlink_to(out / "absent")
++            else:
++                path.write_text("preserved older output\n")
++            result = subprocess.run(["/bin/sh", ROOT / "scripts/run_instrumented_sta.sh", case],
++                                    env=dict(os.environ, PATH="/nonexistent-host-mock-path"),
++                                    capture_output=True, text=True)
++            self.assertEqual(result.returncode, 1)
++            self.assertIn("timing destination is not empty", result.stderr)
++            self.assertEqual(list(out.iterdir()), [path])
++            path.unlink()
++
+     def test_detailed_reports_survive_post_fit_timing_rejection(self):
+         daemon = self.work / "daemon"
+         docker = self.fake_docker(daemon)
+@@ -641,6 +776,7 @@
+                 build.main(["local-container", "timing-red", str(self.project)])
+         out = self.project / "local_out/timing-red"
+         self.assertFalse((out / "project").exists())
++        self.assertFalse((out / "analysis-project.json").exists())
+         self.assertTrue((out / "Plex.rbf").exists())
+         self.assertTrue((out / "timing/manifest.json").exists())
+         self.assertTrue((out / "timing/Plex.corner-00.clock-00.setup.rpt").exists())
+@@ -681,6 +817,7 @@
+                 out = self.project / "local_out" / flag
+                 self.assertTrue((out / "Plex.rbf").is_file())
+                 self.assertFalse((out / "project").exists())
++                self.assertFalse((out / "analysis-project.json").exists())
+                 self.assertTrue((out / "timing/manifest.json").is_file())
+                 self.assertTrue((out / "timing/complete.summary").is_file())
+                 self.assertTrue((out / "timing/Plex.corner-00.clock-00.setup.rpt").is_file())
+@@ -699,12 +836,177 @@
+                         build.main(["local-container", flag, str(self.project)])
+                 out = self.project / "local_out" / flag
+                 self.assertFalse((out / "project").exists())
++                self.assertFalse((out / "analysis-project.json").exists())
+                 self.assertFalse((out / "Plex.rbf").exists())
+                 self.assertFalse((out / "result.json").exists())
+                 self.assertTrue((out / "timing/reporter.exit").exists())
+                 self.assertTrue((out / "diagnostics/output_files/Plex.map.rpt").exists())
+                 if flag == "reporter-fails":
+                     self.assertTrue((out / "timing/partial.rpt").exists())
++
++    def test_opt_in_local_retention_records_exact_success_and_failure_outputs(self):
++        for variant in ("success", "compiler-fails", "reporter-fails", "validation-fails",
++                        "missing-database", "default-success"):
++            with self.subTest(variant=variant):
++                daemon = self.work / ("retention-" + variant)
++                docker = self.fake_docker(daemon)
++                retain = variant != "default-success"
++                if variant != "missing-database":
++                    (daemon / "retain-db-fixture").touch()
++                if variant in {"compiler-fails", "reporter-fails"}:
++                    (daemon / variant).touch()
++                env = {"MISTERPLEX_ALLOW_LOCAL_FIT": "1", "MISTERPLEX_BUILD_ALLOW_UNVERIFIED": "1",
++                       "PATH": str(docker.parent) + os.pathsep + os.environ["PATH"]}
++                validation = RuntimeError("controlled validation failure") if variant == "validation-fails" else None
++                argv = ["local-container", variant, str(self.project)] + (["--retain-project"] if retain else [])
++                with mock.patch.dict(os.environ, env), mock.patch.object(build, "ROOT", self.project), \
++                        mock.patch.object(build, "validate", side_effect=validation), contextlib.redirect_stdout(io.StringIO()):
++                    if variant in {"compiler-fails", "reporter-fails", "validation-fails"}:
++                        with self.assertRaises(RuntimeError):
++                            build.main(argv)
++                    else:
++                        self.assertEqual(build.main(argv), 0)
++                out = self.project / "local_out" / variant
++                if not retain:
++                    self.assertFalse((out / "project").exists())
++                    self.assertFalse((out / "analysis-project.json").exists())
++                    continue
++                record = json.loads((out / "analysis-project.json").read_text())
++                meta = json.loads((out / "inputs.json").read_text())
++                self.assertEqual(record["project_path"], str(out / "project"))
++                self.assertEqual(record["cohort"]["input_sha256"], meta["input_sha256"])
++                self.assertEqual(record["tool_identity"]["container_id"], "a" * 64)
++                self.assertTrue(record["inventory_complete"])
++                self.assertTrue(record["input_files_match"])
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertIn("NO_AUTOMATIC", record["publication"])
++                if variant == "missing-database":
++                    self.assertEqual(record["database_status"], "missing")
++                    self.assertEqual(record["database_files"], [])
++                else:
++                    data = b"synthetic retained database"
++                    self.assertEqual(record["files"]["db/fixture.cdb"],
++                                     {"sha256": build.digest(data), "bytes": len(data), "mode": "0440"})
++                    self.assertEqual((out / "project/db/fixture.cdb").read_bytes(), data)
++                    self.assertEqual(record["database_status"], "incomplete-or-unvalidated"
++                                     if variant == "compiler-fails" else "retained-unvalidated")
++                self.assertEqual(record["stage"], "compile-and-report"
++                                 if variant in {"compiler-fails", "reporter-fails"} else
++                                 "validate" if variant == "validation-fails" else "complete")
++                self.assertEqual(record["compile_exit"], 42 if variant == "compiler-fails" else 0)
++
++    def test_retention_option_propagates_wrappers_and_remote_refuses_before_dispatch(self):
++        binaries = self.work / "wrapper-fakes"
++        binaries.mkdir()
++        binary = binaries / "python3"
++        binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FORWARDED_ARGS"\n')
++        binary.chmod(0o755)
++        target = self.work / "forwarded.txt"
++        environment = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"],
++                           FORWARDED_ARGS=str(target), MISTERPLEX_ALLOW_LOCAL_FIT="1")
++        for wrapper, prefix, backend in (
++                ("build_rbf.sh", ["--backend", "local-container"], "local-container"),
++                ("build_rbf.sh", ["--backend", "remote"], "remote"),
++                ("build_rbf_remote.sh", [], "remote")):
++            result = subprocess.run(["bash", ROOT / "scripts" / wrapper, *prefix, "slot",
++                                     str(self.project), "--retain-project"], env=environment,
++                                    capture_output=True, text=True)
++            self.assertEqual(result.returncode, 0, result.stderr)
++            self.assertEqual(target.read_text().splitlines(),
++                             [str(DRIVER), backend, "slot", str(self.project), "--retain-project"])
++        target.unlink()
++        environment["MISTERPLEX_ALLOW_LOCAL_FIT"] = "0"
++        refused = subprocess.run(["bash", ROOT / "scripts/build_rbf.sh", "--backend", "local-container",
++                                  "slot", str(self.project), "--retain-project"],
++                                 env=environment, capture_output=True, text=True)
++        self.assertEqual(refused.returncode, 3)
++        self.assertFalse(target.exists(), "retention flag must not grant local execution permission")
++        with mock.patch.object(build, "host_lock") as lock, mock.patch.object(build, "remote_transaction") as remote, \
++                contextlib.redirect_stderr(io.StringIO()):
++            with self.assertRaises(SystemExit) as error:
++                build.main(["remote", "must-not-launch", str(self.project), "--retain-project"])
++            self.assertEqual(error.exception.code, 2)
++            lock.assert_not_called()
++            remote.assert_not_called()
++
++    def test_retention_unresolved_transaction_does_not_inventory_or_release_ownership(self):
++        daemon = self.work / "retention-unresolved"
++        docker = self.fake_docker(daemon)
++        env = {"MISTERPLEX_ALLOW_LOCAL_FIT": "1", "MISTERPLEX_BUILD_ALLOW_UNVERIFIED": "1",
++               "PATH": str(docker.parent) + os.pathsep + os.environ["PATH"]}
++
++        def unresolved(work, meta, lease, docker):
++            build.unpack(work / "inputs.tar", work / "project", meta)
++            lease.retain("controlled fake unresolved operation; no real process")
++            raise build.UnresolvedBuild("controlled fake unresolved operation")
++
++        with mock.patch.dict(os.environ, env), mock.patch.object(build, "ROOT", self.project), \
++                mock.patch.object(build, "compile_snapshot", side_effect=unresolved):
++            with self.assertRaises(build.UnresolvedBuild):
++                build.main(["local-container", "unresolved", str(self.project), "--retain-project"])
++        out = self.project / "local_out/unresolved"
++        record = json.loads((out / "analysis-project.json").read_text())
++        self.assertEqual(record["database_status"], "ownership-unresolved")
++        self.assertEqual(record["stage"], "compile-and-report")
++        self.assertEqual(record["exception_type"], "UnresolvedBuild")
++        self.assertEqual(record["files"], {})
++        self.assertFalse(record["inventory_complete"])
++        self.assertTrue((out / "project/rtl/top.sv").is_file())
++        for key in (build.CONTROLLER_KEY, build.EXECUTION_KEY):
++            with self.assertRaisesRegex(RuntimeError, "lease busy"):
++                with build.host_lock(key):
++                    pass
++        self.assertTrue((self.project / ".git/misterplex-build/single-fit.lock.owner").is_file())
++
++    def test_retention_enumeration_failure_preserves_original_build_error_precedence(self):
++        for variant in ("otherwise-successful", "original-validation-failure", "failed-secondary-diagnostic"):
++            with self.subTest(variant=variant):
++                daemon = self.work / ("inventory-" + variant)
++                docker = self.fake_docker(daemon)
++                environment = {"MISTERPLEX_ALLOW_LOCAL_FIT": "1", "MISTERPLEX_BUILD_ALLOW_UNVERIFIED": "1",
++                               "PATH": str(docker.parent) + os.pathsep + os.environ["PATH"]}
++                original = None if variant == "otherwise-successful" else subprocess.CalledProcessError(
++                    23, ["controlled-host-validation-only"])
++                out = self.project / "local_out" / variant
++                nested = out / "project/db/generated/nested"
++                native_scan = os.scandir
++
++                def validate(root, work, reference):
++                    nested.mkdir(parents=True)
++                    (nested / "fixture.cdb").write_text("synthetic database preserved after failure")
++                    if original is not None:
++                        raise original
++
++                def scan(path):
++                    target = Path(os.readlink(f"/proc/self/fd/{path}")) if isinstance(path, int) else Path(path)
++                    if target == nested:
++                        raise PermissionError("controlled nested enumeration failure")
++                    return native_scan(path)
++
++                class FailedDiagnostic:
++                    def write(self, value):
++                        raise OSError("controlled secondary diagnostic failure")
++
++                stderr = FailedDiagnostic() if variant == "failed-secondary-diagnostic" else io.StringIO()
++                with mock.patch.dict(os.environ, environment), mock.patch.object(build, "ROOT", self.project), \
++                        mock.patch.object(build, "validate", side_effect=validate), \
++                        mock.patch.object(build.os, "scandir", side_effect=scan), \
++                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
++                    with self.assertRaises(type(original) if original is not None else RuntimeError) as raised:
++                        build.main(["local-container", variant, str(self.project), "--retain-project"])
++                if original is not None:
++                    self.assertIs(raised.exception, original)
++                    self.assertEqual(raised.exception.returncode, 23)
++                else:
++                    self.assertIn("inventory is incomplete", str(raised.exception))
++                if variant == "original-validation-failure":
++                    self.assertIn("preserving original build failure", stderr.getvalue())
++                record = json.loads((out / "analysis-project.json").read_text())
++                self.assertEqual(record["database_status"], "inventory-incomplete")
++                self.assertFalse(record["inventory_complete"])
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertEqual(record["exception_type"], type(original).__name__ if original is not None else None)
++                self.assertEqual((nested / "fixture.cdb").read_text(), "synthetic database preserved after failure")
+ 
+     def fake_docker(self, state):
+         state.mkdir(parents=True, exist_ok=True)
+@@ -759,6 +1061,8 @@
+             " s=json.loads(path.read_text()); s.update(Running=True,Status='running'); path.write_text(json.dumps(s))\n"
+             " p=pathlib.Path(s['project']); assert (p/'rtl/top.sv').read_text()=='module top; endmodule\\n'\n"
+             " (base/'compile-entered').touch()\n"
++            " if (base/'retain-db-fixture').exists():\n"
++            "  (p/'db').mkdir(); d=p/'db/fixture.cdb'; d.write_bytes(b'synthetic retained database'); d.chmod(0o440)\n"
+             " if (base/'switch-context-after-start').exists(): (base/'current-context-switched').touch()\n"
+             " if (base/'change-daemon-after-start').exists(): (base/'daemon-changed').touch()\n"
+             " if (base/'replace-socket-after-start').exists():\n"
+@@ -772,6 +1076,7 @@
+             "  (p/'Plex.flow.rpt').write_text('Flow failed after successful map\\n')\n"
+             "  (o/'Plex.rbf').write_bytes(b'partial RBF must never be collected')\n"
+             " if (base/'compiler-fails').exists():\n"
++            "  pathlib.Path(s['timing'],'compile.exit').write_text('42\\n')\n"
+             "  s.update(Running=False,Status='exited',ExitCode=42); path.write_text(json.dumps(s)); sys.exit(42)\n"
+             " if (base/'client-exits').exists():\n"
+             "  if (base/'degrade-after-start').exists(): (base/'degraded').touch()\n"
+diff --git a/tests/unit/test_timing_observer.py b/tests/unit/test_timing_observer.py
+--- a/tests/unit/test_timing_observer.py
++++ b/tests/unit/test_timing_observer.py
+@@ -11,13 +11,17 @@
+ import unittest
+ from unittest import mock
+ import uuid
+-
+-from test_rbf_build import BuildPolicy, ROOT, build
++import copy
++import contextlib
++import errno
++
++from test_rbf_build import BuildPolicy, ROOT, build, write_fake_sdk
+ 
+ sys.path.insert(0, str(ROOT / "scripts"))
+ from check_quartus_timing import parse_detailed_rows
+ from check_timing_exclusions import effective_exclusions
+ from quartus_timing_observer import hdl_attributes
++from quartus_timing_sdk import compiled_sources
+ 
+ FAILURE = json.loads((ROOT / "tests/fixtures/quartus_hdl_observer_failure.json").read_text())
+ 
+@@ -29,7 +33,7 @@
+     tearDown = BuildPolicy.tearDown
+     make_snapshot = BuildPolicy.make_snapshot
+ 
+-    def prepare_case(self, sdc="set_false_path -to {out_led}\n", hdl=False):
++    def prepare_case(self, sdc="set_false_path -to {out_led}\n", hdl=False, image="sha256:fixture"):
+         (self.project / "Plex.sdc").write_text(sdc)
+         source = self.project / "rtl/embedded.v"
+         if source.exists():
+@@ -40,7 +44,7 @@
+             encoded = value.replace("\\", "\\\\").replace('"', '\\"')
+             source.write_text(f'module {FAILURE["entity"]};\n'
+                               f'(* altera_attribute = "{encoded}" *) reg din_s1;\nendmodule\n')
+-        work, meta = self.make_snapshot("observer-" + uuid.uuid4().hex)
++        work, meta = self.make_snapshot("observer-" + uuid.uuid4().hex, image=image)
+         if hdl:
+             (work / "compile.log").write_text(
+                 "Info (12021): Found 1 design units, including 1 entities, in source file rtl/embedded.v\n"
+@@ -49,6 +53,7 @@
+                 "File: /build/instantiator.v Line: 27\n")
+         build.unpack(work / "inputs.tar", work / "project", meta)
+         (work / "timing").mkdir()
++        write_fake_sdk(work / "timing")
+         (work / "unobserved").mkdir()
+         (work / "project/output_files").mkdir()
+         rbf = b"Host mock RBF only; no physical tool invoked."
+@@ -182,6 +187,279 @@
+                 else:
+                     self.assertEqual(errors, [])
+                 self.retain(work, variant)
++
++    def actual_sdk_case(self, variant="hdl-attributed"):
++        catalog = Path(os.environ["MISTERPLEX_SDK_CATALOG"])
++        report = Path(os.environ["MISTERPLEX_SDK_NATIVE_MAP"])
++        data = json.loads(catalog.read_text())
++        self.assertEqual(data["image_id"],
++                         "sha256:1fba8b9347973365e9f7851d73f7cb035e38fefb827cbf0ed2ea291b48bdf6dd")
++        self.assertEqual(build.digest(report.read_bytes()),
++                         "2987ab1f8c0521c03027ee0dbe82b929d0d60856dda2c2260fe9e3c226f341d5")
++        work, meta = self.prepare_case("# no file exclusions\n", image=data["image_id"])
++        shutil.copyfile(catalog, work / "timing/sdk-catalog.json")
++        shutil.copyfile(report, work / "timing/Plex.compiled-sources.rpt")
++        result, baseline, rows = self.compare_original(work, variant)
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        self.assertEqual(rows, baseline)
++        return work, meta
++
++    def test_sdk_literal_concatenation_and_incomplete_source_table(self):
++        value = '-name SDC_STATEMENT "set_false_path -to [get_keepers target]"'
++        encoded = value.replace("\\", "\\\\").replace('"', '\\"')
++        literal = 'module sample;\n(* altera_attribute = {"' + encoded + '"} *) reg target;\nendmodule\n'
++        self.assertEqual(hdl_attributes("sample.v", literal)[0]["line"], 2)
++        self.assertEqual(hdl_attributes("sample.v", literal.replace('"}', '", PARAM}')), [])
++        self.assertEqual(hdl_attributes("sample.v", literal.replace('{"', '{PARAM, "')), [])
++        from test_rbf_build import MOCK_SOURCE_TABLE
++        self.assertEqual(len(compiled_sources(MOCK_SOURCE_TABLE.encode())), 1)
++        for invalid in (MOCK_SOURCE_TABLE.replace("+---+---+", ""),
++                        MOCK_SOURCE_TABLE + MOCK_SOURCE_TABLE,
++                        MOCK_SOURCE_TABLE + "Error (1): native source evidence failed\n"):
++            with self.assertRaises(ValueError):
++                compiled_sources(invalid.encode())
++
++    def test_fitted_database_is_retained_with_bytes_and_mode_identity(self):
++        work, _ = self.prepare_case()
++        database = work / "project/db"
++        database.mkdir()
++        path = database / "fixture.cdb"
++        path.write_bytes(b"synthetic database retention fixture, not a real netlist")
++        path.chmod(0o440)
++        before = path.read_bytes()
++        build.retain_analysis_project(work, "host-fixture")
++        record = json.loads((work / "analysis-project.json").read_text())
++        self.assertEqual(path.read_bytes(), before)
++        self.assertEqual(record["files"]["db/fixture.cdb"],
++                         {"sha256": build.digest(before), "bytes": len(before), "mode": "0440"})
++        self.assertEqual(record["analysis_or_deployment_approval"], "NOT_GRANTED")
++        self.assertEqual(record["database_status"], "retained-unvalidated")
++        self.assertFalse(record["fitted_database_validated"])
++        self.assertEqual(record["project_path"], str(work / "project"))
++
++    def test_retention_missing_partial_unsafe_and_unresolved_never_claim_fitted(self):
++        for variant in ("missing-project", "missing-database", "failed-compile", "linked-database",
++                        "unresolved"):
++            with self.subTest(variant=variant):
++                work, meta = self.prepare_case()
++                if variant == "missing-project":
++                    shutil.rmtree(work / "project")
++                elif variant in {"failed-compile", "linked-database", "unresolved"}:
++                    database = work / "project/db"
++                    database.mkdir()
++                    target = database / "fixture.cdb"
++                    if variant == "linked-database":
++                        outside = work / "outside"
++                        outside.write_text("outside must never be read or inventoried")
++                        target.symlink_to(outside)
++                    else:
++                        target.write_text("partial synthetic database")
++                    (work / "timing/compile.exit").write_text("42\n")
++                if variant == "linked-database":
++                    with self.assertRaisesRegex(RuntimeError, "inventory is incomplete"):
++                        build.retain_analysis_project(work, "compile-and-report", "RuntimeError")
++                else:
++                    build.retain_analysis_project(work, "compile-and-report", "RuntimeError",
++                                                  inventory_safe=variant != "unresolved", cohort_metadata=meta)
++                record = json.loads((work / "analysis-project.json").read_text())
++                expected = {"missing-project": "missing", "missing-database": "missing",
++                            "failed-compile": "incomplete-or-unvalidated",
++                            "linked-database": "inventory-incomplete",
++                            "unresolved": "ownership-unresolved"}[variant]
++                self.assertEqual(record["database_status"], expected)
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertEqual(record["cohort"]["input_sha256"], meta["input_sha256"])
++                if variant == "unresolved":
++                    self.assertEqual(record["files"], {})
++                    self.assertFalse(record["inventory_complete"])
++                if variant != "missing-project":
++                    self.assertTrue((work / "project").is_dir())
++
++    def test_nested_retention_enumeration_stat_open_and_read_errors_fail_closed(self):
++        for variant in ("scan-permission", "scan-oserror", "scan-iteration", "entry-stat-permission",
++                        "entry-stat-vanished", "directory-open-permission", "read-error",
++                        "root-stat-permission", "metadata-stat-permission"):
++            with self.subTest(variant=variant):
++                work, _ = self.prepare_case()
++                nested = work / "project/db/generated/nested"
++                nested.mkdir(parents=True)
++                leaf = nested / "fixture.cdb"
++                leaf.write_bytes(b"synthetic nested database must remain intact")
++                native_scan, native_stat = os.scandir, os.stat
++                native_open, native_fdopen = os.open, os.fdopen
++
++                def coordinate(path, parent=None):
++                    if isinstance(path, int):
++                        return Path(os.readlink(f"/proc/self/fd/{path}"))
++                    return Path(os.readlink(f"/proc/self/fd/{parent}")) / path if parent is not None else Path(path)
++
++                @contextlib.contextmanager
++                def failed_iteration(path):
++                    with native_scan(path) as entries:
++                        def rows():
++                            yield next(entries)
++                            raise OSError(errno.EIO, "controlled nested iterator failure")
++                        yield rows()
++
++                def scan(path):
++                    if coordinate(path) == nested:
++                        if variant == "scan-permission":
++                            raise PermissionError(errno.EACCES, "controlled nested enumeration failure")
++                        if variant == "scan-oserror":
++                            raise OSError(errno.EIO, "controlled nested enumeration failure")
++                        if variant == "scan-iteration":
++                            return failed_iteration(path)
++                    return native_scan(path)
++
++                def get_stat(path, *args, **kwargs):
++                    target = coordinate(path, kwargs.get("dir_fd"))
++                    if variant == "entry-stat-permission" and target == leaf or \
++                            variant == "root-stat-permission" and target == work / "project" or \
++                            variant == "metadata-stat-permission" and target == work / "inputs.json":
++                        raise PermissionError(errno.EACCES, "controlled stat failure")
++                    if variant == "entry-stat-vanished" and target == leaf:
++                        raise FileNotFoundError(errno.ENOENT, "controlled post-enumeration disappearance")
++                    return native_stat(path, *args, **kwargs)
++
++                def open_file(path, *args, **kwargs):
++                    if variant == "directory-open-permission" and coordinate(path, kwargs.get("dir_fd")) == nested:
++                        raise PermissionError(errno.EACCES, "controlled directory open failure")
++                    return native_open(path, *args, **kwargs)
++
++                @contextlib.contextmanager
++                def fdopen(descriptor, *args, **kwargs):
++                    target = coordinate(descriptor)
++                    with native_fdopen(descriptor, *args, **kwargs) as stream:
++                        class FailedReader:
++                            def fileno(self):
++                                return stream.fileno()
++
++                            def read(self, size):
++                                raise OSError(errno.EIO, "controlled nested data read failure")
++                        yield FailedReader() if variant == "read-error" and target == leaf else stream
++
++                with mock.patch.object(build.os, "scandir", side_effect=scan), \
++                        mock.patch.object(build.os, "stat", side_effect=get_stat), \
++                        mock.patch.object(build.os, "open", side_effect=open_file), \
++                        mock.patch.object(build.os, "fdopen", side_effect=fdopen):
++                    with self.assertRaisesRegex(RuntimeError, "inventory is incomplete") as failure:
++                        build.retain_analysis_project(work, "complete")
++                record = json.loads((work / "analysis-project.json").read_text())
++                self.assertEqual(record["database_status"], "inventory-incomplete")
++                self.assertFalse(record["inventory_complete"])
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertEqual(record["inventory_error_type"], type(failure.exception.__cause__).__name__)
++                self.assertEqual(leaf.read_bytes(), b"synthetic nested database must remain intact")
++                self.assertTrue((work / "project").is_dir())
++
++    def test_nested_inventory_is_complete_and_verified_missing_is_distinct(self):
++        for variant in ("no-database", "empty-database-directories", "nested-database"):
++            with self.subTest(variant=variant):
++                work, _ = self.prepare_case()
++                expected = {}
++                if variant != "no-database":
++                    (work / "project/db/generated/nested").mkdir(parents=True)
++                    (work / "project/incremental_db/partition").mkdir(parents=True)
++                if variant == "nested-database":
++                    for name in ("db/generated/nested/a.cdb", "incremental_db/partition/b.qdb"):
++                        data = ("synthetic complete enumeration " + name).encode()
++                        path = work / "project" / name
++                        path.write_bytes(data)
++                        expected[name] = build.digest(data)
++                record = build.retain_analysis_project(work, "complete")
++                self.assertTrue(record["inventory_complete"])
++                self.assertTrue(record["input_files_match"])
++                self.assertFalse(record["fitted_database_validated"])
++                self.assertEqual(set(record["database_files"]), set(expected))
++                for name, digest in expected.items():
++                    self.assertEqual(record["files"][name]["sha256"], digest)
++                self.assertEqual(record["database_status"], "retained-unvalidated" if expected else "missing")
++
++    @unittest.skipUnless(os.environ.get("MISTERPLEX_SDK_CATALOG") and os.environ.get("MISTERPLEX_SDK_NATIVE_MAP"),
++                         "requires actual pinned SDK-derived catalog and retained V12 native map")
++    def test_actual_sdk_source_proof_and_decoder_policy(self):
++        for variant in ("hdl-attributed", "hdl-decoder"):
++            with self.subTest(variant=variant):
++                work, meta = self.actual_sdk_case(variant)
++                manifest = self.collect(work, meta)
++                proof = manifest["extended"]["observer"]["hdl_sources"][0]
++                self.assertEqual(proof["source_sha256"],
++                                 "36e2c3efac7d0af1f92db47dee690eebf402949fc8dd8c55d12dee7c8cccf292")
++                self.assertEqual((proof["entity_line"], proof["line"]), (18, 45))
++                self.assertIn("compiled-source-table", proof["method"])
++                self.assertNotIn("definition", proof["compiled_source"])
++                self.assertEqual(proof["compiled_source"]["dependency"]["compiled"]["report_line"], 751)
++                errors, _, _ = effective_exclusions(
++                    work / "timing", work / "project", [work / "project/Plex.sdc"])
++                if variant == "hdl-decoder":
++                    self.assertTrue(any("explicitly excludes decoder keepers" in error for error in errors))
++                else:
++                    self.assertEqual(errors, [])
++                self.assertEqual(len(parse_detailed_rows(work / "timing")), 72)
++                self.retain(work, "actual-sdk-" + variant)
++
++    @unittest.skipUnless(os.environ.get("MISTERPLEX_SDK_CATALOG") and os.environ.get("MISTERPLEX_SDK_NATIVE_MAP"),
++                         "requires actual pinned SDK-derived catalog and retained V12 native map")
++    def test_actual_sdk_missing_tampered_incomplete_or_error_evidence_refuses(self):
++        for mutation in ("missing-catalog", "missing-report", "catalog-error", "catalog-log",
++                         "image", "source-hash", "statement-hash", "attribute-definition",
++                         "missing-dependency", "duplicate-dependency", "report-hash",
++                         "wrong-sdk-source-path", "unselected-sdk-source", "unknown-native-entity"):
++            with self.subTest(mutation=mutation):
++                work, meta = self.actual_sdk_case()
++                timing = work / "timing"
++                path = timing / "sdk-catalog.json"
++                data = json.loads(path.read_text())
++                source = next(item for item in data["dependencies"] if item["attributes"])
++                if mutation == "missing-catalog":
++                    path.unlink()
++                elif mutation == "missing-report":
++                    (timing / "Plex.compiled-sources.rpt").unlink()
++                elif mutation == "catalog-error":
++                    (timing / "sdk-catalog.exit").write_text("1\n")
++                elif mutation == "catalog-log":
++                    (timing / "sdk-catalog.log").write_text("Error: swallowed SDK producer error\n")
++                elif mutation == "image":
++                    data["image_id"] = "sha256:" + "0" * 64
++                elif mutation == "source-hash":
++                    source["sha256"] = "0" * 64
++                elif mutation == "statement-hash":
++                    source["attributes"][0]["statement_sha256"] = "0" * 64
++                elif mutation == "attribute-definition":
++                    source["attributes"][0]["entity_line"] += 1
++                elif mutation == "missing-dependency":
++                    data["dependencies"].pop()
++                elif mutation == "duplicate-dependency":
++                    data["dependencies"][-1] = copy.deepcopy(source)
++                elif mutation == "report-hash":
++                    data["native_report"]["sha256"] = "0" * 64
++                elif mutation == "wrong-sdk-source-path":
++                    source["sdk_relative"] = "../instantiator.v"
++                elif mutation == "unselected-sdk-source":
++                    source["compiled"]["used"] = "no"
++                elif mutation == "unknown-native-entity":
++                    log = timing / "reporter.log"
++                    log.write_text(log.read_text().replace("Entity altera_std_synchronizer", "Entity unknown"))
++                if path.exists():
++                    path.write_text(json.dumps(data))
++                with self.assertRaises(RuntimeError):
++                    self.collect(work, meta)
++                self.assertTrue((timing / "collector-failure.json").is_file())
++                self.assertFalse((timing / "manifest.json").exists())
++
++    @unittest.skipUnless(os.environ.get("MISTERPLEX_SDK_CATALOG") and os.environ.get("MISTERPLEX_SDK_NATIVE_MAP"),
++                         "requires actual pinned SDK-derived catalog and retained V12 native map")
++    def test_actual_sdk_catalog_mutation_after_collection_fails_both_gates(self):
++        work, meta = self.actual_sdk_case()
++        self.collect(work, meta)
++        path = work / "timing/sdk-catalog.json"
++        data = json.loads(path.read_text())
++        data["dependencies"][0]["sha256"] = "a" * 64
++        path.write_text(json.dumps(data))
++        with self.assertRaises(ValueError):
++            parse_detailed_rows(work / "timing")
++        with self.assertRaises(ValueError):
++            effective_exclusions(work / "timing", work / "project", [work / "project/Plex.sdc"])
+ 
+     def test_hdl_provenance_requires_native_context_not_just_matching_text(self):
+         for mutation in ("entity", "missing-context", "unobserved-native", "source-hash"):

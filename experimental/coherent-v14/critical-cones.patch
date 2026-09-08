@@ -1,0 +1,612 @@
+--- a/rtl/h264_deblock.sv
++++ b/rtl/h264_deblock.sv
+@@ -55,9 +55,10 @@
+ 	output wire [5:0] qp_avg
+ );
+ 	function automatic [5:0] chroma_qp(input [5:0] qp, input signed [4:0] offset);
+-		integer idx;
+-		begin
+-			idx = int'(qp) + int'(offset);
++		reg signed [7:0] idx;
++		begin
++			// Full port range is [-16,78], before clipping.
++			idx = $signed({2'b00,qp}) + $signed({{3{offset[4]}},offset});
+ 			if (idx < 0) idx = 0;
+ 			if (idx > 51) idx = 51;
+ 			case (idx)
+@@ -324,6 +325,149 @@
+ endmodule
+ 
+ 
++// The caller supplies registered thresholds. An accepted start owns all
++// samples until done: decisions/raw adjustments, clipping/strong averages,
++// then final pixel updates are separate register boundaries.
++module h264_deblock_samples_pipe (
++	input wire clk, reset, start,
++	output wire busy,
++	output reg done,
++	input wire is_chroma,
++	input wire [2:0] bs,
++	input wire [7:0] alpha, beta,
++	input wire [5:0] tc0,
++	input wire [7:0] p3_in [0:3], p2_in [0:3], p1_in [0:3], p0_in [0:3],
++	input wire [7:0] q0_in [0:3], q1_in [0:3], q2_in [0:3], q3_in [0:3],
++	output reg [7:0] p2_out [0:3], p1_out [0:3], p0_out [0:3],
++	output reg [7:0] q0_out [0:3], q1_out [0:3], q2_out [0:3]
++);
++	localparam [1:0] IDLE=0, CLIP=1, APPLY=2;
++	reg [1:0] state;
++	assign busy = state != IDLE;
++	reg chroma_r, strong_r;
++	reg [5:0] tc0_r;
++	reg [3:0] enabled_r, ap_r, aq_r, strong_p_r, strong_q_r;
++	reg [6:0] tc_r [0:3];
++	reg signed [8:0] delta_raw_r [0:3], adj_p_raw_r [0:3], adj_q_raw_r [0:3];
++	reg signed [8:0] delta_r [0:3], adj_p_r [0:3], adj_q_r [0:3];
++	reg [7:0] p3_r [0:3], p2_r [0:3], p1_r [0:3], p0_r [0:3];
++	reg [7:0] q0_r [0:3], q1_r [0:3], q2_r [0:3], q3_r [0:3];
++	reg [7:0] sp2_r [0:3], sp1_r [0:3], sp0_r [0:3];
++	reg [7:0] sq0_r [0:3], sq1_r [0:3], sq2_r [0:3];
++
++	function automatic [8:0] absdiff8(input [7:0] a, input [7:0] b);
++		absdiff8 = a >= b ? {1'b0,a}-{1'b0,b} : {1'b0,b}-{1'b0,a};
++	endfunction
++	function automatic signed [8:0] bound_delta(input signed [8:0] v, input [6:0] limit);
++		reg signed [8:0] bound;
++		begin
++			bound = $signed({2'b00,limit});
++			if (v < -bound) bound_delta = -bound;
++			else if (v > bound) bound_delta = bound;
++			else bound_delta = v;
++		end
++	endfunction
++	function automatic [7:0] clip8(input signed [11:0] v);
++		if (v < 12'sd0) clip8=0;
++		else if (v > 12'sd255) clip8=255;
++		else clip8=v[7:0];
++	endfunction
++
++	wire [3:0] ap, aq, strong_extra;
++	genvar lane;
++	generate for (lane=0;lane<4;lane=lane+1) begin : g_decisions
++		assign ap[lane] = absdiff8(p2_in[lane],p0_in[lane]) < {1'b0,beta};
++		assign aq[lane] = absdiff8(q2_in[lane],q0_in[lane]) < {1'b0,beta};
++		assign strong_extra[lane] =
++			absdiff8(p0_in[lane],q0_in[lane]) < {1'b0,(alpha >> 2)+8'd2};
++	end endgenerate
++
++	// Raw delta is [-1271,1279] before >>3; adjustments are [-510,510]
++	// before >>1. Strong positive sums including rounding are <=2044.
++	reg signed [11:0] p0s,p1s,p2s,p3s,q0s,q1s,q2s,q3s;
++	integer i;
++	always @(posedge clk) begin
++		done <= 0;
++		if (reset) begin
++			state <= IDLE;
++			for (i=0;i<4;i=i+1) begin
++				p2_out[i]<=0; p1_out[i]<=0; p0_out[i]<=0;
++				q0_out[i]<=0; q1_out[i]<=0; q2_out[i]<=0;
++			end
++		end else case (state)
++		IDLE: if (start) begin
++			chroma_r<=is_chroma; strong_r<=bs==4; tc0_r<=tc0;
++			for (i=0;i<4;i=i+1) begin
++				p3_r[i]<=p3_in[i]; p2_r[i]<=p2_in[i]; p1_r[i]<=p1_in[i]; p0_r[i]<=p0_in[i];
++				q0_r[i]<=q0_in[i]; q1_r[i]<=q1_in[i]; q2_r[i]<=q2_in[i]; q3_r[i]<=q3_in[i];
++				p0s=$signed({4'd0,p0_in[i]}); p1s=$signed({4'd0,p1_in[i]});
++				p2s=$signed({4'd0,p2_in[i]});
++				q0s=$signed({4'd0,q0_in[i]}); q1s=$signed({4'd0,q1_in[i]});
++				q2s=$signed({4'd0,q2_in[i]});
++				enabled_r[i] <= bs!=0 && absdiff8(p0_in[i],q0_in[i]) < {1'b0,alpha} &&
++					absdiff8(p1_in[i],p0_in[i]) < {1'b0,beta} &&
++					absdiff8(q1_in[i],q0_in[i]) < {1'b0,beta};
++				ap_r[i]<=ap[i]; aq_r[i]<=aq[i];
++				strong_p_r[i]<=!is_chroma && strong_extra[i] && ap[i];
++				strong_q_r[i]<=!is_chroma && strong_extra[i] && aq[i];
++				tc_r[i] <= {1'b0,tc0} + (is_chroma ? 7'd1 :
++					(ap[i] ? 7'd1 : 7'd0)+(aq[i] ? 7'd1 : 7'd0));
++				delta_raw_r[i] <= 9'((((q0s-p0s) <<< 2)+(p1s-q1s)+12'sd4) >>> 3);
++				adj_p_raw_r[i] <= 9'((p2s+((p0s+q0s+12'sd1) >>> 1)-(p1s <<< 1)) >>> 1);
++				adj_q_raw_r[i] <= 9'((q2s+((p0s+q0s+12'sd1) >>> 1)-(q1s <<< 1)) >>> 1);
++			end
++			state<=CLIP;
++		end
++		CLIP: begin
++			for (i=0;i<4;i=i+1) begin
++				delta_r[i]<=bound_delta(delta_raw_r[i],tc_r[i]);
++				adj_p_r[i]<=bound_delta(adj_p_raw_r[i],{1'b0,tc0_r});
++				adj_q_r[i]<=bound_delta(adj_q_raw_r[i],{1'b0,tc0_r});
++				p0s=$signed({4'd0,p0_r[i]}); p1s=$signed({4'd0,p1_r[i]});
++				p2s=$signed({4'd0,p2_r[i]}); p3s=$signed({4'd0,p3_r[i]});
++				q0s=$signed({4'd0,q0_r[i]}); q1s=$signed({4'd0,q1_r[i]});
++				q2s=$signed({4'd0,q2_r[i]}); q3s=$signed({4'd0,q3_r[i]});
++				sp2_r[i]<=p2_r[i]; sp1_r[i]<=p1_r[i];
++				sq1_r[i]<=q1_r[i]; sq2_r[i]<=q2_r[i];
++				sp0_r[i]<=8'(((p1s <<< 1)+(p0s+q1s+12'sd2)) >>> 2);
++				sq0_r[i]<=8'(((q1s <<< 1)+(q0s+p1s+12'sd2)) >>> 2);
++				if (strong_p_r[i]) begin
++					sp0_r[i]<=8'(((p2s+q1s)+((p1s+p0s) <<< 1)+((q0s <<< 1)+12'sd4)) >>> 3);
++					sp1_r[i]<=8'(((p2s+p1s)+(p0s+q0s+12'sd2)) >>> 2);
++					sp2_r[i]<=8'((((p3s+p2s) <<< 1)+(p2s+p1s)+(p0s+q0s+12'sd4)) >>> 3);
++				end
++				if (strong_q_r[i]) begin
++					sq0_r[i]<=8'(((p1s+q2s)+((q1s+q0s) <<< 1)+((p0s <<< 1)+12'sd4)) >>> 3);
++					sq1_r[i]<=8'(((q2s+q1s)+(p0s+q0s+12'sd2)) >>> 2);
++					sq2_r[i]<=8'((((q3s+q2s) <<< 1)+(q2s+q1s)+(p0s+q0s+12'sd4)) >>> 3);
++				end
++			end
++			state<=APPLY;
++		end
++		APPLY: begin
++			for (i=0;i<4;i=i+1) begin
++				p2_out[i]<=p2_r[i]; p1_out[i]<=p1_r[i]; p0_out[i]<=p0_r[i];
++				q0_out[i]<=q0_r[i]; q1_out[i]<=q1_r[i]; q2_out[i]<=q2_r[i];
++				if (enabled_r[i] && strong_r) begin
++					p2_out[i]<=sp2_r[i]; p1_out[i]<=sp1_r[i]; p0_out[i]<=sp0_r[i];
++					q0_out[i]<=sq0_r[i]; q1_out[i]<=sq1_r[i]; q2_out[i]<=sq2_r[i];
++				end else if (enabled_r[i]) begin
++					p0_out[i]<=clip8($signed({4'd0,p0_r[i]})+12'(delta_r[i]));
++					q0_out[i]<=clip8($signed({4'd0,q0_r[i]})-12'(delta_r[i]));
++					if (!chroma_r && ap_r[i])
++						p1_out[i]<=clip8($signed({4'd0,p1_r[i]})+12'(adj_p_r[i]));
++					if (!chroma_r && aq_r[i])
++						q1_out[i]<=clip8($signed({4'd0,q1_r[i]})+12'(adj_q_r[i]));
++				end
++			end
++			done<=1; state<=IDLE;
++		end
++		default: state<=IDLE;
++		endcase
++	end
++endmodule
++
++
+ module h264_deblock_edge_pipe (
+ 	input  wire              clk,
+ 	input  wire              reset,
+--- a/rtl/h264_deblock_frame.sv
++++ b/rtl/h264_deblock_frame.sv
+@@ -51,6 +51,12 @@
+ );
+ 	localparam int MAX_MB = (STORAGE_W/16) * (STORAGE_H/16);
+ 	localparam int META_AW = $clog2(MAX_MB) > 0 ? $clog2(MAX_MB) : 1;
++	localparam [63:0] ADDRESS_END =
++		(BANK0_BASE > BANK1_BASE ? 64'(BANK0_BASE) : 64'(BANK1_BASE)) +
++		64'(STORAGE_W)*64'(STORAGE_H)*64'd3/64'd2;
++	localparam int ADDRESS_W = BANK0_BASE < 0 || BANK1_BASE < 0 ||
++		ADDRESS_END > 64'h1_0000_0000 ? 32 :
++		($clog2(ADDRESS_END) > 0 ? $clog2(ADDRESS_END) : 1);
+ 	typedef struct packed {
+ 		logic [2:0] mode;
+ 		logic [5:0] qp;
+@@ -68,11 +74,12 @@
+ 	reg [15:0] metadata_count, mb_count, mb_columns;
+ 	reg [31:0] base;
+ 	reg context_valid;
+-	localparam [3:0] IDLE=0, PRE_DRAIN=1, LOAD_MB=2, CHECK_MB=3,
++	localparam [4:0] IDLE=0, PRE_DRAIN=1, LOAD_MB=2, CHECK_MB=3,
+ 		SELECT_EDGE=4, CHECK_EDGE=5, READ=6, WAIT_READ=7, FILTER=8,
+ 		WRITE=9, NEXT_EDGE=10, NEXT_MB=11, FINAL_DRAIN=12, ABORT_DRAIN=13,
+-		WAIT_METADATA=14;
+-	reg [3:0] state;
++		WAIT_METADATA=14, WAIT_FILTER=16;
++	// State 15 remains invalid, including the composed fault-injection gate.
++	reg [4:0] state;
+ 	reg [15:0] mb_index, mb_x, mb_y;
+ 	reg horizontal;
+ 	reg [1:0] plane, edge_index, segment;
+@@ -80,6 +87,9 @@
+ 	reg read_outstanding;
+ 	reg [7:0] samples [0:31];
+ 	reg [7:0] filtered [0:23];
++	reg [ADDRESS_W-1:0] luma_row_base, chroma_row_base, luma_mb_base, chroma_mb_base;
++	reg [ADDRESS_W-1:0] read_address, read_tap_base, write_address, write_tap_base;
++	reg [ADDRESS_W-1:0] tap_step, lane_step;
+ 	assign busy = state != IDLE;
+ 	wire geometry_ok = frame_width != 0 && frame_height != 0 &&
+ 		frame_width[3:0] == 0 && frame_height[3:0] == 0 &&
+@@ -144,7 +154,21 @@
+ 		.is_chroma(plane != 0), .qp_p(q_meta.qp), .qp_q(q_meta.qp),
+ 		.chroma_qp_index_offset(q_meta.chroma_offset), .qp_avg(q_qp)
+ 	);
+-	wire [6:0] qp_sum = {1'b0,p_qp}+{1'b0,q_qp}+7'd1;
++	reg [5:0] p_qp_r, q_qp_r, qp_average;
++	reg [2:0] edge_bs;
++	reg edge_chroma, qp_average_valid, threshold_valid;
++	reg signed [4:0] edge_alpha_offset, edge_beta_offset;
++	reg [7:0] edge_alpha, edge_beta;
++	reg [5:0] edge_tc0;
++	wire [6:0] qp_sum = {1'b0,p_qp_r}+{1'b0,q_qp_r}+7'd1;
++	wire [7:0] threshold_alpha, threshold_beta;
++	wire [5:0] threshold_tc0;
++	h264_deblock_thresholds u_thresholds (
++		.qp_avg(qp_average), .bs(edge_bs),
++		.slice_alpha_c0_offset(edge_alpha_offset), .slice_beta_offset(edge_beta_offset),
++		.alpha(threshold_alpha), .beta(threshold_beta), .tc0(threshold_tc0),
++		.index_a(), .index_b()
++	);
+ 	wire [7:0] p3 [0:3], p2 [0:3], p1 [0:3], p0 [0:3];
+ 	wire [7:0] q0 [0:3], q1 [0:3], q2 [0:3], q3 [0:3];
+ 	wire [7:0] fp2 [0:3], fp1 [0:3], fp0 [0:3], fq0 [0:3], fq1 [0:3], fq2 [0:3];
+@@ -159,14 +183,16 @@
+ 		assign q2[lane]=samples[24+lane];
+ 		assign q3[lane]=samples[28+lane];
+ 	end endgenerate
+-	h264_deblock_edge u_filter (
+-		.is_chroma(plane != 0), .bs(bs), .qp_avg(qp_sum[6:1]),
+-		.slice_alpha_c0_offset(q_meta.alpha_offset), .slice_beta_offset(q_meta.beta_offset),
++	wire filter_done;
++	h264_deblock_samples_pipe u_filter (
++		.clk(clk), .reset(reset || cancel || state==ABORT_DRAIN),
++		.start(state==FILTER && threshold_valid && !cancel), .busy(), .done(filter_done),
++		.is_chroma(edge_chroma), .bs(edge_bs),
++		.alpha(edge_alpha), .beta(edge_beta), .tc0(edge_tc0),
+ 		.p3_in(p3), .p2_in(p2), .p1_in(p1), .p0_in(p0),
+ 		.q0_in(q0), .q1_in(q1), .q2_in(q2), .q3_in(q3),
+ 		.p2_out(fp2), .p1_out(fp1), .p0_out(fp0),
+-		.q0_out(fq0), .q1_out(fq1), .q2_out(fq2),
+-		.alpha_dbg(), .beta_dbg(), .tc0_dbg()
++		.q0_out(fq0), .q1_out(fq1), .q2_out(fq2)
+ 	);
+ 	wire [2:0] read_tap = plane == 0 ? read_index[4:2] : read_index[3:1];
+ 	wire [1:0] read_lane = plane == 0 ? read_index[1:0] : {1'b0,read_index[0]};
+@@ -174,25 +200,26 @@
+ 	wire [1:0] write_lane = plane == 0 ? write_index[1:0] : {1'b0,write_index[0]};
+ 	wire [4:0] read_slot = {read_tap,read_lane};
+ 	wire [4:0] write_slot = {write_tap,write_lane};
+-	function automatic [31:0] address(input integer tap_offset, input integer along);
+-		integer px,py,side,step,plane_offset,stride;
+-		begin
+-			side = plane == 0 ? 16 : 8;
+-			step = plane == 0 ? 4 : 2;
+-			px = int'(mb_x)*side + (horizontal ? int'(segment)*step+along : int'(edge_index)*4+tap_offset);
+-			py = int'(mb_y)*side + (horizontal ? int'(edge_index)*4+tap_offset : int'(segment)*step+along);
+-			stride = plane == 0 ? STORAGE_W : STORAGE_W/2;
+-			plane_offset = plane == 0 ? 0 : plane == 1 ? STORAGE_W*STORAGE_H : STORAGE_W*STORAGE_H*5/4;
+-			address = base + 32'(plane_offset+py*stride+px);
+-		end
+-	endfunction
++	// Valid geometry confines every requested byte to one configured bank.
++	// MB/row bases and accepted tap/lane walks avoid a plane-controlled
++	// multiply/add chain feeding the shared DPB RAM's read-enable range gate.
++	wire [ADDRESS_W-1:0] luma_edge_offset = horizontal ?
++		ADDRESS_W'(int'(edge_index)*(STORAGE_W*4)+int'(segment)*4-STORAGE_W*4) :
++		ADDRESS_W'(int'(segment)*(STORAGE_W*4)+int'(edge_index)*4-4);
++	wire [ADDRESS_W-1:0] chroma_edge_offset = horizontal ?
++		ADDRESS_W'(int'(edge_index)*((STORAGE_W/2)*4)+int'(segment)*2-(STORAGE_W/2)*4) :
++		ADDRESS_W'(int'(segment)*((STORAGE_W/2)*2)+int'(edge_index)*4-4);
++	wire [ADDRESS_W-1:0] edge_mb_base = plane==0 ? luma_mb_base :
++		plane==1 ? chroma_mb_base : chroma_mb_base+ADDRESS_W'(STORAGE_W*STORAGE_H/4);
++	wire [ADDRESS_W-1:0] edge_first = edge_mb_base +
++		(plane==0 ? luma_edge_offset : chroma_edge_offset);
+ 	assign mem_rd = state == READ && !cancel;
+-	assign mem_raddr = address(int'(read_tap)-4,int'(read_lane));
++	assign mem_raddr = 32'(read_address);
+ 	wire read_accept = mem_rd && mem_rready;
+ 	wire response = mem_rvalid && (read_outstanding || read_accept);
+ 	wire write_changed = filtered[write_slot] != samples[write_slot+5'd4];
+ 	assign mem_we = state == WRITE && write_changed && !cancel;
+-	assign mem_waddr = address(int'(write_tap)-3,int'(write_lane));
++	assign mem_waddr = 32'(write_address);
+ 	assign mem_wdata = filtered[write_slot];
+ 
+ 	integer i;
+@@ -203,9 +230,26 @@
+ 			metadata_count<=0; mb_count<=0; mb_columns<=0; base<=0;
+ 			mb_index<=0; mb_x<=0; mb_y<=0; horizontal<=0; plane<=0; edge_index<=0; segment<=0;
+ 			read_index<=0; write_index<=0; read_outstanding<=0; p_meta<='0; q_meta<='0;
++			luma_row_base<=0; chroma_row_base<=0; luma_mb_base<=0; chroma_mb_base<=0;
++			read_address<=0; read_tap_base<=0; write_address<=0; write_tap_base<=0;
++			tap_step<=0; lane_step<=0;
++			p_qp_r<=0; q_qp_r<=0; qp_average<=0; edge_bs<=0; edge_chroma<=0;
++			qp_average_valid<=0; threshold_valid<=0;
++			edge_alpha_offset<=0; edge_beta_offset<=0; edge_alpha<=0; edge_beta<=0; edge_tc0<=0;
+ 			for (i=0;i<32;i=i+1) samples[i]<=0;
+ 			for (i=0;i<24;i=i+1) filtered[i]<=0;
+ 		end else begin
++			// Even a zero-latency backend needs 16 chroma reads. These
++			// meaningful QP/threshold stages finish before sample retirement.
++			if (state==READ || state==WAIT_READ) begin
++				qp_average<=qp_sum[6:1]; qp_average_valid<=1;
++				edge_alpha<=threshold_alpha; edge_beta<=threshold_beta; edge_tc0<=threshold_tc0;
++				threshold_valid<=qp_average_valid;
++				if (read_index==0) begin
++					write_address<=read_address+tap_step;
++					write_tap_base<=read_address+tap_step;
++				end
++			end
+ 			if (read_accept) read_outstanding<=1;
+ 			if (response) read_outstanding<=0;
+ 			if (meta_valid && meta_ready) begin
+@@ -221,6 +265,9 @@
+ 				else begin
+ 					context_valid<=0; state<=PRE_DRAIN;
+ 					mb_index<=0; mb_x<=0; mb_y<=0;
++					luma_row_base<=ADDRESS_W'(base); luma_mb_base<=ADDRESS_W'(base);
++					chroma_row_base<=ADDRESS_W'(base)+ADDRESS_W'(STORAGE_W*STORAGE_H);
++					chroma_mb_base<=ADDRESS_W'(base)+ADDRESS_W'(STORAGE_W*STORAGE_H);
+ 				end
+ 			end
+ 			PRE_DRAIN: if (mem_wdrained) state<=LOAD_MB;
+@@ -245,11 +292,21 @@
+ 				if (bs == 0) state<=NEXT_EDGE;
+ 				// Later edges must see preceding accepted p/q writes, even on
+ 				// a backend with independent, delayed read and write channels.
+-				else if (mem_wdrained) begin read_index<=0; state<=READ; end
++				else if (mem_wdrained) begin
++					p_qp_r<=p_qp; q_qp_r<=q_qp; edge_bs<=bs; edge_chroma<=plane!=0;
++					edge_alpha_offset<=q_meta.alpha_offset; edge_beta_offset<=q_meta.beta_offset;
++					qp_average_valid<=0; threshold_valid<=0;
++					read_address<=edge_first; read_tap_base<=edge_first;
++					tap_step<=horizontal ? ADDRESS_W'(plane==0 ? STORAGE_W : STORAGE_W/2) : ADDRESS_W'(1);
++					lane_step<=horizontal ? ADDRESS_W'(1) : ADDRESS_W'(plane==0 ? STORAGE_W : STORAGE_W/2);
++					read_index<=0; state<=READ;
++				end
+ 			end
+ 			READ: if (read_accept) state<=WAIT_READ;
+ 			WAIT_READ: begin end
+-			FILTER: begin
++			FILTER: if (threshold_valid) state<=WAIT_FILTER;
++				else begin error<=1; state<=ABORT_DRAIN; end
++			WAIT_FILTER: if (filter_done) begin
+ 				for (i=0;i<4;i=i+1) begin
+ 					filtered[i]<=fp2[i]; filtered[4+i]<=fp1[i]; filtered[8+i]<=fp0[i];
+ 					filtered[12+i]<=fq0[i]; filtered[16+i]<=fq1[i]; filtered[20+i]<=fq2[i];
+@@ -258,7 +315,13 @@
+ 			end
+ 			WRITE: if (!write_changed || mem_wready) begin
+ 				if (write_index == (plane == 0 ? 6'd23 : 6'd11)) state<=NEXT_EDGE;
+-				else write_index<=write_index+1'b1;
++				else begin
++					write_index<=write_index+1'b1;
++					if (write_lane==(plane==0 ? 2'd3 : 2'd1)) begin
++						write_address<=write_tap_base+tap_step;
++						write_tap_base<=write_tap_base+tap_step;
++					end else write_address<=write_address+lane_step;
++				end
+ 			end
+ 			NEXT_EDGE: begin
+ 				if (segment != 3) begin segment<=segment+1'b1; state<=SELECT_EDGE; end
+@@ -277,8 +340,17 @@
+ 				if (mb_index+1'b1 == mb_count) state<=FINAL_DRAIN;
+ 				else begin
+ 					mb_index<=mb_index+1'b1;
+-					if (mb_x+1'b1 == mb_columns) begin mb_x<=0; mb_y<=mb_y+1'b1; end
+-					else mb_x<=mb_x+1'b1;
++					if (mb_x+1'b1 == mb_columns) begin
++						mb_x<=0; mb_y<=mb_y+1'b1;
++						luma_row_base<=luma_row_base+ADDRESS_W'(STORAGE_W*16);
++						luma_mb_base<=luma_row_base+ADDRESS_W'(STORAGE_W*16);
++						chroma_row_base<=chroma_row_base+ADDRESS_W'((STORAGE_W/2)*8);
++						chroma_mb_base<=chroma_row_base+ADDRESS_W'((STORAGE_W/2)*8);
++					end else begin
++						mb_x<=mb_x+1'b1;
++						luma_mb_base<=luma_mb_base+ADDRESS_W'(16);
++						chroma_mb_base<=chroma_mb_base+ADDRESS_W'(8);
++					end
+ 					state<=LOAD_MB;
+ 				end
+ 			end
+@@ -290,7 +362,13 @@
+ 			if (response && state != ABORT_DRAIN) begin
+ 				samples[read_slot]<=mem_rdata;
+ 				if (read_index == (plane == 0 ? 6'd31 : 6'd15)) state<=FILTER;
+-				else begin read_index<=read_index+1'b1; state<=READ; end
++				else begin
++					read_index<=read_index+1'b1; state<=READ;
++					if (read_lane==(plane==0 ? 2'd3 : 2'd1)) begin
++						read_address<=read_tap_base+tap_step;
++						read_tap_base<=read_tap_base+tap_step;
++					end else read_address<=read_address+lane_step;
++				end
+ 			end
+ 			if (frame_begin && !busy && !frame_abort) begin
+ 				context_valid<=geometry_ok; error<=!geometry_ok;
+--- a/rtl/h264_intra_pred.sv
++++ b/rtl/h264_intra_pred.sv
+@@ -564,6 +564,148 @@
+ 	end
+ endmodule
+ 
++// Transactional counterpart of h264_chroma_pred_region. The register cuts
++// carry weighted partials, gradients/DC, plane coefficients, row/column
++// contributions, and finally pixels; inputs may change after start.
++module h264_chroma_pred_region_pipe #(
++	parameter int SIDE = 8
++) (
++	input wire clk, reset, start,
++	output wire busy,
++	output reg done,
++	input wire [1:0] mode,
++	input wire [7:0] above [0:7], left [0:7],
++	input wire [7:0] top_left,
++	input wire has_above, has_left, block_x, block_y,
++	output reg [7:0] pred [0:SIDE*SIDE-1]
++);
++	localparam [2:0] IDLE=0, GRADIENT=1, COEFFICIENT=2, CONTRIBUTION=3, PIXELS=4;
++	reg [2:0] state;
++	assign busy=state!=IDLE;
++	reg [1:0] mode_r;
++	reg has_above_r, has_left_r, block_x_r, block_y_r;
++	reg [7:0] above_r [0:7], left_r [0:7], dc_r [0:3];
++	reg [9:0] sum_a0_r, sum_a1_r, sum_l0_r, sum_l1_r;
++	reg [8:0] tail_sum_r;
++	reg signed [12:0] h_lo_r, h_hi_r, v_lo_r, v_hi_r, hgrad_r, vgrad_r;
++	reg [12:0] a_r;
++	reg signed [11:0] b_r, c_r;
++	reg signed [15:0] row_r [0:SIDE-1], column_r [0:SIDE-1];
++
++	function automatic [9:0] sum4(input [7:0] a,b,c,d);
++		sum4=({2'd0,a}+{2'd0,b})+({2'd0,c}+{2'd0,d});
++	endfunction
++	function automatic signed [8:0] diff8(input [7:0] a,b);
++		diff8=$signed({1'b0,a})-$signed({1'b0,b});
++	endfunction
++	function automatic signed [12:0] gradient_lo(input [7:0] a4,a2,a5,a1);
++		gradient_lo=13'(diff8(a4,a2))+(13'(diff8(a5,a1)) <<< 1);
++	endfunction
++	function automatic signed [12:0] gradient_hi(input [7:0] a6,a0,a7,tl);
++		reg signed [12:0] d3,d4;
++		begin
++			d3=13'(diff8(a6,a0)); d4=13'(diff8(a7,tl));
++			gradient_hi=(d3+(d3 <<< 1))+(d4 <<< 2);
++		end
++	endfunction
++	function automatic signed [15:0] scale_gradient(
++		input signed [11:0] gradient, input signed [3:0] offset);
++		reg signed [15:0] g;
++		begin
++			g=16'(gradient);
++			case (offset)
++			-4'sd3: scale_gradient=-(g+(g <<< 1));
++			-4'sd2: scale_gradient=-(g <<< 1);
++			-4'sd1: scale_gradient=-g;
++			4'sd0: scale_gradient=0;
++			4'sd1: scale_gradient=g;
++			4'sd2: scale_gradient=g <<< 1;
++			4'sd3: scale_gradient=g+(g <<< 1);
++			4'sd4: scale_gradient=g <<< 2;
++			default: scale_gradient=0;
++			endcase
++		end
++	endfunction
++	function automatic [7:0] clip8(input signed [15:0] v);
++		if (v < 16'sd0) clip8=0;
++		else if (v > 16'sd255) clip8=255;
++		else clip8=v[7:0];
++	endfunction
++
++	// H/V are [-2550,2550]; 17*H+16 fits signed17, and b/c fit
++	// signed12. With coordinates [-3,4], the final numerator fits signed16.
++	integer i,x,y,gx,gy;
++	always @(posedge clk) begin
++		done<=0;
++		if (reset) begin
++			state<=IDLE;
++			for (i=0;i<SIDE*SIDE;i=i+1) pred[i]<=0;
++		end else case (state)
++		IDLE: if (start) begin
++			mode_r<=mode; has_above_r<=has_above; has_left_r<=has_left;
++			block_x_r<=block_x; block_y_r<=block_y;
++			for (i=0;i<8;i=i+1) begin above_r[i]<=above[i]; left_r[i]<=left[i]; end
++			sum_a0_r<=sum4(above[0],above[1],above[2],above[3]);
++			sum_a1_r<=sum4(above[4],above[5],above[6],above[7]);
++			sum_l0_r<=sum4(left[0],left[1],left[2],left[3]);
++			sum_l1_r<=sum4(left[4],left[5],left[6],left[7]);
++			tail_sum_r<={1'b0,above[7]}+{1'b0,left[7]};
++			h_lo_r<=gradient_lo(above[4],above[2],above[5],above[1]);
++			h_hi_r<=gradient_hi(above[6],above[0],above[7],top_left);
++			v_lo_r<=gradient_lo(left[4],left[2],left[5],left[1]);
++			v_hi_r<=gradient_hi(left[6],left[0],left[7],top_left);
++			state<=GRADIENT;
++		end
++		GRADIENT: begin
++			hgrad_r<=h_lo_r+h_hi_r; vgrad_r<=v_lo_r+v_hi_r;
++			a_r<={tail_sum_r,4'd0};
++			for (i=0;i<4;i=i+1) dc_r[i]<=128;
++			if (has_above_r && has_left_r) begin
++				dc_r[0]<=8'(({1'b0,sum_a0_r}+{1'b0,sum_l0_r}+11'd4) >> 3);
++				dc_r[1]<=8'((sum_a1_r+10'd2) >> 2);
++				dc_r[2]<=8'((sum_l1_r+10'd2) >> 2);
++				dc_r[3]<=8'(({1'b0,sum_a1_r}+{1'b0,sum_l1_r}+11'd4) >> 3);
++			end else if (has_above_r) begin
++				dc_r[0]<=8'((sum_a0_r+10'd2) >> 2); dc_r[1]<=8'((sum_a1_r+10'd2) >> 2);
++				dc_r[2]<=8'((sum_a0_r+10'd2) >> 2); dc_r[3]<=8'((sum_a1_r+10'd2) >> 2);
++			end else if (has_left_r) begin
++				dc_r[0]<=8'((sum_l0_r+10'd2) >> 2); dc_r[1]<=8'((sum_l0_r+10'd2) >> 2);
++				dc_r[2]<=8'((sum_l1_r+10'd2) >> 2); dc_r[3]<=8'((sum_l1_r+10'd2) >> 2);
++			end
++			state<=COEFFICIENT;
++		end
++		COEFFICIENT: begin
++			b_r<=12'(((17'(hgrad_r) <<< 4)+17'(hgrad_r)+17'sd16) >>> 5);
++			c_r<=12'(((17'(vgrad_r) <<< 4)+17'(vgrad_r)+17'sd16) >>> 5);
++			state<=CONTRIBUTION;
++		end
++		CONTRIBUTION: begin
++			for (i=0;i<SIDE;i=i+1) begin
++				row_r[i]<=$signed({3'd0,a_r})+scale_gradient(c_r,
++					4'(i)+(SIDE==4 && block_y_r ? 4'sd4 : 4'sd0)-4'sd3)+16'sd16;
++				column_r[i]<=scale_gradient(b_r,
++					4'(i)+(SIDE==4 && block_x_r ? 4'sd4 : 4'sd0)-4'sd3);
++			end
++			state<=PIXELS;
++		end
++		PIXELS: begin
++			for (y=0;y<SIDE;y=y+1) for (x=0;x<SIDE;x=x+1) begin
++				gx=x+(SIDE==4 && block_x_r ? 4 : 0);
++				gy=y+(SIDE==4 && block_y_r ? 4 : 0);
++				case (mode_r)
++				0: pred[y*SIDE+x]<=dc_r[(gy/4)*2+gx/4];
++				1: pred[y*SIDE+x]<=left_r[gy];
++				2: pred[y*SIDE+x]<=above_r[gx];
++				3: pred[y*SIDE+x]<=clip8((row_r[y]+column_r[x]) >>> 5);
++				endcase
++			end
++			done<=1; state<=IDLE;
++		end
++		default: state<=IDLE;
++		endcase
++	end
++endmodule
++
+ module h264_intra_mode_guard (
+ 	input  wire        clk,
+ 	input  wire        reset,
+--- a/rtl/h264_mb_ctrl.sv
++++ b/rtl/h264_mb_ctrl.sv
+@@ -405,7 +405,20 @@
+ 		assign chr_pred_above[chr_neighbor]=ly_i[2] ? chr_above_v[chr_neighbor] : chr_above_u[chr_neighbor];
+ 		assign chr_pred_left[chr_neighbor]=ly_i[2] ? chr_left_v[chr_neighbor] : chr_left_u[chr_neighbor];
+ 	end endgenerate
+-	h264_chroma_pred_region #(.SIDE(4)) u_chr_pred (
++	reg chr_pending;
++	wire chr_done;
++	wire chr_owner = phase==ST_PRED && ly_i>=16 && is_intra_mb;
++	wire chr_mode_bad = (chroma_mode==1 && !intra_has_left) ||
++		(chroma_mode==2 && !intra_has_above) ||
++		(chroma_mode==3 && (!intra_has_left || !intra_has_above || !intra_has_tl));
++	wire chr_reset = reset || frame_abort || !chr_owner;
++	wire chr_start = chr_owner && !chr_pending && !chr_mode_bad && !chr_reset;
++	always @(posedge clk) begin
++		if (chr_reset) chr_pending<=0;
++		else if (chr_start) chr_pending<=1;
++	end
++	h264_chroma_pred_region_pipe #(.SIDE(4)) u_chr_pred (
++		.clk(clk), .reset(chr_reset), .start(chr_start), .busy(), .done(chr_done),
+ 		.mode(chroma_mode), .above(chr_pred_above), .left(chr_pred_left),
+ 		.top_left(ly_i[2] ? chr_tl_v : chr_tl_u),
+ 		.has_above(intra_has_above), .has_left(intra_has_left),
+@@ -2438,18 +2451,20 @@
+ 
+ 			ST_PRED: begin
+ 				if (ly_i >= 16) begin
+-					for (coeff_i=0;coeff_i<16;coeff_i=coeff_i+1) begin
+-						pred[coeff_i] <= is_intra_mb ? chr_pred[coeff_i] :
+-							SYNC_MB_PLANES ? plane_word[coeff_i*8+:8] :
+-							(ly_i[2] ? mb_v[{blk_y[0],coeff_i[3:2],blk_x[0],coeff_i[1:0]}] :
+-							           mb_u[{blk_y[0],coeff_i[3:2],blk_x[0],coeff_i[1:0]}]);
+-					end
+-					recon_start<=1;
+-					phase<=ST_KICK_BLK;
+-					if (is_intra_mb && ((chroma_mode==1 && !intra_has_left) ||
+-					    (chroma_mode==2 && !intra_has_above) ||
+-					    (chroma_mode==3 && (!intra_has_left || !intra_has_above || !intra_has_tl)))) begin
+-						recon_start<=0; decode_error<=8'd6; phase<=ST_STOP;
++					if (is_intra_mb) begin
++						if (chr_mode_bad) begin
++							recon_start<=0; decode_error<=8'd6; phase<=ST_STOP;
++						end else if (chr_pending && chr_done && !frame_abort) begin
++							for (coeff_i=0;coeff_i<16;coeff_i=coeff_i+1)
++								pred[coeff_i]<=chr_pred[coeff_i];
++							recon_start<=1; phase<=ST_KICK_BLK;
++						end
++					end else begin
++						for (coeff_i=0;coeff_i<16;coeff_i=coeff_i+1)
++							pred[coeff_i] <= SYNC_MB_PLANES ? plane_word[coeff_i*8+:8] :
++								(ly_i[2] ? mb_v[{blk_y[0],coeff_i[3:2],blk_x[0],coeff_i[1:0]}] :
++								           mb_u[{blk_y[0],coeff_i[3:2],blk_x[0],coeff_i[1:0]}]);
++						recon_start<=1; phase<=ST_KICK_BLK;
+ 					end
+ 				end else if (SYNC_MB_PLANES && is_intra_mb && !is_i16 && !pred_nb) begin
+ 					// Each beat owns the registered word requested previously:

@@ -1,0 +1,29 @@
+{
+  "archive_matches_candidate_bytes": true,
+  "archive_preserves_directory_modes": true,
+  "archive_preserves_file_modes": true,
+  "candidate_root": "candidate",
+  "changed_file_count": 2,
+  "changed_paths": [
+    "arm/misterplexd/plex_resolve.cpp",
+    "tests/unit/test_resolve.cpp"
+  ],
+  "hls_r3_review_reference": {
+    "approved_86_source_reference": "6a314a76c4019bb3e3c7434e092aac47a57acbdeb64688a2f4107288446dad56",
+    "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/reviews/hls-r3-review.json",
+    "sha256": "713f1f842ffda732be8c917a6aefdc55970ee2ff9d4ac715b32651ffc9a6d96b"
+  },
+  "mission": "minimal-original-http-offset-source-5754",
+  "owner": "8f57f066-5a9e-4c97-b5a2-c4a1f09ef306",
+  "patch_applies_cleanly": true,
+  "reviewed_r4_reference": {
+    "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/reviews/offset-r4-review.json",
+    "rejected_archive_sha256": "55b5fd8f70a7221dbaa805c1a4e0d835a89f19de99f84593c1e77411280b7bae",
+    "rejected_manifest_sha256": "c0cde58dd1a64217e3d82d242eb4afb53fb0abaf0b2414e3cc335e251c9b2882",
+    "reviewed_patch_sha256": "3387923610e7c8c00fe3dc2432ba6ecaae5f92047b7fc3ffbd59f5ed356d6302",
+    "sha256": "00bcd13e03547cedb19bcd0ca2b74eb63ca8c5a8f6e0a27c7dc183b720b8b7d8"
+  },
+  "schema": 1,
+  "source_directory_count": 11,
+  "source_file_count": 82
+}

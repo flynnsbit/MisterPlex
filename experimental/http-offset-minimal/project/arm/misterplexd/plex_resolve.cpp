@@ -1,0 +1,1676 @@
+#include "plex_resolve.hpp"
+#include "../../assets/plex-profiles/fpga_profile.hpp"
+#include "libmisterplex/p720_transcode_vf.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <chrono>
+#include <cmath>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <iomanip>
+#include <limits>
+#include <numeric>
+#include <sstream>
+#include <unistd.h>
+#include <vector>
+
+namespace misterplex {
+namespace {
+
+std::string shellQuote(const std::string& s) {
+    std::string o = "'";
+    for (char c : s) {
+        if (c == '\'')
+            o += "'\\''";
+        else
+            o += c;
+    }
+    o += "'";
+    return o;
+}
+
+std::string httpGet(const std::string& url, int timeoutSec = 15,
+                    const std::string& extraHeaders = {},
+                    const std::string& clientProfileName = "MiSTerPlex") {
+    // Prefer curl (present on MiSTer); -k for plex.direct certs.
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -H 'Accept: application/xml'"
+        << " -H 'X-Plex-Client-Identifier: misterplex'"
+        << " -H 'X-Plex-Product: Plex Web'"
+        << " -H 'X-Plex-Version: 4.125.0'"
+        << " -H 'X-Plex-Platform: Chrome'"
+        << " -H 'X-Plex-Platform-Version: 120.0'"
+        << " -H 'X-Plex-Device: Linux'"
+        << " -H 'X-Plex-Device-Name: Chrome'"
+        << " -H " << shellQuote("X-Plex-Client-Profile-Name: " + clientProfileName)
+        << " -H 'X-Plex-Model: bundled'"
+        << " -H 'X-Plex-Provides: player'";
+    if (!extraHeaders.empty())
+        cmd << extraHeaders;
+    cmd << " " << shellQuote(url) << " 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return {};
+    std::string out;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    pclose(p);
+    return out;
+}
+
+std::string curlHeaderArgs(const std::vector<std::pair<std::string, std::string>>& headers) {
+    std::ostringstream args;
+    for (const auto& h : headers) {
+        if (h.first.empty())
+            continue;
+        args << " -H " << shellQuote(h.first + ": " + h.second);
+    }
+    return args.str();
+}
+
+std::string makeSessionId() {
+    // Seed from time so the first cast after every daemon restart is not always
+    // mplex-9e3779b1 (n=1 * golden). PMS keeps per-session transcoder state;
+    // reusing that id after a restart stalls ffmpeg on /universal/start.
+    static std::atomic<uint32_t> n{static_cast<uint32_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count() ^
+        (static_cast<uint64_t>(::getpid()) * 0x9E3779B9u))};
+    std::ostringstream o;
+    o << "mplex-" << std::hex << (n.fetch_add(1) * 2654435761u);
+    return o.str();
+}
+
+std::string hostOnly(const std::string& hostOrUrl) {
+    std::string h = hostOrUrl;
+    if (auto p = h.find("://"); p != std::string::npos)
+        h = h.substr(p + 3);
+    if (auto p = h.find('/'); p != std::string::npos)
+        h = h.substr(0, p);
+    if (auto p = h.find(':'); p != std::string::npos)
+        h = h.substr(0, p);
+    return h;
+}
+
+bool isUnreachableHost(const std::string& hostOrUrl) {
+    const std::string h = hostOnly(hostOrUrl);
+    if (h.rfind("172.17.", 0) == 0 || h.rfind("172.18.", 0) == 0 ||
+        h.rfind("172.20.", 0) == 0 || h.rfind("172.21.", 0) == 0)
+        return true;
+    if (h.find("172-17-") != std::string::npos || h.find("172-18-") != std::string::npos ||
+        h.find("172-20-") != std::string::npos || h.find("172-21-") != std::string::npos)
+        return true;
+    return false;
+}
+
+std::string attr(const std::string& xml, const char* tag, const char* name) {
+    // First occurrence of <tag ... name="..."
+    const std::string open = std::string("<") + tag;
+    size_t tpos = 0;
+    while ((tpos = xml.find(open, tpos)) != std::string::npos) {
+        const size_t boundary = tpos + open.size();
+        if (boundary >= xml.size() ||
+            std::isspace(static_cast<unsigned char>(xml[boundary])) ||
+            xml[boundary] == '>' || xml[boundary] == '/') {
+            break;
+        }
+        tpos = boundary;
+    }
+    if (tpos == std::string::npos)
+        return {};
+    auto end = xml.find('>', tpos);
+    if (end == std::string::npos)
+        return {};
+    const std::string slice = xml.substr(tpos, end - tpos);
+    const std::string key = std::string(name) + "=\"";
+    auto p = slice.find(key);
+    if (p == std::string::npos)
+        return {};
+    p += key.size();
+    auto e = slice.find('"', p);
+    if (e == std::string::npos)
+        return {};
+    return slice.substr(p, e - p);
+}
+
+// Attr from a free-form XML slice (first name="..." only).
+std::string attrIn(const std::string& slice, const char* name) {
+    const std::string key = std::string(name) + "=\"";
+    auto p = slice.find(key);
+    if (p == std::string::npos)
+        return {};
+    p += key.size();
+    auto e = slice.find('"', p);
+    if (e == std::string::npos)
+        return {};
+    return slice.substr(p, e - p);
+}
+
+std::string lowerCopy(std::string s) {
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// H.264/AVC direct Part is preferred for STREAM host CAVLC recon (Baseline/Main).
+bool videoCodecIsH264(const std::string& codecRaw) {
+    const std::string c = lowerCopy(codecRaw);
+    if (c.empty())
+        return false;
+    return c.find("h264") != std::string::npos || c.find("avc") != std::string::npos ||
+           c.find("x264") != std::string::npos;
+}
+
+} // namespace
+
+std::string plexHttpGet(const std::string& url, int timeoutSec,
+                        const std::string& extraHeaders) {
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -H 'Accept: application/xml'"
+        << " -H 'X-Plex-Product: MiSTerPlex'"
+        << " -H 'X-Plex-Provides: player'";
+    if (!extraHeaders.empty())
+        cmd << extraHeaders;
+    cmd << " '" << url << "' 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return {};
+    std::string out;
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    pclose(p);
+    return out;
+}
+
+const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
+    static const std::vector<PlexTranscodeProfile> profiles = {
+        {"240p", "320x240", 1000, 40, "baseline", 30},
+        {"480p", "640x480", 2500, 60, "baseline", 30},
+        // Level 3.1 required for 1280x720 (level 3.0 MaxFS is too small).
+        // 20 Mbps @ q100 was for banding, not dual-A9 rate. Phase 0 copy is
+        // ~15 ms; 1280×720 @ 1.5–2.5 Mbps CBP decodes ~28 fps uncontended, so
+        // 20 unique fps at full 720p is the dual-A9 target. Keep Main@L3.1.
+        {"720p", "1280x720", 8000, 100, "main", 31},
+    };
+    return profiles;
+}
+
+std::string normalizePlexBase(const std::string& raw) {
+    std::string s = raw;
+    // trim
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' ||
+                          s.front() == '\n'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' ||
+                          s.back() == '\n' || s.back() == '/'))
+        s.pop_back();
+    if (s.empty())
+        return {};
+    if (s.find("://") == std::string::npos) {
+        // bare host or host:port → assume http
+        s = "http://" + s;
+    }
+    // strip trailing slash again after scheme
+    while (!s.empty() && s.back() == '/')
+        s.pop_back();
+    // If no port in authority, default PMS :32400 (skip if user omitted intentionally
+    // for reverse-proxy with scheme-only host — rare; LAN always wants 32400).
+    auto scheme = s.find("://");
+    if (scheme != std::string::npos) {
+        auto hostStart = scheme + 3;
+        auto slash = s.find('/', hostStart);
+        std::string auth =
+            (slash == std::string::npos) ? s.substr(hostStart) : s.substr(hostStart, slash - hostStart);
+        // IPv6 in brackets or host:port
+        bool hasPort = false;
+        if (!auth.empty() && auth.front() == '[') {
+            auto br = auth.find(']');
+            hasPort = (br != std::string::npos && br + 1 < auth.size() && auth[br + 1] == ':');
+        } else {
+            hasPort = (auth.rfind(':') != std::string::npos);
+        }
+        if (!hasPort && !auth.empty())
+            s = s.substr(0, hostStart) + auth + ":32400" +
+                (slash == std::string::npos ? std::string() : s.substr(slash));
+    }
+    return s;
+}
+
+std::vector<std::string> parsePlexServerList(const std::string& csvOrSingle) {
+    std::vector<std::string> out;
+    std::string cur;
+    auto flush = [&]() {
+        auto n = normalizePlexBase(cur);
+        cur.clear();
+        if (n.empty())
+            return;
+        for (const auto& e : out) {
+            if (e == n)
+                return;
+        }
+        out.push_back(n);
+    };
+    for (char c : csvOrSingle) {
+        if (c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            flush();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    flush();
+    return out;
+}
+
+std::vector<std::string> mergePlexServers(const std::string& serversCsv,
+                                          const std::vector<std::string>& baseLines) {
+    std::vector<std::string> out = parsePlexServerList(serversCsv);
+    for (const auto& line : baseLines) {
+        for (const auto& n : parsePlexServerList(line)) {
+            bool seen = false;
+            for (const auto& e : out) {
+                if (e == n) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+                out.push_back(n);
+        }
+    }
+    return out;
+}
+
+std::string urlDecode(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size() && std::isxdigit(static_cast<unsigned char>(in[i + 1])) &&
+            std::isxdigit(static_cast<unsigned char>(in[i + 2]))) {
+            auto hex = in.substr(i + 1, 2);
+            out.push_back(static_cast<char>(std::strtol(hex.c_str(), nullptr, 16)));
+            i += 2;
+        } else if (in[i] == '+') {
+            out.push_back(' ');
+        } else {
+            out.push_back(in[i]);
+        }
+    }
+    return out;
+}
+
+std::string urlEncodeQuery(const std::string& s) {
+    std::ostringstream o;
+    o << std::uppercase;
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+            o << static_cast<char>(c);
+        else {
+            o << '%' << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c)
+              << std::dec;
+        }
+    }
+    return o.str();
+}
+
+namespace {
+
+bool parseResolution(const std::string& res, int& w, int& h) {
+    w = h = 0;
+    return std::sscanf(res.c_str(), "%dx%d", &w, &h) == 2 && w > 0 && h > 0;
+}
+
+} // namespace
+
+bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& weak) {
+    for (const auto& p : plexTranscodeProfiles()) {
+        if (nameOrResolution == p.name || nameOrResolution == p.videoResolution) {
+            weak.profileName = p.name;
+            weak.videoResolution = p.videoResolution;
+            weak.maxVideoBitrateKbps = p.maxVideoBitrateKbps;
+            weak.videoQuality = p.videoQuality;
+            weak.videoCodec = "h264";
+            weak.audioCodec = "aac";
+            weak.h264Profile = p.h264Profile;
+            weak.h264Level = p.h264Level;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool applyFpgaPlexProfile(WeakLadder& weak, const std::string& prototype,
+                          int fpsNum, int fpsDen, bool filteringOff, std::string* why) {
+    FpgaPmsProfile profile;
+    if (!selectFpgaPmsProfile(prototype, "240p", fpsNum, fpsDen, filteringOff, profile, why))
+        return false;
+    weak.profileName = "fpga-h264-240p";
+    weak.clientProfileName = profile.clientProfileName;
+    weak.videoResolution = profile.videoResolution;
+    weak.maxVideoBitrateKbps = profile.maxVideoBitrateKbps;
+    weak.videoQuality = 60;
+    weak.videoCodec = "h264";
+    weak.audioCodec = "aac";
+    weak.h264Profile = "baseline";
+    weak.h264Level = 30;
+    weak.fpgaFpsNum = profile.fpsNum;
+    weak.fpgaFpsDen = profile.fpsDen;
+    return true;
+}
+
+bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
+    int w = 0, h = 0;
+    auto fail = [&](const std::string& msg) {
+        if (why)
+            *why = msg;
+        return false;
+    };
+    if (!parseResolution(weak.videoResolution, w, h))
+        return fail("videoResolution must be WxH");
+    if (isFpgaPlexProfile(weak) &&
+        (w > 320 || h > 240 ||
+         !((weak.fpgaFpsNum == 24 && weak.fpgaFpsDen == 1) ||
+           (weak.fpgaFpsNum == 24000 && weak.fpgaFpsDen == 1001))))
+        return fail("FPGA profile requires initial 240p and exact film rate");
+    if (weak.videoCodec != "h264")
+        return fail("videoCodec must be h264");
+    if (weak.audioCodec != "aac")
+        return fail("audioCodec must be aac");
+    // 720p PRESENT=fpga is host-ffmpeg → I420 DDR (not fabric CABAC). Allow
+    // baseline|main. Keep baseline-only for ≤480p profiles (legacy ladder).
+    if (weak.h264Profile != "baseline" && weak.h264Profile != "main")
+        return fail("H.264 profile must be baseline or main");
+    if (w >= 1280 || h >= 720) {
+        if (w > 1280 || h > 720)
+            return fail("current built-in profiles stop at 1280x720");
+        if (weak.h264Level > 31)
+            return fail("H.264 level must not exceed 3.1 for 720p ARM decode path");
+        if (weak.h264Level < 31)
+            return fail("720p requires H.264 level 3.1 (level 3.0 MaxFS is insufficient)");
+        if (weak.maxVideoBitrateKbps < 1500)
+            return fail("720p profile bitrate is too low");
+    } else if (weak.h264Profile != "baseline") {
+        return fail("H.264 profile must be baseline for ≤480p profiles");
+    } else if (weak.h264Level > 30) {
+        return fail("H.264 level must not exceed 3.0 for 240p/480p profiles");
+    } else if (w >= 640 || h >= 480) {
+        if (w > 640 || h > 480)
+            return fail("use 720p profile for resolutions above 640x480");
+        if (weak.maxVideoBitrateKbps < 2000)
+            return fail("480p profile bitrate is too low");
+    } else if (weak.maxVideoBitrateKbps < 750) {
+        return fail("240p profile bitrate is too low");
+    }
+    if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
+        return fail("videoQuality and maxVideoBitrate must be positive");
+    return true;
+}
+
+std::string plexClientProfileExtra(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    parseResolution(weak.videoResolution, w, h);
+    std::ostringstream o;
+    o << "add-transcode-target(type=videoProfile&context=streaming&protocol=http"
+      // PMS universal/start.mp4 is the HTTP entrypoint, but its working
+      // streaming transcode target is TS; advertising mp4 here can make PMS
+      // return an empty video/mp4 response.
+      << "&container=mpegts&videoCodec=" << weak.videoCodec << "&audioCodec=" << weak.audioCodec
+      << "&replace=true)+"
+      << "add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=http"
+      << "&audioCodec=" << weak.audioCodec << "&replace=true)+"
+      << "add-limitation(scope=videoCodec&scopeName=h264&type=match&name=video.profile"
+      << "&list=" << weak.h264Profile << "&replace=true)+"
+      << "add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.level"
+      << "&value=" << weak.h264Level << "&replace=true)+"
+      << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
+      << "&context=streaming&protocol=http&type=match&name=video.profile"
+      << "&list=" << weak.h264Profile << "&isRequired=true)+"
+      << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
+      << "&context=streaming&protocol=http&type=upperBound&name=video.level"
+      << "&value=" << weak.h264Level << "&isRequired=true)";
+    if (w > 0 && h > 0) {
+        o << "+add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.width"
+          << "&value=" << w << "&replace=true)"
+          << "+add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.height"
+          << "&value=" << h << "&replace=true)";
+    }
+    return o.str();
+}
+
+std::string plexClientCapabilities(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    parseResolution(weak.videoResolution, w, h);
+    std::ostringstream o;
+    o << "protocols=http-streaming-video,http-mp2t-video;"
+      << "videoDecoders=h264{profile:" << weak.h264Profile << "&resolution:" << w << "x" << h
+      << "&level:" << weak.h264Level << "};"
+      << "audioDecoders=" << weak.audioCodec << "{channels:2}";
+    return o.str();
+}
+
+std::string buildUniversalTranscodeUrl(const std::string& base,
+                                       const std::string& metadataKey,
+                                       const std::string& token,
+                                       const std::string& session,
+                                       int64_t offsetMs,
+                                       const WeakLadder& weak) {
+    if (isFpgaPlexProfile(weak) && !validateWeakLadder(weak))
+        return {};
+    std::ostringstream q;
+    q << base << "/video/:/transcode/universal/start.mp4"
+      << "?hasMDE=1"
+      << "&path=" << urlEncodeQuery(metadataKey)
+      << "&mediaIndex=0&partIndex=0"
+      << "&protocol=http&fastSeek=0"
+      << "&directPlay=0&directStream=0"
+      << "&subtitleSize=100&audioBoost=100&location=lan&copyts=1"
+      << "&autoAdjustQuality=0"
+      << "&session=" << urlEncodeQuery(session)
+      << "&videoQuality=" << weak.videoQuality
+      << "&videoResolution=" << urlEncodeQuery(weak.videoResolution)
+      << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps
+      << "&videoCodec=" << urlEncodeQuery(weak.videoCodec)
+      << "&audioCodec=" << urlEncodeQuery(weak.audioCodec)
+      << "&videoProfile=" << urlEncodeQuery(weak.h264Profile)
+      << "&videoLevel=" << weak.h264Level;
+    if (isFpgaPlexProfile(weak))
+        q << "&container=mpegts&audioChannels=2&videoFrameRate="
+          << urlEncodeQuery(weak.fpgaFpsDen == 1 ? std::to_string(weak.fpgaFpsNum)
+              : std::to_string(weak.fpgaFpsNum) + "/" + std::to_string(weak.fpgaFpsDen));
+    // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).
+    if (weak.burnSubtitles) {
+        q << "&subtitles=burn";
+        if (weak.subtitleStreamId >= 0)
+            q << "&subtitleStreamID=" << weak.subtitleStreamId;
+    }
+    // PMS universal offset is SECONDS (companion / scrubber use ms).
+    const int64_t offSec = universalOffsetSeconds(offsetMs);
+    if (isFpgaPlexProfile(weak) || offSec > 0)
+        q << "&offset=" << offSec;
+    if (!token.empty() && !isFpgaPlexProfile(weak))
+        q << "&X-Plex-Token=" << urlEncodeQuery(token);
+    return q.str();
+}
+
+std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token) {
+    return plexFfmpegHeaders(sessionId, token, WeakLadder{});
+}
+
+std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token,
+                              const WeakLadder& weak) {
+    std::ostringstream o;
+    o << "X-Plex-Client-Identifier: misterplex\r\n"
+      << "X-Plex-Product: Plex Web\r\n"
+      << "X-Plex-Version: 4.125.0\r\n"
+      << "X-Plex-Platform: Chrome\r\n"
+      << "X-Plex-Platform-Version: 120.0\r\n"
+      << "X-Plex-Device: Linux\r\n"
+      << "X-Plex-Device-Name: Chrome\r\n"
+      << "X-Plex-Client-Profile-Name: " << weak.clientProfileName << "\r\n"
+      << "X-Plex-Model: bundled\r\n"
+      << "X-Plex-Provides: player\r\n";
+    // 480p gold: MiSTerPlex.xml owns the target; Extra fights Baseline/CAVLC.
+    // 720p: send caps so a generic PMS actually emits 1280x720 (not 640x480).
+    if (plexSendClientLadderCaps(weak)) {
+        o << "X-Plex-Client-Capabilities: " << plexClientCapabilities(weak) << "\r\n"
+          << "X-Plex-Client-Profile-Extra: " << plexClientProfileExtra(weak) << "\r\n";
+    }
+    o << "X-Plex-Session-Identifier: " << sessionId << "\r\n";
+    if (!token.empty())
+        o << "X-Plex-Token: " << token << "\r\n";
+    return o.str();
+}
+
+bool hasHeader(const std::vector<std::pair<std::string, std::string>>& headers,
+               const char* name) {
+    for (const auto& h : headers) {
+        if (h.first == name)
+            return true;
+    }
+    return false;
+}
+
+bool plexHttpStatusOk(int httpStatus) {
+    return httpStatus >= 200 && httpStatus < 300;
+}
+
+int parseCurlHttpCode(const std::string& curlWriteOut) {
+    std::string out = curlWriteOut;
+    while (!out.empty() &&
+           (out.back() == '\n' || out.back() == '\r' || out.back() == ' ' || out.back() == '\t'))
+        out.pop_back();
+    size_t start = 0;
+    while (start < out.size() &&
+           (out[start] == ' ' || out[start] == '\t' || out[start] == '\n' || out[start] == '\r'))
+        ++start;
+    if (out.size() - start < 3)
+        return 0;
+    // Take the last 3 digits if curl appended noise; prefer exact 3-char body.
+    std::string code = (out.size() - start == 3) ? out.substr(start) : out.substr(out.size() - 3);
+    if (code.size() != 3)
+        return 0;
+    for (char c : code) {
+        if (c < '0' || c > '9')
+            return 0;
+    }
+    return (code[0] - '0') * 100 + (code[1] - '0') * 10 + (code[2] - '0');
+}
+
+PlexHttpNoBodyResult plexHttpGetNoBodyResult(
+    const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
+    int timeoutSec) {
+    // Prefer curl HTTP status over body non-empty: /:/timeline may return empty 200,
+    // and 401 Unauthorized is a 91-byte HTML body — !body.empty() false-OKed auth fails
+    // (docs/evidence/timeline-stuck-20260730T173000Z).
+    PlexHttpNoBodyResult r;
+    const bool defaultIdentity = !hasHeader(headers, "X-Plex-Client-Identifier");
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -o /dev/null -w '%{http_code}' -H 'Accept: application/xml'";
+    if (defaultIdentity) {
+        cmd << " -H 'X-Plex-Client-Identifier: misterplex'"
+            << " -H 'X-Plex-Product: Plex Web'"
+            << " -H 'X-Plex-Version: 4.125.0'"
+            << " -H 'X-Plex-Platform: Chrome'"
+            << " -H 'X-Plex-Platform-Version: 120.0'"
+            << " -H 'X-Plex-Device: Linux'"
+            << " -H 'X-Plex-Device-Name: Chrome'"
+            << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
+            << " -H 'X-Plex-Model: bundled'"
+            << " -H 'X-Plex-Provides: player'";
+    }
+    cmd << curlHeaderArgs(headers) << " " << shellQuote(url) << " 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return r;
+    std::string out;
+    char buf[64];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    (void)pclose(p);
+    r.httpStatus = parseCurlHttpCode(out);
+    // curl may exit non-zero on 404 with -f; we do not use -f, so status is authoritative.
+    r.ok = plexHttpStatusOk(r.httpStatus);
+    return r;
+}
+
+bool plexHttpGetNoBody(const std::string& url,
+                       const std::vector<std::pair<std::string, std::string>>& headers,
+                       int timeoutSec) {
+    return plexHttpGetNoBodyResult(url, headers, timeoutSec).ok;
+}
+
+std::string buildPlexBase(const std::string& protocol, const std::string& address,
+                          const std::string& port, const std::string& lanFallback) {
+    std::string addr = urlDecode(address);
+    std::string proto = protocol.empty() ? "http" : protocol;
+    std::string p = port.empty() ? "32400" : port;
+    if (addr.empty() || isUnreachableHost(addr)) {
+        if (!lanFallback.empty() && !isUnreachableHost(lanFallback)) {
+            addr = lanFallback;
+            // Prefer plain http for private LAN
+            if (addr.find("://") == std::string::npos)
+                return "http://" + addr + ":" + p;
+            return addr;
+        }
+        return {};
+    }
+    // address may already be host:port or host
+    if (addr.find("://") != std::string::npos)
+        return addr;
+    // plex.direct host often has embedded dashes; keep as-is
+    if (addr.find(':') != std::string::npos)
+        return proto + "://" + addr;
+    return proto + "://" + addr + ":" + p;
+}
+
+bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
+                             const std::string& token) {
+    return ensureUniversalDecision(startUrl, sessionId, token, WeakLadder{});
+}
+
+std::string buildUniversalDecisionUrl(const std::string& startUrl,
+                                      const std::string& sessionId,
+                                      const std::string& token, const WeakLadder& weak) {
+    if (startUrl.find("/video/:/transcode/universal/") == std::string::npos)
+        return {};
+    // Derive base + path from start URL
+    auto pathPos = startUrl.find("/video/:/transcode/universal/start");
+    if (pathPos == std::string::npos)
+        return {};
+    const std::string base = startUrl.substr(0, pathPos);
+    // Extract path= from query
+    auto pathEq = startUrl.find("path=");
+    if (pathEq == std::string::npos)
+        return {};
+    pathEq += 5;
+    auto pathEnd = startUrl.find('&', pathEq);
+    std::string path = startUrl.substr(pathEq, pathEnd == std::string::npos ? std::string::npos
+                                                                             : pathEnd - pathEq);
+
+    // Mirror ladder params from start URL when present
+    auto qparam = [&](const char* name) -> std::string {
+        std::string key = std::string(name) + "=";
+        auto p = startUrl.find(key);
+        if (p == std::string::npos)
+            return {};
+        p += key.size();
+        auto e = startUrl.find('&', p);
+        return startUrl.substr(p, e == std::string::npos ? std::string::npos : e - p);
+    };
+    std::string vq = qparam("videoQuality");
+    if (vq.empty())
+        vq = "40";
+    std::string vres = qparam("videoResolution");
+    if (vres.empty())
+        vres = "320x240";
+    std::string br = qparam("maxVideoBitrate");
+    if (br.empty())
+        br = std::to_string(weak.maxVideoBitrateKbps);
+    std::string vcodec = qparam("videoCodec");
+    if (vcodec.empty())
+        vcodec = weak.videoCodec;
+    std::string acodec = qparam("audioCodec");
+    if (acodec.empty())
+        acodec = weak.audioCodec;
+    std::string vprofile = qparam("videoProfile");
+    if (vprofile.empty())
+        vprofile = weak.h264Profile;
+    std::string vlevel = qparam("videoLevel");
+    if (vlevel.empty())
+        vlevel = std::to_string(weak.h264Level);
+
+    std::ostringstream decisionUrl;
+    decisionUrl << base << "/video/:/transcode/universal/decision?hasMDE=1&path=" << path
+                << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=0&directPlay=0&directStream=0"
+                << "&location=lan&session=" << urlEncodeQuery(sessionId)
+                << "&videoQuality=" << vq << "&videoResolution=" << vres
+                << "&maxVideoBitrate=" << br
+                << "&videoCodec=" << vcodec << "&audioCodec=" << acodec
+                << "&videoProfile=" << vprofile << "&videoLevel=" << vlevel;
+    if (isFpgaPlexProfile(weak)) {
+        if (!validateWeakLadder(weak))
+            return {};
+        decisionUrl << "&container=mpegts&audioChannels=2&videoFrameRate="
+                    << urlEncodeQuery(weak.fpgaFpsDen == 1 ? std::to_string(weak.fpgaFpsNum)
+                        : std::to_string(weak.fpgaFpsNum) + "/" + std::to_string(weak.fpgaFpsDen));
+        const auto offset = qparam("offset");
+        if (!offset.empty())
+            decisionUrl << "&offset=" << offset;
+    }
+    if (!token.empty() && !isFpgaPlexProfile(weak))
+        decisionUrl << "&X-Plex-Token=" << urlEncodeQuery(token);
+    return decisionUrl.str();
+}
+
+bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
+                             const std::string& token, const WeakLadder& weak) {
+    const std::string decisionUrl = buildUniversalDecisionUrl(startUrl, sessionId, token, weak);
+    if (decisionUrl.empty())
+        return !isFpgaPlexProfile(weak);
+    std::vector<std::pair<std::string, std::string>> decisionHeaders = {
+        {"X-Plex-Session-Identifier", sessionId},
+    };
+    if (isFpgaPlexProfile(weak) && !token.empty())
+        decisionHeaders.push_back({"X-Plex-Token", token});
+    if (plexSendClientLadderCaps(weak)) {
+        decisionHeaders.push_back({"X-Plex-Client-Capabilities", plexClientCapabilities(weak)});
+        decisionHeaders.push_back({"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)});
+    }
+    // PMS uses the first profile header when duplicates are sent and caches that
+    // decision for the stream; the selected XML must replace the default here.
+    const std::string body = httpGet(decisionUrl, 20, curlHeaderArgs(decisionHeaders),
+                                    weak.clientProfileName);
+    if (body.empty())
+        return false;
+    if (body.find("unable to find a matching profile") != std::string::npos)
+        return false;
+    return body.find("MediaContainer") != std::string::npos ||
+           body.find("transcodeDecisionCode") != std::string::npos;
+}
+
+bool mediaVideoIsH264(const std::string& plexMetadataXml) {
+    if (plexMetadataXml.empty())
+        return false;
+    // Prefer Stream video codec when present; else Media@videoCodec.
+    size_t pos = 0;
+    while ((pos = plexMetadataXml.find("<Stream", pos)) != std::string::npos) {
+        auto end = plexMetadataXml.find('>', pos);
+        if (end == std::string::npos)
+            break;
+        const std::string tag = plexMetadataXml.substr(pos, end - pos);
+        // PMS uses streamType="1" (video) and/or type="video"
+        const bool isVideo = tag.find("streamType=\"1\"") != std::string::npos ||
+                             tag.find("type=\"video\"") != std::string::npos;
+        if (isVideo) {
+            auto c = attrIn(tag, "codec");
+            if (c.empty())
+                c = attrIn(tag, "codecID");
+            if (videoCodecIsH264(c))
+                return true;
+        }
+        pos = end + 1;
+    }
+    return videoCodecIsH264(attr(plexMetadataXml, "Media", "videoCodec"));
+}
+
+SourceAspect sourceAspectFromPlexMetadata(const std::string& xml,
+                                         int codedWidth, int codedHeight) {
+    std::string displayAspect = attr(xml, "Video", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Video", "aspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "displayAspectRatio");
+    if (displayAspect.empty())
+        displayAspect = attr(xml, "Media", "aspectRatio");
+
+    std::string sampleAspect = attr(xml, "Media", "sampleAspectRatio");
+    if (sampleAspect.empty())
+        sampleAspect = attr(xml, "Media", "pixelAspectRatio");
+    std::string anamorphic = attr(xml, "Media", "anamorphic");
+
+    size_t sp = 0;
+    while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+        const auto end = xml.find('>', sp);
+        if (end == std::string::npos)
+            break;
+        const std::string slice = xml.substr(sp, end - sp);
+        const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                             slice.find("type=\"video\"") != std::string::npos;
+        if (isVideo) {
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "displayAspectRatio");
+            if (displayAspect.empty())
+                displayAspect = attrIn(slice, "aspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sampleAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "pixelAspectRatio");
+            if (sampleAspect.empty())
+                sampleAspect = attrIn(slice, "sar");
+            if (anamorphic.empty())
+                anamorphic = attrIn(slice, "anamorphic");
+            break;
+        }
+        sp = end + 1;
+    }
+
+    const std::string normalizedAnamorphic = lowerCopy(anamorphic);
+    const bool squarePixelsKnown =
+        normalizedAnamorphic == "0" || normalizedAnamorphic == "false" ||
+        normalizedAnamorphic == "no";
+    return sourceAspectFromMetadata(displayAspect, sampleAspect, codedWidth,
+                                    codedHeight, squarePixelsKnown);
+}
+
+WeakLadder fitWeakLadderToAspect(const WeakLadder& weak,
+                                 const SourceAspect& aspect) {
+    WeakLadder fitted = weak;
+    // FPGA requests preserve the profile's maximum rectangle; SPS supplies actual geometry.
+    if (isFpgaPlexProfile(weak))
+        return fitted;
+    if (!aspect.valid || aspect.x == 0 || aspect.y == 0)
+        return fitted;
+
+    int maxW = 0;
+    int maxH = 0;
+    if (std::sscanf(weak.videoResolution.c_str(), "%dx%d", &maxW, &maxH) != 2 ||
+        maxW < 2 || maxH < 2) {
+        return fitted;
+    }
+
+    // L4 1280×720 HDMI is 16:9. Fitting 4:3 Trek to 960×720 then nearest-up
+    // to the bank costs ~2 Hz (21.7 vs unique24). Keep the 1280×720 request.
+    if (maxW >= 1280 && maxH >= 720)
+        return fitted;
+
+    int width = maxW;
+    int height = maxH;
+    if (static_cast<int64_t>(aspect.x) * maxH >=
+        static_cast<int64_t>(aspect.y) * maxW) {
+        height = static_cast<int>(
+            (static_cast<int64_t>(maxW) * aspect.y) / aspect.x);
+    } else {
+        width = static_cast<int>(
+            (static_cast<int64_t>(maxH) * aspect.x) / aspect.y);
+    }
+    width = std::max(2, width & ~1);
+    height = std::max(2, height & ~1);
+
+    // The dual-A9 path is proven realtime near 640x384, while 640x480 24p
+    // transcodes fall below rate once AAC, scaling, and DDR presentation run
+    // together. Keep the 480p ladder inside that pixel budget; MiSTer still
+    // receives the full 640x480 presentation bank.
+    constexpr int64_t kTrue480DecodePixelBudget = 640LL * 384LL;
+    if (maxW <= 640 && maxH <= 480 &&
+        static_cast<int64_t>(width) * height > kTrue480DecodePixelBudget) {
+        const double dar = static_cast<double>(aspect.x) / aspect.y;
+        width = static_cast<int>(
+                    std::sqrt(static_cast<double>(kTrue480DecodePixelBudget) * dar)) &
+                ~1;
+        height = static_cast<int>(width / dar) & ~1;
+        width = std::max(2, width);
+        height = std::max(2, height);
+    }
+    fitted.videoResolution = std::to_string(width) + "x" + std::to_string(height);
+    return fitted;
+}
+
+ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
+                                const std::string& token, int64_t offsetMs, bool weakAlways,
+                                const WeakLadder& weak, bool preferDirectH264, int decodeW,
+                                int decodeH) {
+    ResolveResult r;
+    const bool fpgaBackend = configuredVideoBackend() == VideoBackend::FpgaH264;
+    std::string key = urlDecode(rawKeyOrPath);
+    if (key.empty() || key == "test" || key == "testsrc") {
+        r.ok = true;
+        r.playable = "testsrc";
+        r.detail = "test pattern";
+        r.durationMs = 120000;
+        r.sourceFpsHint = 30;
+        r.fpsNum = 30;
+        r.fpsDen = 1;
+        r.sourceAspect = {4, 3, true};
+        return r;
+    }
+
+    if (playableIsFarpointIdentityCache(key)) {
+        r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+        return r;
+    }
+    // playMedia 40868 / ratingKey 40868 must never take the local-path
+    // identify branch (that is the farpoint_1280x720.mp4 cache soak).
+    if (key == "40868")
+        key = "/library/metadata/40868";
+
+    // Direct http(s) or absolute non-library path
+    if (key.rfind("http://", 0) == 0 || key.rfind("https://", 0) == 0) {
+        r.ok = true;
+        r.playable = key;
+        r.detail = "direct URL";
+        return r;
+    }
+    if (!metadataKeyIsFarpoint40868(key) && !key.empty() && key[0] == '/' &&
+        key.rfind("/library", 0) != 0 &&
+        key.rfind("/playQueues", 0) != 0) {
+        r.ok = true;
+        r.playable = key;
+        r.detail = "local path";
+        if (playableIsFarpointIdentityCache(key)) {
+            r.ok = false;
+            r.playable.clear();
+            r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+            return r;
+        }
+        if (fpgaBackend) {
+            r.detail = "local path; metadata deferred to the sole compressed demux";
+            return r;
+        }
+        // Local files must publish DAR + 24000/1001 or PLAY is rejected / paced
+        // at 24/1. Library rk 40868 must use PMS universal, not this path.
+        const char* ff = "/media/fat/misterplex/bin/ffmpeg";
+        if (::access(ff, X_OK) != 0)
+            ff = "ffmpeg";
+        std::string cmd = std::string(ff) + " -hide_banner -nostdin -i " + shellQuote(key) +
+                          " -f null -t 0 - 2>&1";
+        FILE* p = ::popen(cmd.c_str(), "r");
+        std::string ident;
+        if (p) {
+            char buf[512];
+            while (std::fgets(buf, sizeof(buf), p))
+                ident.append(buf);
+            ::pclose(p);
+        }
+        int w = 0, h = 0, n = 0, d = 0, ax = 0, ay = 0;
+        if (parseFfmpegIdentify(ident.c_str(), w, h, n, d, ax, ay)) {
+            r.mediaWidth = w;
+            r.mediaHeight = h;
+            r.fpsNum = n;
+            r.fpsDen = d;
+            r.sourceFpsHint = (n > 0 && d > 0) ? (n + d / 2) / d : 0;
+            if (ax > 0 && ay > 0)
+                r.sourceAspect = {static_cast<uint16_t>(ax), static_cast<uint16_t>(ay), true};
+            else if (w == 1280 && h == 720)
+                r.sourceAspect = {16, 9, true};
+            r.detail = localFileIsTrue720p24(w, h) ? "local path 1280x720" : "local path";
+        } else if (r.sourceAspect.valid == false) {
+            r.sourceAspect = defaultSourceAspectForBank(1280, 720);
+        }
+        return r;
+    }
+
+    // Normalize metadata key
+    if (key.rfind("/library", 0) != 0 && key.find("library") != std::string::npos) {
+        // sometimes "library/metadata/N"
+        if (key[0] != '/')
+            key = "/" + key;
+    }
+
+    if (playableIsFarpointIdentityCache(key)) {
+        r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+        return r;
+    }
+
+    if (plexBase.empty()) {
+        r.detail = "no PMS base for key=" + key;
+        return r;
+    }
+    if (token.empty()) {
+        r.detail = "no token for key=" + key;
+        // Still try without token (local unauth servers)
+    }
+
+    // Fetch metadata for title/duration/viewOffset
+    std::string metaUrl = plexBase + key;
+    std::string metaHeaders;
+    if (fpgaBackend) {
+        if (!token.empty())
+            metaHeaders = curlHeaderArgs({{"X-Plex-Token", token}});
+    } else {
+        if (metaUrl.find('?') == std::string::npos)
+            metaUrl += "?";
+        else
+            metaUrl += "&";
+        if (!token.empty())
+            metaUrl += "X-Plex-Token=" + urlEncodeQuery(token);
+    }
+    const std::string xml = httpGet(metaUrl, 12, metaHeaders);
+    // A 404 or 401 from PMS still returns a BODY (an HTML error page), so
+    // "response is not empty" does not mean "item exists". Without this check a
+    // ratingKey that was deleted or renumbered by a library re-scan sails
+    // through every branch below, finds no Part, and lands on the test pattern —
+    // which looks like a playback bug instead of a missing item, and silently
+    // invalidates any measurement taken against it.
+    const bool metaFound = xml.find("<MediaContainer") != std::string::npos;
+    if (metaFound) {
+        r.title = attr(xml, "Video", "title");
+        if (r.title.empty())
+            r.title = attr(xml, "Directory", "title");
+        auto d = attr(xml, "Video", "duration");
+        if (d.empty())
+            d = attr(xml, "Media", "duration");
+        if (!d.empty())
+            r.durationMs = std::strtoll(d.c_str(), nullptr, 10);
+        auto vo = attr(xml, "Video", "viewOffset");
+        if (!vo.empty())
+            r.viewOffsetMs = std::strtoll(vo.c_str(), nullptr, 10);
+        r.ratingKey = attr(xml, "Video", "ratingKey");
+        // Match-source-Hz / Content FPS: Media@videoFrameRate + video Stream@frameRate
+        r.videoFrameRate = attr(xml, "Media", "videoFrameRate");
+        if (r.videoFrameRate.empty())
+            r.videoFrameRate = attr(xml, "Video", "videoFrameRate");
+        // Fallback: any videoFrameRate="..." in the metadata payload
+        if (r.videoFrameRate.empty()) {
+            const std::string key = "videoFrameRate=\"";
+            auto p = xml.find(key);
+            if (p != std::string::npos) {
+                p += key.size();
+                auto e = xml.find('"', p);
+                if (e != std::string::npos)
+                    r.videoFrameRate = xml.substr(p, e - p);
+            }
+        }
+        r.frameRate = attr(xml, "Stream", "frameRate");
+        // Prefer video stream frameRate when Stream tags are mixed (first may be audio).
+        // Scan all Stream open-tags for type="video" frameRate.
+        {
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                if (slice.find("type=\"video\"") != std::string::npos) {
+                    auto fr = attrIn(slice, "frameRate");
+                    if (!fr.empty())
+                        r.frameRate = fr;
+                    break;
+                }
+                sp = end + 1;
+            }
+        }
+        r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
+        parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
+
+        // Source coded size: prefer video Stream width/height, else Media@.
+        // Used by media_player to skip FOAR+pad only when source covers DECODE
+        // (Grid720 1280×720 @720p bank). FOAR 720×480 must keep on-device pad (L38).
+        {
+            int mw = 0, mh = 0;
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                     slice.find("type=\"video\"") != std::string::npos;
+                if (isVideo) {
+                    auto w = attrIn(slice, "width");
+                    auto h = attrIn(slice, "height");
+                    if (w.empty())
+                        w = attrIn(slice, "codedWidth");
+                    if (h.empty())
+                        h = attrIn(slice, "codedHeight");
+                    if (!w.empty() && !h.empty()) {
+                        mw = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+                        mh = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
+                    }
+                    break;
+                }
+                sp = end + 1;
+            }
+            if (mw <= 0 || mh <= 0) {
+                auto w = attr(xml, "Media", "width");
+                auto h = attr(xml, "Media", "height");
+                if (!w.empty() && !h.empty()) {
+                    mw = static_cast<int>(std::strtol(w.c_str(), nullptr, 10));
+                    mh = static_cast<int>(std::strtol(h.c_str(), nullptr, 10));
+                }
+            }
+            r.mediaWidth = mw > 0 ? mw : 0;
+            r.mediaHeight = mh > 0 ? mh : 0;
+        }
+
+        r.sourceAspect =
+            sourceAspectFromPlexMetadata(xml, r.mediaWidth, r.mediaHeight);
+
+        // Audio presence: dual-output ffmpeg (pipe:1 video + pipe:3 audio) aborts
+        // with "Output file does not contain any stream" when the source has no
+        // audio track (Grid720). Detect streamType=2 / type=audio up front.
+        {
+            bool foundAudio = false;
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                if (slice.find("streamType=\"2\"") != std::string::npos ||
+                    slice.find("type=\"audio\"") != std::string::npos) {
+                    foundAudio = true;
+                    break;
+                }
+                sp = end + 1;
+            }
+            // Only force false when we successfully parsed Stream tags at all.
+            // Empty/malformed metadata keeps hasAudio=true (fail open).
+            if (xml.find("<Stream") != std::string::npos)
+                r.hasAudio = foundAudio;
+        }
+    }
+
+    // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
+    // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
+    // STREAM=0 rate path: direct only when source Media *exactly matches* DECODE bank
+    // (true 720 into 720 — skip PMS re-transcode). Do NOT treat FOAR 720×480 as covering
+    // 640×480/320×240: that skipped the weak ladder and broke G0b (mode→PMS encode).
+    // Never direct FOAR 720x480 into HD either (not an exact match).
+    const bool metaOk = metaFound;
+    const bool isH264 = metaOk && mediaVideoIsH264(xml);
+    const bool mediaMatchesDecode = decodeW > 0 && decodeH > 0 && r.mediaWidth == decodeW &&
+                                    r.mediaHeight == decodeH;
+    // Optional profile tag for operator logs (High often implies CABAC sticky skip).
+    auto videoProfileNote = [&]() -> std::string {
+        if (!metaOk)
+            return {};
+        // Prefer video Stream profile, then Media@videoProfile / videoCodec.
+        size_t sp = 0;
+        while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+            auto end = xml.find('>', sp);
+            if (end == std::string::npos)
+                break;
+            const std::string slice = xml.substr(sp, end - sp);
+            const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                 slice.find("type=\"video\"") != std::string::npos;
+            if (isVideo) {
+                auto p = attrIn(slice, "profile");
+                if (p.empty())
+                    p = attrIn(slice, "videoProfile");
+                if (!p.empty())
+                    return p;
+                break;
+            }
+            sp = end + 1;
+        }
+        auto p = attr(xml, "Media", "videoProfile");
+        if (p.empty())
+            p = attr(xml, "Media", "videoCodec");
+        return p;
+    };
+    // STREAM=0 rate: direct Part only when Media exactly matches DECODE *and* profile
+    // is baseline/main. High@L4 Grid720 measured ~17 pfps direct vs ~18.6 via Main
+    // universal + scale bypass — keep weak ladder for High.
+    const std::string srcProfEarly = videoProfileNote();
+    auto profLower = srcProfEarly;
+    for (char& c : profLower) {
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    }
+    const bool lightDirectProfile =
+        profLower.find("baseline") != std::string::npos ||
+        profLower == "main" || profLower.find("constrained baseline") != std::string::npos ||
+        (profLower.find("main") != std::string::npos &&
+         profLower.find("high") == std::string::npos);
+    const bool wantDirect = !fpgaBackend &&
+        key.rfind("/library", 0) == 0 &&
+        (preferDirectH264 || (mediaMatchesDecode && lightDirectProfile));
+    const bool directH264 = wantDirect && isH264;
+    if (directH264) {
+        const std::string prof = videoProfileNote();
+        const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
+        auto partKey = attr(xml, "Part", "key");
+        if (!partKey.empty()) {
+            if (partKey[0] != '/')
+                partKey = "/" + partKey;
+            r.playable = plexBase + partKey;
+            if (!token.empty())
+                r.playable += (r.playable.find('?') == std::string::npos ? "?" : "&") +
+                              std::string("X-Plex-Token=") + urlEncodeQuery(token);
+            r.ok = true;
+            r.transcoded = false;
+            r.detail = std::string("direct H.264 Part (") +
+                       (preferDirectH264 ? "STREAM" : "media_covers_decode") + profSuffix + ")";
+            return r;
+        }
+        auto file = attr(xml, "Part", "file");
+        if (!file.empty()) {
+            r.playable = urlDecode(file);
+            if (libraryKeyMustNotSpawnLocalFile(key, r.playable)) {
+                r.ok = false;
+                r.playable.clear();
+                r.transcoded = false;
+                r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+                return r;
+            }
+            r.ok = true;
+            r.transcoded = false;
+            r.detail = std::string("direct H.264 Part file (") +
+                       (preferDirectH264 ? "STREAM" : "media_covers_decode") + profSuffix + ")";
+            return r;
+        }
+        // Fall through to universal if Part missing
+    }
+
+    // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
+    if ((weakAlways || fpgaBackend) && key.rfind("/library", 0) == 0) {
+        WeakLadder requested = weak;
+        if (fpgaBackend) {
+            const char* prototype = std::getenv("MPX_H264_PROTOTYPE");
+            const char* filtering = std::getenv("MPX_H264_FILTER");
+            if (filtering && std::string(filtering) != "on" && std::string(filtering) != "off") {
+                r.detail = "FPGA H.264 filtering must be explicitly on or off";
+                return r;
+            }
+            int exactNum = 0, exactDen = 0;
+            if (!parseExactFps({}, r.frameRate, exactNum, exactDen)) {
+                r.detail = "FPGA H.264 requires numeric source frameRate; ambiguous metadata is not a clock";
+                return r;
+            }
+            if (!applyFpgaPlexProfile(requested, prototype ? prototype : "ip",
+                                      exactNum, exactDen,
+                                      filtering && std::string(filtering) == "off", &r.detail))
+                return r;
+        }
+        const WeakLadder transcodeWeak = fitWeakLadderToAspect(requested, r.sourceAspect);
+        const std::string session = makeSessionId();
+        const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
+                                                             offsetMs > 0 ? offsetMs : 0,
+                                                             transcodeWeak);
+        if (ensureUniversalDecision(start, session, token, transcodeWeak)) {
+            r.ok = true;
+            r.transcoded = true;
+            r.playable = start;
+            r.httpHeaders = plexFfmpegHeaders(session, token, transcodeWeak);
+            r.detail = "PMS universal " + transcodeWeak.profileName + " " +
+                       transcodeWeak.videoResolution + " " + key;
+            if (playableIsFarpointIdentityCache(r.playable) ||
+                libraryKeyMustNotSpawnLocalFile(key, r.playable)) {
+                r.ok = false;
+                r.playable.clear();
+                r.transcoded = false;
+                r.detail = "refusing farpoint_1280x720.mp4 cache bypass";
+                return r;
+            }
+            // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
+            if (preferDirectH264) {
+                if (!metaOk)
+                    r.detail += " (STREAM preferDirect: no metadata)";
+                else if (!isH264)
+                    r.detail += " (STREAM preferDirect: source not H.264)";
+                else
+                    r.detail += " (STREAM preferDirect: H.264 Part missing → universal may be High/CABAC)";
+            }
+            return r;
+        }
+        if (fpgaBackend) {
+            r.detail = "FPGA H.264 universal profile decision failed; direct/software fallback forbidden";
+            return r;
+        }
+        r.detail = "universal decision failed; trying direct part";
+    }
+
+    // Fallback: direct Part stream URL from metadata
+    if (metaFound) {
+        auto partKey = attr(xml, "Part", "key");
+        if (!partKey.empty()) {
+            if (partKey[0] != '/')
+                partKey = "/" + partKey;
+            r.playable = plexBase + partKey;
+            if (!token.empty())
+                r.playable += (r.playable.find('?') == std::string::npos ? "?" : "&") +
+                              std::string("X-Plex-Token=") + urlEncodeQuery(token);
+            r.ok = true;
+            r.detail = "direct Part stream";
+            return r;
+        }
+        auto file = attr(xml, "Part", "file");
+        if (!file.empty()) {
+            r.playable = urlDecode(file);
+            r.ok = true;
+            r.detail = "Part file path";
+            return r;
+        }
+    }
+
+    if (!metaFound)
+        r.detail = "no such item on PMS (" + key + " returned no MediaContainer — "
+                   "deleted, renumbered by a library re-scan, or bad token)";
+    if (r.detail.empty())
+        r.detail = "resolve failed for " + key;
+    return r;
+}
+
+PlayQueue fetchPlayQueue(const std::string& queueIdOrContainerKey, const std::string& plexBase,
+                         const std::string& token, const std::string& currentKey,
+                         const std::string& playQueueItemId) {
+    PlayQueue q;
+    std::string raw = urlDecode(queueIdOrContainerKey);
+    std::string extraQuery;
+    auto qmark = raw.find('?');
+    if (qmark != std::string::npos) {
+        extraQuery = raw.substr(qmark + 1);
+        raw = raw.substr(0, qmark);
+    }
+    std::string id = raw;
+    auto slash = id.find_last_of('/');
+    if (slash != std::string::npos)
+        id = id.substr(slash + 1);
+    while (!id.empty() && !std::isdigit(static_cast<unsigned char>(id.back())))
+        id.pop_back();
+    if (id.empty() || !std::isdigit(static_cast<unsigned char>(id.front()))) {
+        q.detail = "empty/invalid play queue id from '" + queueIdOrContainerKey + "'";
+        return q;
+    }
+
+    std::string base = normalizePlexBase(plexBase);
+    if (base.empty()) {
+        q.detail = "no PMS base for play queue";
+        return q;
+    }
+
+    std::string url = base + "/playQueues/" + id + "?";
+    if (!extraQuery.empty())
+        url += extraQuery + "&";
+    else
+        url += "own=1&";
+    if (!token.empty())
+        url += "X-Plex-Token=" + urlEncodeQuery(token);
+
+    const std::string xml = httpGet(url, 20);
+    if (xml.empty() || xml.find("MediaContainer") == std::string::npos) {
+        q.detail = "play queue fetch failed id=" + id + " bytes=" + std::to_string(xml.size());
+        return q;
+    }
+
+    q.containerKey = "/playQueues/" + id;
+    q.playQueueId = id;
+    {
+        auto a = xml.find("playQueueID=\"");
+        if (a != std::string::npos) {
+            a += 13;
+            auto b = xml.find('"', a);
+            if (b != std::string::npos)
+                q.playQueueId = xml.substr(a, b - a);
+        }
+        a = xml.find("playQueueVersion=\"");
+        if (a != std::string::npos) {
+            a += 18;
+            auto b = xml.find('"', a);
+            if (b != std::string::npos)
+                q.playQueueVersion = xml.substr(a, b - a);
+        }
+    }
+
+    size_t pos = 0;
+    while ((pos = xml.find("<Video", pos)) != std::string::npos) {
+        auto tagEnd = xml.find('>', pos);
+        if (tagEnd == std::string::npos)
+            break;
+        size_t sliceEnd = tagEnd;
+        auto end2 = xml.find("</Video>", pos);
+        auto endSlash = xml.find("/>", pos);
+        if (endSlash != std::string::npos && endSlash < tagEnd + 8)
+            sliceEnd = endSlash;
+        if (end2 != std::string::npos)
+            sliceEnd = std::max(sliceEnd, end2);
+        const std::string slice = xml.substr(pos, std::min<size_t>(4000, sliceEnd - pos + 8));
+
+        QueueItem item;
+        item.key = attrIn(slice, "key");
+        item.ratingKey = attrIn(slice, "ratingKey");
+        item.playQueueItemId = attrIn(slice, "playQueueItemID");
+        if (item.playQueueItemId.empty())
+            item.playQueueItemId = attrIn(slice, "playQueueItemId");
+        item.title = attrIn(slice, "title");
+        auto d = attrIn(slice, "duration");
+        if (!d.empty())
+            item.durationMs = std::strtoll(d.c_str(), nullptr, 10);
+        if (!item.key.empty())
+            q.items.push_back(item);
+        pos = tagEnd + 1;
+    }
+
+    if (q.items.empty()) {
+        q.detail = "play queue had no Video items";
+        return q;
+    }
+
+    q.currentIndex = 0;
+    if (!playQueueItemId.empty()) {
+        for (size_t i = 0; i < q.items.size(); ++i) {
+            if (q.items[i].playQueueItemId == playQueueItemId ||
+                q.items[i].ratingKey == playQueueItemId ||
+                q.items[i].key.find(playQueueItemId) != std::string::npos) {
+                q.currentIndex = static_cast<int>(i);
+                break;
+            }
+        }
+    } else if (!currentKey.empty()) {
+        for (size_t i = 0; i < q.items.size(); ++i) {
+            if (q.items[i].key == currentKey ||
+                (!q.items[i].ratingKey.empty() &&
+                 currentKey.find(q.items[i].ratingKey) != std::string::npos)) {
+                q.currentIndex = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    q.ok = true;
+    q.detail = "queue size=" + std::to_string(q.items.size()) +
+               " index=" + std::to_string(q.currentIndex);
+    return q;
+}
+
+namespace {
+
+int bucketFps(double fps) {
+    if (fps <= 0.0)
+        return 0;
+    // Nearest of OSD Content FPS options 12 / 24 / 30 / 60
+    const int opts[] = {12, 24, 30, 60};
+    int best = 24;
+    double bestDiff = 1e9;
+    for (int o : opts) {
+        double d = std::fabs(fps - static_cast<double>(o));
+        if (d < bestDiff) {
+            bestDiff = d;
+            best = o;
+        }
+    }
+    // 23.976 → 24, 29.97 → 30, 59.94 → 60
+    return best;
+}
+
+} // namespace
+
+int contentFpsHint(const std::string& videoFrameRate, const std::string& frameRate) {
+    // Prefer numeric stream frameRate
+    if (!frameRate.empty()) {
+        char* end = nullptr;
+        double v = std::strtod(frameRate.c_str(), &end);
+        if (end != frameRate.c_str() && v > 0.0)
+            return bucketFps(v);
+    }
+    if (videoFrameRate.empty())
+        return 0;
+    std::string s = videoFrameRate;
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    // Common PMS tokens
+    if (s == "ntsc" || s.find("29.97") != std::string::npos || s == "30p" || s == "30")
+        return 30;
+    if (s == "pal" || s.find("25") == 0 || s == "25p")
+        return 24; // nearest OSD bucket (no 25); cadence at 24 is less wrong than 30 for film-ish
+    if (s == "24p" || s == "24" || s.find("23.9") != std::string::npos ||
+        s.find("film") != std::string::npos)
+        return 24;
+    if (s == "60p" || s == "60" || s.find("59.9") != std::string::npos || s == "120p")
+        return 60;
+    if (s == "12p" || s == "12")
+        return 12;
+    // Strip trailing 'p' and parse number
+    if (!s.empty() && (s.back() == 'p' || s.back() == 'i'))
+        s.pop_back();
+    char* end = nullptr;
+    double v = std::strtod(s.c_str(), &end);
+    if (end != s.c_str() && v > 0.0)
+        return bucketFps(v);
+    return 0;
+}
+
+int applySourceFpsConf(const std::string& sourceFpsConf, int resolvedHint) {
+    std::string s = sourceFpsConf;
+    // trim
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+        s.pop_back();
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (s.empty() || s == "auto")
+        return resolvedHint;
+    if (s == "off" || s == "0" || s == "none")
+        return 0;
+    char* end = nullptr;
+    long v = std::strtol(s.c_str(), &end, 10);
+    if (end != s.c_str() && v > 0)
+        return bucketFps(static_cast<double>(v));
+    return resolvedHint;
+}
+
+namespace {
+
+struct FpsRational {
+    int num;
+    int den;
+};
+
+// Standard broadcast rates. 1001-denominator entries must snap exactly: treating
+// 23.976 as 24 costs ~1 ms/s of lipsync drift (~234 ms by 3:54, ~5.5 s over 91 min).
+constexpr FpsRational kStdFps[] = {
+    {12, 1},        {15, 1},        {24000, 1001}, {24, 1},       {25, 1},
+    {30000, 1001},  {30, 1},        {48, 1},       {50, 1},       {60000, 1001},
+    {60, 1},
+};
+
+// Snap a decimal rate onto the standard family. Tolerance is well under the
+// 23.976↔24 gap (0.024) so the NTSC pairs never collapse into each other.
+bool snapStdFps(double v, int& num, int& den) {
+    if (!(v > 0.0) || v > 1000.0)
+        return false;
+    for (const auto& f : kStdFps) {
+        const double std_v = static_cast<double>(f.num) / static_cast<double>(f.den);
+        if (std::fabs(v - std_v) <= 0.010) {
+            num = f.num;
+            den = f.den;
+            return true;
+        }
+    }
+    // Not a standard rate — keep it exact to 3 decimals rather than rounding to int.
+    long n = std::lround(v * 1000.0);
+    if (n <= 0)
+        return false;
+    num = static_cast<int>(n);
+    den = 1000;
+    return true;
+}
+
+std::string lowerTrim(const std::string& in) {
+    std::string s = in;
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+        s.pop_back();
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+} // namespace
+
+bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRate,
+                   int& num, int& den) {
+    num = 0;
+    den = 0;
+    // Prefer the numeric video Stream@frameRate — it carries the real 23.976/29.97.
+    if (!frameRate.empty()) {
+        const std::string rate = lowerTrim(frameRate);
+        const auto slash = rate.find('/');
+        if (slash != std::string::npos) {
+            const std::string numerator = rate.substr(0, slash);
+            const std::string denominator = rate.substr(slash + 1);
+            char *nEnd = nullptr, *dEnd = nullptr;
+            errno = 0;
+            const long n = std::strtol(numerator.c_str(), &nEnd, 10);
+            const bool nOk = errno == 0;
+            errno = 0;
+            const long d = std::strtol(denominator.c_str(), &dEnd, 10);
+            if (nOk && errno == 0 && nEnd != numerator.c_str() && !*nEnd &&
+                dEnd != denominator.c_str() && !*dEnd && n > 0 && d > 0 &&
+                n <= std::numeric_limits<int>::max() && d <= std::numeric_limits<int>::max() &&
+                static_cast<double>(n) / d <= 1000.0) {
+                const long divisor = std::gcd(n, d);
+                num = static_cast<int>(n / divisor);
+                den = static_cast<int>(d / divisor);
+                return true;
+            }
+        } else {
+            char* end = nullptr;
+            const double v = std::strtod(rate.c_str(), &end);
+            if (end != rate.c_str() && !*end && v > 0.0 && snapStdFps(v, num, den))
+                return true;
+        }
+    }
+    if (videoFrameRate.empty())
+        return false;
+
+    std::string s = lowerTrim(videoFrameRate);
+    if (s.empty())
+        return false;
+    // PMS Media@videoFrameRate tokens. NTSC/PAL are film/broadcast families, not integers.
+    if (s == "ntsc") {
+        num = 30000;
+        den = 1001;
+        return true;
+    }
+    if (s == "pal") {
+        num = 25;
+        den = 1;
+        return true;
+    }
+    // PMS Media@videoFrameRate="24p" is NTSC film on Trek/Blu-ray (23.976).
+    // True 24.000 still wins when Stream@frameRate is "24" / "24.000".
+    if (s == "film" || s == "24p") {
+        num = 24000;
+        den = 1001;
+        return true;
+    }
+    if (s == "30p") {
+        num = 30000;
+        den = 1001;
+        return true;
+    }
+    // Strip a trailing progressive/interlaced marker ("24p", "60i").
+    if (s.back() == 'p' || s.back() == 'i')
+        s.pop_back();
+    char* end = nullptr;
+    double v = std::strtod(s.c_str(), &end);
+    if (end != s.c_str() && v > 0.0)
+        return snapStdFps(v, num, den);
+    return false;
+}
+
+bool capExactFpsToMaxHz(int& num, int& den, double maxHz) {
+    if (num <= 0 || den <= 0 || !(maxHz > 0.0))
+        return false;
+    const double v = static_cast<double>(num) / static_cast<double>(den);
+    if (v <= maxHz + 0.010)
+        return false;
+    if (num == 60 && den == 1 && maxHz >= 30.0 - 0.010) {
+        num = 30;
+        den = 1;
+        return true;
+    }
+    if (num == 60000 && den == 1001 && maxHz >= 30000.0 / 1001.0 - 0.010) {
+        num = 30000;
+        den = 1001;
+        return true;
+    }
+    if (num == 50 && den == 1 && maxHz >= 25.0 - 0.010) {
+        num = 25;
+        den = 1;
+        return true;
+    }
+    if (num == 48 && den == 1 && maxHz >= 24.0 - 0.010) {
+        num = 24;
+        den = 1;
+        return true;
+    }
+    num = static_cast<int>(maxHz);
+    den = 1;
+    if (num < 1)
+        num = 1;
+    return true;
+}
+
+bool applyContentFpsConf(const std::string& conf, int& num, int& den) {
+    const std::string s = lowerTrim(conf);
+    if (s.empty() || s == "auto")
+        return false;
+    if (s == "off" || s == "0" || s == "none") {
+        num = 0;
+        den = 0;
+        return true;
+    }
+    // "24000/1001" rational form
+    const auto slash = s.find('/');
+    if (slash != std::string::npos) {
+        char* e1 = nullptr;
+        char* e2 = nullptr;
+        const std::string ns = s.substr(0, slash);
+        const std::string ds = s.substr(slash + 1);
+        long n = std::strtol(ns.c_str(), &e1, 10);
+        long d = std::strtol(ds.c_str(), &e2, 10);
+        if (e1 != ns.c_str() && e2 != ds.c_str() && n > 0 && d > 0) {
+            num = static_cast<int>(n);
+            den = static_cast<int>(d);
+            return true;
+        }
+        return false;
+    }
+    char* end = nullptr;
+    double v = std::strtod(s.c_str(), &end);
+    if (end != s.c_str() && v > 0.0)
+        return snapStdFps(v, num, den);
+    return false;
+}
+
+} // namespace misterplex

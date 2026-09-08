@@ -1,0 +1,797 @@
+diff --git a/docs/rtl-simulation.md b/docs/rtl-simulation.md
+--- a/docs/rtl-simulation.md
++++ b/docs/rtl-simulation.md
+@@ -86,6 +86,51 @@
+ timing/exclusion checks against the captured source, the available RBF hash-ban
+ gate, and the required reference comparison. These are build gates, not product
+ acceptance or permission to deploy.
++
++Hierarchy profile authority comes from the captured QSF and `inputs.json`, never
++the working directory's QSF. The driver supplies both explicitly and writes
++`fit-hierarchy.json`, binding the selected profile, exact QSF/manifest hashes,
++input-map digest, checker/config/report/log hashes, resource policies, observed
++rows and exit status. Publish that receipt, not an independently reconstructed
++profile or stale console summary. Existing baseline and FPGA320 floors remain
++100000 block bits and 81920 block bits/96 M10Ks respectively.
++
++For report-only calls, the checker recognizes captured inputs beside the fit
++report. It prefers `project/Plex.qsf`; after normal local/remote project cleanup,
++it can read the exact `Plex.qsf` member of `inputs.tar` **without extracting it**,
++checking both the archive hash and QSF hash against the captured manifest.
++Unreadable, mismatched, ambiguous or malformed authority is refused, not
++replaced with a working-tree default. An explicitly requested QSF never falls
++back to another file/archive. Legacy report-only callers with no captured-input
++context retain baseline behavior, labeled `legacy-default`; they cannot publish
++a captured result receipt.
++
++For a new host-only evaluation of an existing retained slot:
++
++```bash
++python3 scripts/check_quartus_fit_hierarchy.py --fit-rpt "$slot/Plex.fit.rpt" \
++  --map-rpt "$slot/Plex.map.rpt" --log "$slot/compile.log" \
++  --qsf "$slot/project/Plex.qsf" --input-manifest "$slot/inputs.json" \
++  --result-json NEW_OUTPUT/hierarchy.json
++```
++
++The destination must be new; an existing receipt is never overwritten. A
++hierarchy pass is not a timing pass, fitted-database validation, or deployment
++approval.
++
++`scripts/run_instrumented_sta.sh ANALYSIS_WORK` is a separately packaged
++analysis payload, **not** a grant or ownership/container launcher. A separately
++authorized exclusive analysis owner must provide an empty `ANALYSIS_WORK/output`
++and a bound `ANALYSIS_WORK/reporter` prepared/verified with the frozen driver's
++`prepare_reporting`/`verify_reporter`, and run it from the corresponding fitted
++project in the pinned SDK. Its runtime inputs include `sdk-image.id`,
++`observation.id`, `timing.tcl`, the SDK producer/parser and their captured
++reporter dependencies. SDK/reporter nonzero exits keep their exit receipts;
++diagnostic grep no-match is normal, while matches or grep/file/tool errors fail.
++Normal completion requires matching before/after RBF hashes. The collector and
++both timing/exclusion gates remain separate mandatory checks. Neither a new
++payload nor host mock qualification changes an old failed shell outcome or
++supplies a missing historical hash receipt.
+ 
+ The timing gate checks both the standard STA summary and **every indexed
+ setup/hold report across every captured clock/corner**. For a retained slot:
+diff --git a/scripts/check_quartus_fit_hierarchy.py b/scripts/check_quartus_fit_hierarchy.py
+--- a/scripts/check_quartus_fit_hierarchy.py
++++ b/scripts/check_quartus_fit_hierarchy.py
+@@ -4,10 +4,12 @@
+ 
+ import argparse
+ import hashlib
++import io
+ import json
+ import re
+ import sys
+-from dataclasses import dataclass
++import tarfile
++from dataclasses import asdict, dataclass
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+@@ -79,30 +81,108 @@
+     return rows
+ 
+ 
+-def captured_profile(qsf: Path | None, manifest: Path | None) -> str:
+-    if qsf is None:
++def captured_inputs(qsf: Path | None, manifest: Path | None, report: Path):
++    if qsf is not None or manifest is not None:
++        return qsf, manifest, None
++    # Retained driver outputs carry their own authority. Never look in ROOT/cwd.
++    directory = report.absolute().parent
++    for marker in ("inputs.json", "inputs.tar", "tool.json", "project/Plex.qsf"):
++        try:
++            (directory / marker).lstat()
++        except FileNotFoundError:
++            continue
++        qsf = directory / "project/Plex.qsf"
++        try:
++            qsf.lstat()
++        except FileNotFoundError:
++            # Default local/remote cleanup removes project, not captured inputs.
++            archive = directory / "inputs.tar"
++            try:
++                archive.lstat()
++            except FileNotFoundError:
++                pass
++            else:
++                return None, directory / "inputs.json", archive
++        return qsf, directory / "inputs.json", None
++    return None, None, None
++
++
++def file_binding(path: Path, data: bytes | None = None) -> dict:
++    if data is None:
++        data = path.read_bytes()
++    return {"path": str(path.absolute()), "sha256": hashlib.sha256(data).hexdigest(),
++            "bytes": len(data)}
++
++
++def captured_profile(qsf: Path | None, manifest: Path | None,
++                     evidence: dict | None = None, archive: Path | None = None) -> str:
++    if qsf is not None and archive is not None:
++        raise ValueError("captured QSF and archive authority are mutually exclusive")
++    if qsf is None and archive is None:
+         if manifest is not None:
+             raise ValueError("--input-manifest requires --qsf")
++        if evidence is not None:
++            evidence.update(kind="legacy-default", captured=False)
+         return "baseline"
+     if manifest is None:
+         raise ValueError("--qsf requires its captured --input-manifest")
+-    data = qsf.read_bytes()
+-    inputs = json.loads(manifest.read_text())
+-    if hashlib.sha256(data).hexdigest() != inputs["input_files"]["Plex.qsf"]:
++    manifest_data = manifest.read_bytes()
++    inputs = json.loads(manifest_data)
++    if not isinstance(inputs, dict) or not isinstance(inputs.get("input_files"), dict):
++        raise ValueError("captured input manifest must contain an input_files object")
++    files = inputs["input_files"]
++    if not files or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
++                        for value in files.values()):
++        raise ValueError("captured input_files must contain SHA256 values")
++    input_sha = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
++    if inputs.get("input_sha256") != input_sha:
++        raise ValueError("captured input manifest aggregate hash does not match input_files")
++    if archive is not None:
++        archive_data = archive.read_bytes()
++        archive_binding = file_binding(archive, archive_data)
++        if archive_binding["sha256"] != inputs.get("archive_sha256"):
++            raise ValueError("captured input archive hash does not match input manifest")
++        with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:") as captured:
++            members = [member for member in captured.getmembers() if member.name == "Plex.qsf"]
++            if len(members) != 1 or not members[0].isfile():
++                raise ValueError("captured archive must contain exactly one regular Plex.qsf")
++            with captured.extractfile(members[0]) as stream:
++                data = stream.read()
++        qsf_binding = {"archive": archive_binding, "member": "Plex.qsf",
++                       "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
++    else:
++        data = qsf.read_bytes()
++        qsf_binding = file_binding(qsf, data)
++    if hashlib.sha256(data).hexdigest() != files.get("Plex.qsf"):
+         raise ValueError("captured QSF hash does not match input manifest")
+     values = set()
+-    for line in data.decode().splitlines():
++    assignments = []
++    for number, line in enumerate(data.decode().splitlines(), 1):
++        if not re.match(r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\b', line):
++            continue
+         match = re.match(
+-            r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+(?:"([^"]+)"|\{([^}]+)\}|([^\s#]+))',
++            r'^\s*set_global_assignment\s+-name\s+VERILOG_MACRO\s+'
++            r'(?:"((?:\\.|[^"\\])+)"|\{([^{}]+)\}|([^\s#;"{}]+))\s*(?:#.*)?$',
+             line,
+         )
+-        if match:
+-            macro = next(value for value in match.groups() if value is not None)
+-            if macro.startswith("FPGA_VIDEO_320="):
+-                values.add(macro.split("=", 1)[1])
++        if not match:
++            raise ValueError(f"malformed captured VERILOG_MACRO assignment at line {number}")
++        macro = next(value for value in match.groups() if value is not None)
++        if macro == "FPGA_VIDEO_320":
++            raise ValueError("captured FPGA_VIDEO_320 requires an explicit 0/1 value")
++        if macro.startswith("FPGA_VIDEO_320="):
++            values.add(macro.split("=", 1)[1])
++        if macro.startswith(("FPGA_VIDEO_320=", "FRAME_LINES_8=")):
++            assignments.append({"line": number, "literal": macro})
+     if len(values) > 1 or values - {"0", "1"}:
+         raise ValueError("ambiguous FPGA_VIDEO_320 configuration in captured QSF")
+-    return "fpga320" if values == {"1"} else "baseline"
++    profile = "fpga320" if values == {"1"} else "baseline"
++    if evidence is not None:
++        evidence.update(kind="captured-inputs", captured=True, profile=profile,
++                        qsf=qsf_binding, input_manifest=file_binding(manifest, manifest_data),
++                        input_sha256=input_sha, declared_source_sha256=inputs.get("source_sha256"),
++                        literal_assignments=assignments)
++    return profile
+ 
+ 
+ def load_config(path: Path, profile: str = "baseline") -> list[dict[str, object]]:
+@@ -212,6 +292,8 @@
+     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+     ap.add_argument("--qsf", type=Path, help="Captured private QSF; never defaults to the live worktree")
+     ap.add_argument("--input-manifest", type=Path, help="inputs.json binding the captured QSF hash")
++    ap.add_argument("--result-json", type=Path,
++                    help="New immutable result receipt; requires captured QSF/input authority")
+     ap.add_argument(
+         "--allow-missing",
+         action="append",
+@@ -220,28 +302,58 @@
+     )
+     args = ap.parse_args(argv[1:])
+ 
++    result = {"schema": "misterplex.fit-hierarchy-result.v1", "profile": None,
++              "authority": {}, "artifacts": {}, "command": argv}
++
++    def finish(code, errors):
++        result.update(exit_code=code, status={0: "pass", 1: "rejected", 4: "refused"}[code],
++                      errors=errors)
++        if args.result_json:
++            try:
++                with args.result_json.open("x") as stream:
++                    json.dump(result, stream, sort_keys=True, indent=2)
++                    stream.write("\n")
++            except OSError as exc:
++                print(f"FIT_HIERARCHY_REFUSED(exit=4): cannot publish new result: {exc}", file=sys.stderr)
++                return 4
++        return code
++
+     try:
++        qsf, manifest, archive = captured_inputs(args.qsf, args.input_manifest, args.fit_rpt)
++        profile = captured_profile(qsf, manifest, result["authority"], archive)
++        if args.result_json and not result["authority"]["captured"]:
++            raise ValueError("--result-json requires verified captured QSF/input manifest")
++        result["profile"] = profile
++        consumed = {"fit_report": args.fit_rpt, "config": args.config, "checker": Path(__file__)}
++        if args.map_rpt:
++            consumed["map_report"] = args.map_rpt
++        if args.log:
++            consumed["log"] = args.log
++        if qsf is not None:
++            consumed["qsf"] = qsf
++        if archive is not None:
++            consumed["input_archive"] = archive
++        if manifest is not None:
++            consumed["input_manifest"] = manifest
++        result["artifacts"] = {role: file_binding(path) for role, path in consumed.items()}
+         fitted_rows = parse_hierarchy_report(args.fit_rpt)
+         rows = list(fitted_rows)
+         if args.map_rpt:
+             rows += parse_hierarchy_report(args.map_rpt)
+-    except FileNotFoundError as e:
+-        print(f"FIT_HIERARCHY_REFUSED(exit=4): missing report {e.filename}", file=sys.stderr)
+-        return 4
+-
+-    try:
+-        profile = captured_profile(args.qsf, args.input_manifest)
+         specs = load_config(args.config, profile)
+         if profile == "fpga320" and args.allow_missing:
+             raise ValueError("FPGA320 does not permit --allow-missing modules")
+-    except (OSError, ValueError, KeyError) as exc:
++    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError) as exc:
+         print(f"FIT_HIERARCHY_REFUSED(exit=4): {exc}", file=sys.stderr)
+-        return 4
++        return finish(4, [str(exc)])
+     print(f"FIT_HIERARCHY_PROFILE: {profile}")
++    print("FIT_HIERARCHY_AUTHORITY: " + json.dumps(result["authority"], sort_keys=True))
+     if profile == "fpga320":
+         # Mapped estimates cannot satisfy physical FPGA320 presence/M10K floors.
+         rows = fitted_rows
+     found = [(spec, find_row(rows, spec)) for spec in specs]
++    result["modules"] = [{"policy": spec, "observed": asdict(row) if row else None}
++                         for spec, row in found]
+     print("FIT_HIERARCHY_TABLE_BEGIN")
+     print(format_table(found))
+     print("FIT_HIERARCHY_TABLE_END")
+@@ -267,11 +379,23 @@
+             if key in spec and value < float(spec[key]):
+                 errors.append(f"{name}: {field} {value:g} < required {spec[key]}")
+ 
+-    warning_hits = scan_log(args.log, [str(spec.get("name")) for spec in specs])
++    try:
++        warning_hits = scan_log(args.log, [str(spec.get("name")) for spec in specs])
++        comb_hits = scan_comb_loops(args.log, specs)
++        if result["artifacts"] != {role: file_binding(path) for role, path in consumed.items()}:
++            raise ValueError("hierarchy inputs changed during evaluation")
++        if manifest is not None and result["authority"]["input_manifest"] != result["artifacts"]["input_manifest"]:
++            raise ValueError("captured profile authority changed during evaluation")
++        if qsf is not None and result["authority"]["qsf"] != result["artifacts"]["qsf"]:
++            raise ValueError("captured QSF changed during evaluation")
++        if archive is not None and result["authority"]["qsf"]["archive"] != result["artifacts"]["input_archive"]:
++            raise ValueError("captured archive changed during evaluation")
++    except (OSError, ValueError) as exc:
++        print(f"FIT_HIERARCHY_REFUSED(exit=4): {exc}", file=sys.stderr)
++        return finish(4, [str(exc)])
+     if warning_hits:
+         errors.append("critical-module removal/tie-off warning(s):")
+         errors.extend("  " + hit for hit in warning_hits[:20])
+-    comb_hits = scan_comb_loops(args.log, specs)
+     if comb_hits:
+         errors.append("critical-module combinational-loop warning(s):")
+         errors.extend("  " + hit for hit in comb_hits[:20])
+@@ -280,9 +404,11 @@
+         print("FIT_HIERARCHY_REJECTED(exit=1):", file=sys.stderr)
+         for err in errors:
+             print(f"  {err}", file=sys.stderr)
+-        return 1
+-    print("PASS fit hierarchy: critical modules present with non-trivial resource usage")
+-    return 0
++        return finish(1, errors)
++    code = finish(0, [])
++    if code == 0:
++        print("PASS fit hierarchy: critical modules present with non-trivial resource usage")
++    return code
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scripts/rbf_build.py b/scripts/rbf_build.py
+--- a/scripts/rbf_build.py
++++ b/scripts/rbf_build.py
+@@ -1106,7 +1106,8 @@
+     run([sys.executable, root / "scripts/check_quartus_fit_hierarchy.py",
+          "--fit-rpt", work / "Plex.fit.rpt", "--map-rpt", work / "Plex.map.rpt",
+          "--log", work / "compile.log", "--qsf", project / "Plex.qsf",
+-         "--input-manifest", work / "inputs.json", *extra])
++         "--input-manifest", work / "inputs.json",
++         "--result-json", work / "fit-hierarchy.json", *extra])
+     sdcs = [arg for path in sorted(project.rglob("*.sdc")) for arg in ("--sdc", str(path))]
+     if not sdcs:
+         raise RuntimeError("REFUSED: snapshot has no SDC files for exclusion validation")
+diff --git a/scripts/run_instrumented_sta.sh b/scripts/run_instrumented_sta.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/run_instrumented_sta.sh
+@@ -0,0 +1,47 @@
++#!/bin/sh
++set -eu
++work=$1
++reporter=$work/reporter
++out=$work/output
++for entry in "$out"/* "$out"/.[!.]* "$out"/..?*; do
++    if [ -e "$entry" ] || [ -L "$entry" ]; then
++        echo "REFUSED: instrumented timing destination is not empty" >&2
++        exit 1
++    fi
++done
++sdk_image=$(cat "$reporter/sdk-image.id") || exit 1
++cp output_files/Plex.sta.rpt "$out/Plex.sta.rpt"
++cp output_files/Plex.sta.rpt "$out/Plex.compile-produced.sta.rpt"
++cp output_files/Plex.fit.rpt "$out/Plex.fit.rpt"
++cp output_files/Plex.map.rpt "$out/Plex.map.rpt"
++cp output_files/Plex.map.rpt "$out/Plex.compiled-sources.rpt"
++sdk_rc=0
++python3 "$reporter/quartus_timing_sdk.py" --report "$out/Plex.compiled-sources.rpt" --image-id "$sdk_image" --output "$out/sdk-catalog.json" >"$out/sdk-catalog.log" 2>&1 || sdk_rc=$?
++printf '%s\n' "$sdk_rc" >"$out/sdk-catalog.exit"
++if [ "$sdk_rc" -ne 0 ]; then cat "$out/sdk-catalog.log"; exit "$sdk_rc"; fi
++sha256sum output_files/Plex.rbf >"$out/rbf.before.sha256"
++cp output_files/Plex.rbf "$out/Plex.rbf"
++report_rc=0
++quartus_sta -t "$reporter/timing.tcl" "$out" >"$out/reporter.log" 2>&1 || report_rc=$?
++printf '%s\n' "$report_rc" >"$out/reporter.exit"
++if [ "$report_rc" -ne 0 ]; then cat "$out/reporter.log"; exit "$report_rc"; fi
++identity=$(cat "$reporter/observation.id") || exit 1
++completion=$(cat "$out/observer.complete") || exit 1
++if [ "$completion" != "misterplex.timing-observer.v1:$identity" ]; then
++    echo "REFUSED: timing observation did not complete" >&2
++    exit 1
++fi
++diagnostic_rc=0
++grep -Ei '^[[:space:]]*(Error([[:space:]]*\([0-9]+\))?[[:space:]]*:|Critical Warning[[:space:]]*\(332008\)[[:space:]]*:|MPX_OBSERVER_FAILURE)|Read_sdc failed' "$out/reporter.log" || diagnostic_rc=$?
++if [ "$diagnostic_rc" -eq 0 ]; then
++    echo "REFUSED: failed/unreadable timing observation diagnostics" >&2
++    exit 1
++elif [ "$diagnostic_rc" -ne 1 ]; then
++    echo "REFUSED: diagnostic grep failed" >&2
++    exit "$diagnostic_rc"
++fi
++sha256sum output_files/Plex.rbf >"$out/rbf.after.sha256"
++if ! cmp -s "$out/rbf.before.sha256" "$out/rbf.after.sha256"; then
++    echo "REFUSED: timing reporter changed Plex.rbf" >&2
++    exit 1
++fi
+diff --git a/tests/unit/test_quartus_fit_hierarchy.py b/tests/unit/test_quartus_fit_hierarchy.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/test_quartus_fit_hierarchy.py
+@@ -0,0 +1,295 @@
++#!/usr/bin/env python3
++"""Captured-mode hierarchy policy fixtures; never invokes Quartus."""
++import hashlib
++import contextlib
++import importlib.util
++import io
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import sys
++import tarfile
++import unittest
++from unittest import mock
++import uuid
++
++ROOT = Path(__file__).resolve().parents[2]
++CHECKER = ROOT / "scripts/check_quartus_fit_hierarchy.py"
++CONFIG = ROOT / "tests/fixtures/critical_fit_hierarchy.json"
++spec = importlib.util.spec_from_file_location("hierarchy_captured_test", CHECKER)
++hierarchy = importlib.util.module_from_spec(spec)
++sys.modules[spec.name] = hierarchy
++spec.loader.exec_module(hierarchy)
++
++
++class HierarchyProfiles(unittest.TestCase):
++    def setUp(self):
++        self.work = Path(os.environ.get("MISTERPLEX_TEST_WORK", ROOT / "build")) / (
++            "hierarchy-policy-" + uuid.uuid4().hex)
++        self.work.mkdir(parents=True)
++        self.config = json.loads(CONFIG.read_text())
++
++    def tearDown(self):
++        shutil.rmtree(self.work)
++
++    def report(self, bits=81920, m10ks=96, registers=500, missing=None):
++        rows = ["; Compilation Hierarchy Node ; Full Hierarchy Name ; Entity Name ; "
++                "Combinational ALUTs ; Dedicated Logic Registers ; Block Memory Bits ; M10Ks ; DSP Blocks ;"]
++        for spec in self.config["modules"]:
++            if spec["name"] == missing:
++                continue
++            frame = spec["name"] == "ddr_frame_store"
++            rows.append(
++                f"; |{spec['hierarchy_contains']}| ; |sys_top|{spec['hierarchy_contains']} ; {spec['entity']} ; "
++                f"{spec.get('min_comb_aluts', 0)} ; {registers if frame else spec.get('min_registers', 0)} ; "
++                f"{bits if frame else 0} ; {m10ks if frame else 0} ; 0 ;")
++        path = self.work / "Plex.fit.rpt"
++        path.write_text("\n".join(rows) + "\n")
++        return path
++
++    def check(self, qsf=None, bad_hash=False, no_manifest=False, extra=(), **resources):
++        args = [sys.executable, str(CHECKER), "--fit-rpt", str(self.report(**resources)), *extra]
++        if qsf is not None:
++            path = self.work / "Plex.qsf"
++            path.write_text(qsf)
++            manifest = self.work / "inputs.json"
++            self.manifest(path, manifest, bad_hash=bad_hash)
++            args.extend(("--qsf", str(path)))
++            if not no_manifest:
++                args.extend(("--input-manifest", str(manifest)))
++        return subprocess.run(args, text=True, capture_output=True)
++
++    def manifest(self, qsf, manifest=None, bad_hash=False):
++        manifest = manifest or self.work / "inputs.json"
++        files = {"Plex.qsf": "0" * 64 if bad_hash else hashlib.sha256(qsf.read_bytes()).hexdigest()}
++        data = {"input_files": files,
++                "input_sha256": hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()}
++        manifest.write_text(json.dumps(data))
++        return data
++
++    def captured(self, value=1):
++        qsf = self.work / "project/Plex.qsf"
++        qsf.parent.mkdir(exist_ok=True)
++        qsf.write_text(f'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320={value}"\n'
++                       'set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"\n')
++        self.manifest(qsf)
++        return qsf
++
++    def published(self, cwd=None, **resources):
++        receipt = self.work / (uuid.uuid4().hex + ".json")
++        command = [sys.executable, str(CHECKER), "--fit-rpt", str(self.report(**resources)),
++                   "--result-json", str(receipt)]
++        result = subprocess.run(command, cwd=cwd, text=True, capture_output=True)
++        return result, json.loads(receipt.read_text())
++
++    def test_baseline_floor_is_unchanged(self):
++        frame = next(spec for spec in self.config["modules"] if spec["name"] == "ddr_frame_store")
++        self.assertEqual(frame["min_block_memory_bits"], 100000)
++        result = self.check()
++        self.assertEqual(result.returncode, 1)
++        self.assertIn("required 100000", result.stderr)
++        self.assertEqual(self.check(bits=100000).returncode, 0)
++
++    def test_only_captured_enabled_macro_selects_fpga320(self):
++        enabled = 'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n'
++        result = self.check(qsf=enabled)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn("PROFILE: fpga320", result.stdout)
++        for literal in ('"FPGA_VIDEO_320=1"', "{FPGA_VIDEO_320=1}", "FPGA_VIDEO_320=1"):
++            self.assertEqual(self.check(qsf=f"set_global_assignment -name VERILOG_MACRO {literal} # captured\n").returncode, 0)
++        for qsf in ("#" + enabled, enabled.replace("=1", "=0"), "# no feature macro\n"):
++            result = self.check(qsf=qsf)
++            self.assertEqual(result.returncode, 1)
++            self.assertIn("PROFILE: baseline", result.stdout)
++        self.assertEqual(self.check(qsf=enabled, bad_hash=True).returncode, 4)
++        self.assertEqual(self.check(qsf=enabled, no_manifest=True).returncode, 4)
++        self.assertEqual(self.check(qsf=enabled + enabled.replace("=1", "=0")).returncode, 4)
++
++    def test_fpga320_keeps_presence_register_and_m10k_floors(self):
++        qsf = 'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n'
++        for resource in ({"bits": 81919}, {"m10ks": 95}, {"registers": 499},
++                         {"missing": "ddr_frame_store"}, {"missing": "stream_path"},
++                         {"missing": "ddr_bitstream_reader"}):
++            with self.subTest(resource=resource):
++                result = self.check(qsf=qsf, **resource)
++                self.assertEqual(result.returncode, 1, result.stdout)
++        result = self.check(qsf=qsf, missing="stream_path", extra=("--allow-missing", "stream_path"))
++        self.assertEqual(result.returncode, 4)
++
++    def test_removal_and_comb_loop_guards_still_apply(self):
++        log = self.work / "compile.log"
++        for text in (
++            "Warning: ddr_frame_store removed because output is constant GND\n",
++            "Warning (332125): Found combinational loop\n"
++            'Warning (332126): Node "present|ddr_frame_store:fstore|comb"\n',
++        ):
++            log.write_text(text)
++            result = self.check(qsf='set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n',
++                                extra=("--log", str(log)))
++            self.assertEqual(result.returncode, 1)
++
++    def test_mapped_estimate_cannot_hide_undersized_or_missing_fitted_fpga320(self):
++        mapped = self.work / "Plex.map.rpt"
++        mapped.write_text(self.report(bits=159744, m10ks=96, registers=2000).read_text())
++        qsf = 'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320=1"\n'
++        for resources in ({"bits": 81919}, {"missing": "ddr_frame_store"}):
++            result = self.check(qsf=qsf, extra=("--map-rpt", str(mapped)), **resources)
++            self.assertEqual(result.returncode, 1, result.stdout)
++
++    def test_published_profile_uses_adjacent_capture_not_opposite_working_tree(self):
++        other = self.work / "opposite-worktree"
++        other.mkdir()
++        for captured, opposite, bits in ((1, 0, 81920), (0, 1, 100000)):
++            with self.subTest(captured=captured):
++                qsf = self.captured(captured)
++                (other / "Plex.qsf").write_text(
++                    f'set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320={opposite}"\n')
++                result, record = self.published(cwd=other, bits=bits)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(record["profile"], "fpga320" if captured else "baseline")
++                self.assertEqual(record["authority"]["qsf"]["sha256"],
++                                 hashlib.sha256(qsf.read_bytes()).hexdigest())
++                self.assertEqual(record["authority"]["input_manifest"]["sha256"],
++                                 hashlib.sha256((self.work / "inputs.json").read_bytes()).hexdigest())
++                self.assertEqual(record["authority"]["qsf"], record["artifacts"]["qsf"])
++                frame = next(row for row in record["modules"] if row["policy"]["name"] == "ddr_frame_store")
++                self.assertEqual(frame["policy"]["min_block_memory_bits"], 81920 if captured else 100000)
++                if captured:
++                    self.assertEqual(frame["policy"]["min_m10ks"], 96)
++        result, record = self.published(bits=81920)
++        self.assertEqual(result.returncode, 1)
++        self.assertEqual(record["status"], "rejected")
++        self.assertIn("required 100000", result.stderr)
++
++    def test_missing_malformed_or_mismatched_captured_authority_refuses(self):
++        for variant in ("missing-qsf", "missing-manifest", "json-syntax", "json-list",
++                        "bad-files", "bad-aggregate", "bad-qsf-hash", "malformed-qsf", "implicit-macro"):
++            with self.subTest(variant=variant):
++                qsf = self.captured()
++                manifest = self.work / "inputs.json"
++                if variant == "missing-qsf":
++                    qsf.unlink()
++                elif variant == "missing-manifest":
++                    manifest.unlink()
++                elif variant in ("json-syntax", "json-list", "bad-files"):
++                    manifest.write_text({"json-syntax": "{", "json-list": "[]",
++                                         "bad-files": '{"input_files":[]}' }[variant])
++                elif variant == "bad-aggregate":
++                    data = json.loads(manifest.read_text())
++                    data["input_sha256"] = "0" * 64
++                    manifest.write_text(json.dumps(data))
++                elif variant == "bad-qsf-hash":
++                    qsf.write_text("# differs from captured manifest\n")
++                else:
++                    qsf.write_text('set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_320' +
++                                   ('=1\n' if variant == "malformed-qsf" else '"\n'))
++                    self.manifest(qsf)
++                result, record = self.published()
++                self.assertEqual(result.returncode, 4, result.stderr)
++                self.assertEqual(record["status"], "refused")
++                self.assertIsNone(record["profile"])
++                self.assertNotIn("FIT_HIERARCHY_PROFILE: baseline", result.stdout)
++
++    def test_unreadable_captured_authority_and_discovery_errors_propagate(self):
++        qsf = self.captured()
++        command = ["hierarchy", "--fit-rpt", str(self.report())]
++        read = Path.read_bytes
++        lstat = Path.lstat
++        for denied in (qsf, self.work / "inputs.json"):
++            def unreadable(path):
++                if path == denied:
++                    raise PermissionError("host fixture denied captured authority")
++                return read(path)
++            with self.subTest(path=denied), mock.patch.object(Path, "read_bytes", unreadable), \
++                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++                self.assertEqual(hierarchy.main(command), 4)
++        def denied_discovery(path):
++            if path == self.work / "inputs.json":
++                raise OSError("host fixture discovery failure")
++            return lstat(path)
++        with mock.patch.object(Path, "lstat", denied_discovery), \
++                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++            self.assertEqual(hierarchy.main(command), 4)
++        archive = self.work / "inputs.tar"
++        with tarfile.open(archive, "w") as tar:
++            tar.add(qsf, arcname="Plex.qsf")
++        manifest = self.work / "inputs.json"
++        data = json.loads(manifest.read_text())
++        data["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
++        manifest.write_text(json.dumps(data))
++        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
++            hierarchy.captured_profile(qsf, manifest, {}, archive)
++        shutil.rmtree(qsf.parent)
++        denied = archive
++        with mock.patch.object(Path, "read_bytes", unreadable), \
++                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++            self.assertEqual(hierarchy.main(command), 4)
++
++    def test_no_capture_cannot_publish_or_replace_an_existing_receipt(self):
++        result, record = self.published(bits=100000)
++        self.assertEqual(result.returncode, 4)
++        self.assertIsNone(record["profile"])
++        self.captured()
++        target = self.work / "prior-result.json"
++        target.write_text("older result, not this transaction\n")
++        result = subprocess.run([sys.executable, str(CHECKER), "--fit-rpt", str(self.report()),
++                                 "--result-json", str(target)], text=True, capture_output=True)
++        self.assertEqual(result.returncode, 4)
++        self.assertEqual(target.read_text(), "older result, not this transaction\n")
++        self.assertNotIn("PASS fit hierarchy", result.stdout)
++
++    def test_normal_cleanup_uses_verified_archive_without_extracting_project(self):
++        for value, bits in ((1, 81920), (0, 100000)):
++            with self.subTest(value=value):
++                qsf = self.captured(value)
++                archive = self.work / "inputs.tar"
++                with tarfile.open(archive, "w") as tar:
++                    tar.add(qsf, arcname="Plex.qsf")
++                manifest = self.work / "inputs.json"
++                data = json.loads(manifest.read_text())
++                data["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
++                manifest.write_text(json.dumps(data))
++                shutil.rmtree(qsf.parent)
++                result, record = self.published(bits=bits)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertEqual(record["profile"], "fpga320" if value else "baseline")
++                self.assertEqual(record["authority"]["qsf"]["member"], "Plex.qsf")
++                self.assertEqual(record["authority"]["qsf"]["archive"], record["artifacts"]["input_archive"])
++                self.assertFalse(qsf.parent.exists())
++        archive.write_bytes(b"mismatched captured archive")
++        result, record = self.published()
++        self.assertEqual(result.returncode, 4)
++        self.assertIsNone(record["profile"])
++
++    def test_archive_missing_duplicate_nonregular_or_invalid_qsf_refuses(self):
++        for variant in ("absent", "duplicate", "symlink", "wrong-qsf", "corrupt"):
++            with self.subTest(variant=variant):
++                qsf = self.captured()
++                archive = self.work / "inputs.tar"
++                with tarfile.open(archive, "w") as tar:
++                    if variant == "duplicate":
++                        tar.add(qsf, arcname="Plex.qsf")
++                        tar.add(qsf, arcname="Plex.qsf")
++                    elif variant == "symlink":
++                        member = tarfile.TarInfo("Plex.qsf")
++                        member.type, member.linkname = tarfile.SYMTYPE, "other.qsf"
++                        tar.addfile(member)
++                    elif variant == "wrong-qsf":
++                        qsf.write_text("# wrong QSF\n")
++                        tar.add(qsf, arcname="Plex.qsf")
++                if variant == "corrupt":
++                    archive.write_bytes(b"not a tar")
++                manifest = self.work / "inputs.json"
++                data = json.loads(manifest.read_text())
++                data["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
++                manifest.write_text(json.dumps(data))
++                shutil.rmtree(qsf.parent)
++                result, record = self.published()
++                self.assertEqual(result.returncode, 4, result.stderr)
++                self.assertIsNone(record["profile"])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/unit/test_rbf_build.py b/tests/unit/test_rbf_build.py
+--- a/tests/unit/test_rbf_build.py
++++ b/tests/unit/test_rbf_build.py
+@@ -574,6 +574,9 @@
+             with self.assertRaises(subprocess.CalledProcessError) as failure:
+                 build.validate(ROOT, work, None)
+         self.assertEqual(failure.exception.returncode, 1)
++        self.assertEqual(seen[0][seen[0].index("--qsf") + 1], project / "Plex.qsf")
++        self.assertEqual(seen[0][seen[0].index("--input-manifest") + 1], work / "inputs.json")
++        self.assertEqual(seen[0][seen[0].index("--result-json") + 1], work / "fit-hierarchy.json")
+         self.assertIn("--require-scoped", seen[1])
+         self.assertEqual(Path(seen[2][1]).name, "check_timing_exclusions.py")
+         self.assertIn("--effective-dir", seen[2])
+@@ -659,6 +662,108 @@
+                 self.assertEqual(path.read_text(), "preserved older evidence\n")
+                 self.assertEqual(list(reports.iterdir()), [path])
+                 path.unlink()
++
++    def test_instrumented_runner_preserves_statuses_and_normal_after_hash(self):
++        launcher = ROOT / "scripts/run_instrumented_sta.sh"
++        sdk_program = (
++            "import json,os,pathlib,sys\n"
++            "case=pathlib.Path(os.environ['INSTRUMENTED_TEST_CASE'])\n"
++            "(case/'calls').write_text('sdk\\n')\n"
++            "assert sys.argv[1]=='--report' and sys.argv[3]=='--image-id' and sys.argv[5]=='--output'\n"
++            "pathlib.Path(sys.argv[6]).write_text(json.dumps({'host_mock_only':True}))\n"
++            "sys.exit(37 if case.name=='sdk-failure' else 0)\n")
++        sta_program = (
++            "#!/usr/bin/env python3\n"
++            "import os,pathlib,sys\n"
++            "case=pathlib.Path(os.environ['INSTRUMENTED_TEST_CASE']); out=pathlib.Path(sys.argv[3])\n"
++            "assert sys.argv[1]=='-t' and pathlib.Path(sys.argv[2]).is_file()\n"
++            "with (case/'calls').open('a') as stream: stream.write('reporter\\n')\n"
++            "if case.name != 'missing-completion':\n"
++            " identity='wrong' if case.name=='wrong-completion' else 'host-mock'\n"
++            " (out/'observer.complete').write_text('misterplex.timing-observer.v1:'+identity+'\\n')\n"
++            "messages={'error':'Error: native failure', 'numbered-error':'Error (332000): native failure',\n"
++            " 'critical-warning':'Critical Warning (332008): native failure',\n"
++            " 'observer-error':'MPX_OBSERVER_FAILURE fixture', 'read-error':'Read_sdc failed'}\n"
++            "print(messages.get(case.name,'host mock reporter completed'))\n"
++            "if case.name=='missing-log': (out/'reporter.log').unlink()\n"
++            "if case.name=='changed-rbf': pathlib.Path('output_files/Plex.rbf').write_bytes(b'changed')\n"
++            "sys.exit(23 if case.name=='reporter-failure' else 0)\n")
++        for name, expected in (
++            ("success-no-diagnostics", 0), ("sdk-failure", 37), ("reporter-failure", 23),
++            ("missing-completion", 1), ("wrong-completion", 1), ("error", 1),
++            ("numbered-error", 1), ("critical-warning", 1), ("observer-error", 1),
++            ("read-error", 1), ("grep-error", 2), ("missing-log", 2),
++            ("missing-fit-report", 1), ("changed-rbf", 1), ("after-hash-tool-error", 17),
++        ):
++            with self.subTest(name=name):
++                case = self.work / name
++                reporter, out, project, binaries = (case / item for item in ("reporter", "output", "project", "bin"))
++                for path in (reporter, out, project / "output_files", binaries):
++                    path.mkdir(parents=True)
++                (reporter / "sdk-image.id").write_text("sha256:" + "a" * 64 + "\n")
++                (reporter / "observation.id").write_text("host-mock\n")
++                (reporter / "timing.tcl").write_text("# Host mock only; never evaluated by Quartus.\n")
++                (reporter / "quartus_timing_sdk.py").write_text(sdk_program)
++                for kind in ("sta", "map", "fit"):
++                    (project / f"output_files/Plex.{kind}.rpt").write_text("Host mock report\n")
++                (project / "output_files/Plex.rbf").write_bytes(b"Host mock unchanged RBF")
++                if name == "missing-fit-report":
++                    (project / "output_files/Plex.fit.rpt").unlink()
++                sta = binaries / "quartus_sta"
++                sta.write_text(sta_program)
++                sta.chmod(0o755)
++                if name == "grep-error":
++                    (binaries / "grep").write_text("#!/bin/sh\nexit 2\n")
++                    (binaries / "grep").chmod(0o755)
++                if name == "after-hash-tool-error":
++                    (binaries / "sha256sum").write_text(
++                        "#!/bin/sh\n"
++                        'if [ -f "$INSTRUMENTED_TEST_CASE/hash-called" ]; then exit 17; fi\n'
++                        ': >"$INSTRUMENTED_TEST_CASE/hash-called"\n'
++                        f'exec {shlex.quote(shutil.which("sha256sum"))} "$@"\n')
++                    (binaries / "sha256sum").chmod(0o755)
++                env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"],
++                           INSTRUMENTED_TEST_CASE=str(case))
++                result = subprocess.run(["/bin/sh", launcher, case], cwd=project, env=env,
++                                        capture_output=True, text=True, timeout=20)
++                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
++                if name == "missing-fit-report":
++                    self.assertFalse((case / "calls").exists())
++                    continue
++                self.assertEqual((out / "sdk-catalog.exit").read_text(), "37\n" if name == "sdk-failure" else "0\n")
++                if name == "sdk-failure":
++                    self.assertEqual((case / "calls").read_text(), "sdk\n")
++                    self.assertFalse((out / "reporter.exit").exists())
++                else:
++                    self.assertEqual((case / "calls").read_text(), "sdk\nreporter\n")
++                    self.assertEqual((out / "reporter.exit").read_text(), "23\n" if name == "reporter-failure" else "0\n")
++                if expected == 0:
++                    self.assertEqual((out / "rbf.before.sha256").read_bytes(), (out / "rbf.after.sha256").read_bytes())
++                    self.assertEqual((out / "Plex.rbf").read_bytes(), (project / "output_files/Plex.rbf").read_bytes())
++                elif name == "changed-rbf":
++                    self.assertNotEqual((out / "rbf.before.sha256").read_bytes(), (out / "rbf.after.sha256").read_bytes())
++                elif name == "after-hash-tool-error":
++                    self.assertEqual((out / "rbf.after.sha256").read_bytes(), b"")
++                else:
++                    self.assertFalse((out / "rbf.after.sha256").exists())
++
++    def test_instrumented_runner_refuses_stale_output_before_any_tool(self):
++        case = self.work / "stale-instrumented"
++        out = case / "output"
++        out.mkdir(parents=True)
++        for name in ("old-result", ".unfinished", "dangling-link"):
++            path = out / name
++            if name == "dangling-link":
++                path.symlink_to(out / "absent")
++            else:
++                path.write_text("preserved older output\n")
++            result = subprocess.run(["/bin/sh", ROOT / "scripts/run_instrumented_sta.sh", case],
++                                    env=dict(os.environ, PATH="/nonexistent-host-mock-path"),
++                                    capture_output=True, text=True)
++            self.assertEqual(result.returncode, 1)
++            self.assertIn("timing destination is not empty", result.stderr)
++            self.assertEqual(list(out.iterdir()), [path])
++            path.unlink()
+ 
+     def test_detailed_reports_survive_post_fit_timing_rejection(self):
+         daemon = self.work / "daemon"

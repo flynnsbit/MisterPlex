@@ -1,0 +1,22 @@
+{
+  "log": {
+    "bytes": 17,
+    "path": "Memory/lab/fpga-h264-30ff2997/clean-resume-5754/http-offset-minimal/test-output/test_resolve.log",
+    "sha256": "bb837b2d01454f2399bf499ce4be7ec7b03d1e8335f50b119bff6484aab99234"
+  },
+  "mission": "minimal-original-http-offset-source-5754",
+  "owner": "8f57f066-5a9e-4c97-b5a2-c4a1f09ef306",
+  "preserved_non_source_failures": [
+    {
+      "path": "test-failure.json",
+      "reason": "Initial isolated-tree Make target name was not exported as build/test_resolve."
+    },
+    {
+      "path": "test-rerun-intent.json",
+      "reason": "Second isolated-tree Make attempt still failed on target naming; source bytes unchanged."
+    }
+  ],
+  "result": "PASS",
+  "schema": 1,
+  "successful_command": "g++ -std=c++17 -O2 -Wall -Wextra -Icandidate/host -Icandidate/arm/misterplexd -o candidate/build/test_resolve candidate/tests/unit/test_resolve.cpp candidate/arm/misterplexd/plex_resolve.cpp && candidate/build/test_resolve"
+}

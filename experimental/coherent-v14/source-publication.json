@@ -1,0 +1,771 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-fpga-source-only",
+  "public_branch_base_commit": "1453d4c31dc13975fc166177f3a457e475a244a3",
+  "prior_public_v13_commit": "b55d108cc79780ce3e129d4b0c9ba82d45c373e7",
+  "source_sha256": "df9edd2c2c283ca574706401c1d253a5ca976394d8d33acf9456c18f2bb1ec59",
+  "source_archive_sha256": "9fad4f4441b26d3159ccd5d2f69dc10e27026f9021427a248226422914dac388",
+  "inputs_archive_sha256": "e4023151efea0e72433e9e1ab81f8f2c5b923370be9eb5e35e6243c71d5a16a9",
+  "inputs_json_sha256": "2fd7aac23617d6e48d26b4503ce670fef3909987594894c26285e982f341799e",
+  "manifest_sha256": "be4dc86497aab4db2ae9c337d78ce19976b120de1220d07cd07a7b21650677a9",
+  "review_receipt_sha256": "424603111ee3a71bc0448de22855282b01335ada610916ea10789c0163d4eb10",
+  "review_outcome": "NO_SIGNIFICANT_ISSUES_SOURCE_PUBLICATION_READY",
+  "v13_source_sha256": "439200e0923d1756538825621e7ee5bab1f475bc9ce1287cf2ba3e8c16bcdc01",
+  "v13_manifest_sha256": "574e670fa6446bf2d853da5c18cd54a5f2bc3483adf1aade1a881db183a6166b",
+  "source_members": 149,
+  "effective_input_members": 150,
+  "source_delta": [
+    "rtl/h264_deblock.sv",
+    "rtl/h264_deblock_frame.sv",
+    "rtl/h264_intra_pred.sv",
+    "rtl/h264_mb_ctrl.sv"
+  ],
+  "input_delta": [
+    "Plex.qsf",
+    "rtl/h264_deblock.sv",
+    "rtl/h264_deblock_frame.sv",
+    "rtl/h264_intra_pred.sv",
+    "rtl/h264_mb_ctrl.sv"
+  ],
+  "patch_sha256": "5e3c540bd07a0bcd5a888ee4bb18e43d2b37d759ddc26670f2b936692cd429e5",
+  "validation_archive_sha256": "f19c3cac5f8936040d4ca658374a951ab956e0e560febe2376af2e3798ac1938",
+  "validation_source_map_sha256": "f6a5635ecb3dafd0d46eaebab711206fb7063286b153d8d81d21d4d558c9439d",
+  "review_limits": {
+    "source_publication_approved": true,
+    "physical_or_playback_approved": false,
+    "latency": {
+      "extra_sys_cycles_per_filter_edge_segment": 3,
+      "extra_sys_cycles_per_intra_chroma_block": 5,
+      "full240_idr_promotion_extra_sys_cycles": 68340,
+      "affected_first_display_shift_native_period_sys_cycles": 2005872,
+      "interpretation": "Later observed inter-picture intervals unchanged. Native-period shift is not extra per-frame compute or physical24fps proof."
+    },
+    "physical_area_timing_result": "UNMEASURED; no capacity, Fmax, closure or playback acceptance."
+  },
+  "public_overlay": {
+    "plain_source_policy": "partial-focused-public-tree",
+    "changed_production_members": [
+      "rtl/h264_deblock.sv",
+      "rtl/h264_deblock_frame.sv",
+      "rtl/h264_intra_pred.sv",
+      "rtl/h264_mb_ctrl.sv"
+    ],
+    "direct_source_dependencies": [
+      "rtl/line_buf_ram.sv",
+      "rtl/h264_chroma_nc.svh",
+      "rtl/plex_performance_clock.svh",
+      "rtl/h264_recon.sv",
+      "rtl/h264_slice_rbsp_ram.sv",
+      "rtl/h264_bit_reader.sv",
+      "rtl/h264_cavlc_residual.sv",
+      "rtl/h264_residual_seq.sv",
+      "rtl/h264_i16_dc_hadamard.sv",
+      "rtl/h264_inter_pred.sv",
+      "rtl/h264_p_slice_modes.sv",
+      "rtl/h264_dpb.sv"
+    ],
+    "validation_source_members": 61,
+    "fixture_oracle_bytes_not_bundled": true,
+    "authoritative_full_private_release": ".worktrees/fpga-h264-fleet-30ff2997/build/fpga-coherent-a11/critical-cones-v14-5754/release-v14"
+  },
+  "registration": "Both new helper modules remain inside already-registered source files; files.qip and source QSF stay byte-identical.",
+  "remaining_physical_limits": [
+    "V13 native setup remains -20.572/-21.774/-6.414/-4.398 ns; its RBFd88c6425 is unapproved.",
+    "V14 cuts the witnessed source cones but has no Quartus/STA/fit, area/capacity, Fmax or deployment result.",
+    "Shared DPB RAM fanout/routing and DDR/HDMI/CLK2 physical paths still require the separately assigned flow.",
+    "Observer/retention/DDR hierarchy-floor assessment remains with the independent reviewer; no floor/tool/DDR/painter edit here.",
+    "Full240 first display moves one modeled native period later; latency cost is retained and requires independent acceptance."
+  ],
+  "files": {
+    "project/fpga/Plex_MiSTer/rtl/h264_deblock.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_deblock.sv",
+      "sha256": "3e35d7988d985204c3a7d0be454c8023282f40426abddcc6fb857c4bcf34d77e",
+      "bytes": 22214,
+      "category": "changed-production"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_deblock_frame.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_deblock_frame.sv",
+      "sha256": "aa552bb1f7722a968cf6c6911c123860b6177b991e61b0b53bb5d5cb48912096",
+      "bytes": 17087,
+      "category": "changed-production"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_intra_pred.sv",
+      "sha256": "3df40aed7e0a2e98f2042d9e6216ab3e933d762beb2b49022777b53af7fff5da",
+      "bytes": 25882,
+      "category": "changed-production"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_mb_ctrl.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_mb_ctrl.sv",
+      "sha256": "ce6833d958f99bd9575dedf795171bfee0242543aac903430efb03037e4bef5f",
+      "bytes": 116978,
+      "category": "changed-production"
+    },
+    "project/fpga/Plex_MiSTer/rtl/line_buf_ram.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/line_buf_ram.sv",
+      "sha256": "e27c20cef6babd829484227851af9e83accdcb3db4a35307673201e6d423cb83",
+      "bytes": 601,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_chroma_nc.svh": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_chroma_nc.svh",
+      "sha256": "972b36ec6b4349daa4f13f1504c94addd83626524519ac80bfe5033efd1cfd54",
+      "bytes": 1689,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/plex_performance_clock.svh",
+      "sha256": "e9bc420ffbd9188f2d66af539b7b16aea1d94c046b6debdb23598010c3e9a008",
+      "bytes": 622,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_recon.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_recon.sv",
+      "sha256": "dda5a30a2023bc87c43e7ddd4b96b4f46ca00515d427b4222cb334579dd41e17",
+      "bytes": 4506,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_slice_rbsp_ram.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_slice_rbsp_ram.sv",
+      "sha256": "ceb2df31d89647c40309977cf14dcde134267f6d31ba05d755650f67bd551f50",
+      "bytes": 1449,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_bit_reader.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_bit_reader.sv",
+      "sha256": "e81820c8eed96541d0679e030eb5def0c035d4162e6fa381b2453e56cb55d1d1",
+      "bytes": 6322,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_cavlc_residual.sv",
+      "sha256": "e29d6be32825a97d026b09b69a4cbcc6bf8b9c56e113063e9d0c230718f3b122",
+      "bytes": 70108,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_residual_seq.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_residual_seq.sv",
+      "sha256": "7ce9a84a10ccc0a8fa515042273481c4a92ca9877fefe167dc6bd144c353b981",
+      "bytes": 5599,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_i16_dc_hadamard.sv",
+      "sha256": "26980a9915ede75b12248e4c2035f5e21961851a67a83b863e1dc2df7be5d68f",
+      "bytes": 2900,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_inter_pred.sv",
+      "sha256": "b0630e902e4e59d2b1c06bc0b3c2eab4839107bcc199b28de1a912641d040262",
+      "bytes": 7591,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_p_slice_modes.sv",
+      "sha256": "f66ba92d8adc983fb919ee034334f4795aa353659026c839e07b8b96caf24e15",
+      "bytes": 2749,
+      "category": "direct-source-dependency"
+    },
+    "project/fpga/Plex_MiSTer/rtl/h264_dpb.sv": {
+      "origin_archive": "source.tar",
+      "origin_member": "rtl/h264_dpb.sv",
+      "sha256": "044ff5e524babaf3a4932a27c418f35edf427674c2c02c5830eb08cf2461280c",
+      "bytes": 29167,
+      "category": "direct-source-dependency"
+    },
+    "freeze_release_v14.py": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "freeze_release_v14.py",
+      "sha256": "febf2ba063e5760e70804a52e7a123458ca0b5bc8c861b8b10c9f976d17aeeb2",
+      "bytes": 27145,
+      "category": "validation-source"
+    },
+    "guarded_campaign.py": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "guarded_campaign.py",
+      "sha256": "029c55c704c9d6d6d302988715dcf5f85fdc3f73036cf39ad16421b4640202c0",
+      "bytes": 8625,
+      "category": "validation-source"
+    },
+    "project/host/libmisterplex/h264_cavlc.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/host/libmisterplex/h264_cavlc.hpp",
+      "sha256": "efed97e7958835c82c6d37cb22eb00c7a383ff01b7f77dcb9381d0c5b3bf1334",
+      "bytes": 23192,
+      "category": "validation-source"
+    },
+    "project/host/libmisterplex/h264_nal.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/host/libmisterplex/h264_nal.hpp",
+      "sha256": "ff358e3b279bb331b301e9bc7dfa89cdb0efea51baa465e720f1d5ad212a7252",
+      "bytes": 7623,
+      "category": "validation-source"
+    },
+    "project/host/libmisterplex/h264_recon.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/host/libmisterplex/h264_recon.hpp",
+      "sha256": "3b95811245e4dc2332014b56ced6c15df338af9a57ae0b46a4bf06a2a6fed03b",
+      "bytes": 56431,
+      "category": "validation-source"
+    },
+    "project/host/libmisterplex/h264_residual_gold.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/host/libmisterplex/h264_residual_gold.hpp",
+      "sha256": "bd03b38cc189a90b93e90cfcff560fa3a6cb02d54893b7271ef6944298e0c746",
+      "bytes": 6710,
+      "category": "validation-source"
+    },
+    "project/host/libmisterplex/h264_slice_walk.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/host/libmisterplex/h264_slice_walk.hpp",
+      "sha256": "bd52930714a6afd47d61e630e50ca4ada957f962449cf50fd19192c7362088ff",
+      "bytes": 11613,
+      "category": "validation-source"
+    },
+    "project/host/libmisterplex/h264_sps.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/host/libmisterplex/h264_sps.hpp",
+      "sha256": "cad197666c0c819a3f6e99a6142975d5d231e171817fa3d554a9e4387dc281c0",
+      "bytes": 5615,
+      "category": "validation-source"
+    },
+    "project/scripts/generate_audio_session_abi.py": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/scripts/generate_audio_session_abi.py",
+      "sha256": "11ddea2c3b3d9c9aafe1d8930cbb77201e992682eaf25fcd519956593663ce6a",
+      "bytes": 1644,
+      "category": "validation-source"
+    },
+    "project/scripts/run_verilator.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/scripts/run_verilator.sh",
+      "sha256": "485db26da31efe154d6d2db60b533030f81d6cbf0246feda20313839d2be4e82",
+      "bytes": 798,
+      "category": "validation-source"
+    },
+    "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp",
+      "sha256": "2d1ce53f5e60fbe79a74a95e9bf72318eedf1f694c2f918df4d98a32d678a55e",
+      "bytes": 14850,
+      "category": "validation-source"
+    },
+    "project/tests/cavlc-host/libmisterplex/h264_cavlc.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/cavlc-host/libmisterplex/h264_cavlc.hpp",
+      "sha256": "efed97e7958835c82c6d37cb22eb00c7a383ff01b7f77dcb9381d0c5b3bf1334",
+      "bytes": 23192,
+      "category": "validation-source"
+    },
+    "project/tests/cavlc-host/libmisterplex/h264_nal.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/cavlc-host/libmisterplex/h264_nal.hpp",
+      "sha256": "ff358e3b279bb331b301e9bc7dfa89cdb0efea51baa465e720f1d5ad212a7252",
+      "bytes": 7623,
+      "category": "validation-source"
+    },
+    "project/tests/cavlc-host/libmisterplex/h264_residual_gold.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/cavlc-host/libmisterplex/h264_residual_gold.hpp",
+      "sha256": "bd03b38cc189a90b93e90cfcff560fa3a6cb02d54893b7271ef6944298e0c746",
+      "bytes": 6710,
+      "category": "validation-source"
+    },
+    "project/tests/cavlc-host/libmisterplex/h264_sps.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/cavlc-host/libmisterplex/h264_sps.hpp",
+      "sha256": "cad197666c0c819a3f6e99a6142975d5d231e171817fa3d554a9e4387dc281c0",
+      "bytes": 5615,
+      "category": "validation-source"
+    },
+    "project/tests/cavlc-host/libmisterplex/mailbox_abi_spec.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/cavlc-host/libmisterplex/mailbox_abi_spec.hpp",
+      "sha256": "ee0807b907a587e076e6eed5673935d84f7238bdac2746595e33e2b8e32e64d9",
+      "bytes": 11143,
+      "category": "validation-source"
+    },
+    "project/tests/frozen-host/ddr_bitstream_ring.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/frozen-host/ddr_bitstream_ring.hpp",
+      "sha256": "2d1ce53f5e60fbe79a74a95e9bf72318eedf1f694c2f918df4d98a32d678a55e",
+      "bytes": 14850,
+      "category": "validation-source"
+    },
+    "project/tests/frozen-host/mailbox_abi_spec.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/frozen-host/mailbox_abi_spec.hpp",
+      "sha256": "ee0807b907a587e076e6eed5673935d84f7238bdac2746595e33e2b8e32e64d9",
+      "bytes": 11143,
+      "category": "validation-source"
+    },
+    "project/tests/frozen-overlay/fpga_playback_overlay.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/frozen-overlay/fpga_playback_overlay.hpp",
+      "sha256": "8794259390ba30d869a560d5e0591a170d0b0cef7e42f2a6f5ec3e6714702a22",
+      "bytes": 10808,
+      "category": "validation-source"
+    },
+    "project/tests/frozen-overlay/playback_overlay.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/frozen-overlay/playback_overlay.hpp",
+      "sha256": "2deb4d84bb3e695e0b3e233c6c3d434626af7dbb8fddd6435966afb9e85c9195",
+      "bytes": 34250,
+      "category": "validation-source"
+    },
+    "project/tests/frozen-rtl/h264_cavlc_residual_reference.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/frozen-rtl/h264_cavlc_residual_reference.sv",
+      "sha256": "2163a781b29d973c63942538bbe9c42b3f949fbee9a32feaa7bad6b53d767df3",
+      "bytes": 66589,
+      "category": "validation-source"
+    },
+    "project/tests/frozen-rtl/h264_cavlc_residual_reference_v12.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/frozen-rtl/h264_cavlc_residual_reference_v12.sv",
+      "sha256": "950035b164b0cfd4e954166bc8bb32de99951f10d9b603026828a4010bbbb513",
+      "bytes": 68198,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp",
+      "sha256": "a4ceae2a878dad6b1b3cfd3a3d339a152d10d6762cc93a76b685268f40949536",
+      "bytes": 71492,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/ddr_bitstream_reader_transport_tb_top.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/ddr_bitstream_reader_transport_tb_top.sv",
+      "sha256": "f58c198e649fd1ac382bfebfe9ad6cb37ddc54bbe4e44b147f5279ca6f332456",
+      "bytes": 9284,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/ddr_bitstream_ring_bfm.hpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/ddr_bitstream_ring_bfm.hpp",
+      "sha256": "69ad170e5793ce2e04e14e8ab02ce63459bbdfa3db63f7a7fbe3dcba528cd294",
+      "bytes": 9085,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/ddr_bus_arbiter_transport_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/ddr_bus_arbiter_transport_tb.cpp",
+      "sha256": "57fe3f5be11f4e8e8fc9ae4fe9df2f598339acff4b99c3b1780dc00579be68be",
+      "bytes": 9515,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/ddr_reader_cdc_reset_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/ddr_reader_cdc_reset_tb.cpp",
+      "sha256": "c2a7430c7231571931c965270c4755834a667bbdf6ae63356ea997f576d4cd12",
+      "bytes": 9138,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/ddr_reader_cdc_reset_tb.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/ddr_reader_cdc_reset_tb.sv",
+      "sha256": "33315f43cee894c0f82161b46c8719f5a3f37dabc19ad05eb093c0bd8df66921",
+      "bytes": 3965,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/fpga_video_publish_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/fpga_video_publish_tb.cpp",
+      "sha256": "2aa356c3cad1f2a5f3cbe12ee2a2a48a722594651eb67f0a8c6229602f9c4bfd",
+      "bytes": 83533,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/fpga_video_publish_tb_top.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/fpga_video_publish_tb_top.sv",
+      "sha256": "c7c8f06fe1e88def4ce79fa421bb2e9260e3f8f5ee18b6360bbfe23468447ab7",
+      "bytes": 25735,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/gop12_oracle_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/gop12_oracle_tb.cpp",
+      "sha256": "1ae7d1c4485e17288a8c1b7f668bad22216e2ab1c0ce383c5b93009b20aba222",
+      "bytes": 21940,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/gop12_oracle_tb.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/gop12_oracle_tb.sv",
+      "sha256": "febab14322f13fae37b0c6eb833422fea15d7b36e2822f420a493b97af485f52",
+      "bytes": 5401,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/h264_cavlc_residual_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/h264_cavlc_residual_tb.cpp",
+      "sha256": "4ced34af47e394e32a61dbe50e38af5944fdf2edc71a78b67836b97f932db0ae",
+      "bytes": 38877,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/h264_cavlc_residual_tb_top.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/h264_cavlc_residual_tb_top.sv",
+      "sha256": "5798e3e51deb7d1d853923cf7918caef2561a239395e72ca3105df4ceb34a867",
+      "bytes": 10424,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/h264_deblock_frame_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/h264_deblock_frame_tb.cpp",
+      "sha256": "0a0c7ef335c842fb343c25815ad9fb69d09b3fe1f20c8e96a054aff3908fd9bb",
+      "bytes": 18050,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/h264_inter_reference_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/h264_inter_reference_tb.cpp",
+      "sha256": "263ab445a2ea84a9a5dbf1767f3e7072ba7571409406adabc87546f8833ea381",
+      "bytes": 34953,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/h264_inter_reference_tb.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/h264_inter_reference_tb.sv",
+      "sha256": "9f2fb19a5acb916285af8c6c65d64da39968800bf153fbf978723b306eca8914",
+      "bytes": 7271,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/p2_chroma_pred_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/p2_chroma_pred_tb.cpp",
+      "sha256": "b1cb603d5cb7ca3a6b1a6b2eadc539b153d57e383360d6b9a377d454ae4b9536",
+      "bytes": 6313,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/p2_chroma_pred_tb.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/p2_chroma_pred_tb.sv",
+      "sha256": "f81988b39afc882fbfebf0df5c52930a285a31baf699d87d557824a753454b88",
+      "bytes": 1441,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/p2_intra_controller_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/p2_intra_controller_tb.cpp",
+      "sha256": "a1ab2ad00690c5f0436b4b94ea418b49932535ee9de7bacd97399166aef1270b",
+      "bytes": 26962,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/p2_intra_controller_tb.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/p2_intra_controller_tb.sv",
+      "sha256": "d80709b34b94bc1b041182dadfe9c419a73f5886182796181dd48c7ae20b0e43",
+      "bytes": 8678,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/playback_overlay_plane_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/playback_overlay_plane_tb.cpp",
+      "sha256": "bf56c7b295d452211d587a5d617b4626e20e928597cc2ce918e4588fcb22ee0c",
+      "bytes": 18280,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/stream_au_frontend_tb.cpp": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/stream_au_frontend_tb.cpp",
+      "sha256": "445a6411f370434afaa1eafd85031c66593f1985a765a9d20150df7b512d5bff",
+      "bytes": 7805,
+      "category": "validation-source"
+    },
+    "project/tests/rtl/stream_au_frontend_tb_top.sv": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/rtl/stream_au_frontend_tb_top.sv",
+      "sha256": "8f65f66b9be37e904a9f7e17caf6ddcc2417752f9a9a88059b8e088473681987",
+      "bytes": 1933,
+      "category": "validation-source"
+    },
+    "project/tests/unit/h264_deblock_frame_vectors.py": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/h264_deblock_frame_vectors.py",
+      "sha256": "f50c065840a04ffb68588ef224bd37a177ede1f2fc706660b2b7da366b186549",
+      "bytes": 3032,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_ddr_bitstream_reader_transport.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_ddr_bitstream_reader_transport.sh",
+      "sha256": "6f92a7f75b7c8ecef4931c1c3ff7f2a0d66d1744330fe5add57e56296132d449",
+      "bytes": 3627,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_ddr_bus_arbiter_transport.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_ddr_bus_arbiter_transport.sh",
+      "sha256": "7e29c5a19b15ca9e202bbf0c00b058f15b5245895a6459d9cc53967f50a7b6b3",
+      "bytes": 3045,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_fpga_playback_overlay.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_fpga_playback_overlay.sh",
+      "sha256": "4fa273c7fb0269f99bc24972e5832cffd0534281eb86dedecd11c9cbe59dee4c",
+      "bytes": 1377,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_h264_cavlc_timing.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_h264_cavlc_timing.sh",
+      "sha256": "0704acf2f6f0f53206c769b41b8e2e229e825120f7cbe45c404cc56ebf83c8f6",
+      "bytes": 1894,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_h264_deblock_frame.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_h264_deblock_frame.sh",
+      "sha256": "3d72eec458137d5d8919eb9da812faa03ca5a74042168447b4449075d7f05bcf",
+      "bytes": 908,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_h264_inter_reference.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_h264_inter_reference.sh",
+      "sha256": "7a2b95134cecabf331237d91fd26f6be6e083b03077813dd16db0e979d3b9358",
+      "bytes": 856,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_ingress_frozen_pair.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_ingress_frozen_pair.sh",
+      "sha256": "9217cb98479912292d093f8398f7162e879155ec26fa503b3048246bf824597f",
+      "bytes": 5138,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_p2_chroma_pred.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_p2_chroma_pred.sh",
+      "sha256": "88966132e6fb227b46a86f2f5f4fc2c84a98f9fe1cc7d2963363790f7691b73b",
+      "bytes": 604,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_p2_intra_controller.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_p2_intra_controller.sh",
+      "sha256": "fd276c1a1dd86cfa3c6dddaad62ffd33a84bbe930854bff70be083e69ce3351c",
+      "bytes": 23508,
+      "category": "validation-source"
+    },
+    "project/tests/unit/test_stream_au_frontend.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "project/tests/unit/test_stream_au_frontend.sh",
+      "sha256": "bb39b2a62707d011a8bb9c602aafa2fcb888b657ab1040005f4374d7aa80b900",
+      "bytes": 1242,
+      "category": "validation-source"
+    },
+    "run_composed_v14.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "run_composed_v14.sh",
+      "sha256": "b21eb2640c38394b4eeff9e6c91756ec88ca8a164ea9a333252aa7c908e1ad25",
+      "bytes": 243,
+      "category": "validation-source"
+    },
+    "run_controller_v14.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "run_controller_v14.sh",
+      "sha256": "289f2e94cfba40040084a0dbe8b44c4558915998b180dd45ecbc4c95cd5b4a6c",
+      "bytes": 2139,
+      "category": "validation-source"
+    },
+    "run_focused_v14.sh": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "run_focused_v14.sh",
+      "sha256": "da10235c40cac3bb54ea1e9a8ab487f39a8d6cadc301c0551580afc19f633c6e",
+      "bytes": 427,
+      "category": "validation-source"
+    },
+    "run_integration.py": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "run_integration.py",
+      "sha256": "65f02ecd022a4221b97cbea55c85866d835332851cd2dfac27334b0930f6cf65",
+      "bytes": 26968,
+      "category": "validation-source"
+    },
+    "tools/rbf_build.py": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "tools/rbf_build.py",
+      "sha256": "d3f0494f0c1d1a05902f1f4ba3097e844ca89ae3adbcb9757509070c64773dc4",
+      "bytes": 48021,
+      "category": "validation-source"
+    },
+    "verify_release_v14.py": {
+      "origin_archive": "validation-code.tar",
+      "origin_member": "verify_release_v14.py",
+      "sha256": "db956cfcf358c93ddf75713a290fa709e9d1fccbcb2bdd882cff2b2252442ffa",
+      "bytes": 9526,
+      "category": "validation-source"
+    }
+  },
+  "source_member_hashes": {
+    "Plex.qpf": "5eb476c6a29f23fb9c53acc45fa49cfee270826027c26de914fdfec2c803f649",
+    "Plex.qsf": "f05b7983a189fe05884138390d7f7cbc95d6018838f9902f7cc828feda84ae48",
+    "Plex.sdc": "89cb176f5eeb8c2adf59d758e56a605bd711631a4bccb92e77c77f995b62e71f",
+    "Plex.srf": "37f42477f66524e24d5f97f115e7eb4d878be9dbd577496fe32ecd5e2d157d63",
+    "Plex.sv": "66953ef443d1a117a0c951e9eff6469390f2d8b26fc46c0ff328f6c3a844deeb",
+    "Plex_clk_pix.sdc": "16e3f8c267b4ef4f25906f703ff4adeba20c76a4471fb514db0ba13472bacd77",
+    "files.qip": "605504dcd64d4bad51f5215e7639bb205fac600aa9e173b9e18278d6cf4d2bd2",
+    "report_decoder_paths.tcl": "0c1d92ec744e422173629b3d11059c3b302964ed61d986c00162f031cd1456a9",
+    "rtl/async_fifo.sv": "81e9bd08f611c88f5d52087063b127876ff5efcc28b731b9c6da9bdb0746cd86",
+    "rtl/audio_fifo.sv": "adccc49de12e27a26db10089da23ed84545ea4d1e17ee7af9a3deb60566a6c34",
+    "rtl/audio_ingest.sv": "310f598ed65534d67dc3bb70f367fa2aae54900ab68b34c4449900132f130d0e",
+    "rtl/audio_session_abi.svh": "32e38335570a635a0167c0fd4a64435978e802bcb3a93a6fb77710acaf27ea02",
+    "rtl/audio_session_ddr_mux.sv": "02eb58b622619ee36523a3a00f86bd3dfa2847b741573db7d41bfd13dfbd161e",
+    "rtl/audio_session_mailbox.sv": "fd1eadd8b540da7998960b86e3e83e01a80a56aacd7f58a86d46a28c26db9811",
+    "rtl/audio_tone.sv": "35842ee5bb2ce762f57d58d58e5496f7ac959fbe6c0c867dd0a78af3b04cf9a6",
+    "rtl/bitstream_fifo.sv": "8ff7cfb984fcc9542b58592141d011c9e6a7c99268f843580b5096bbc8314835",
+    "rtl/colorbars.sv": "d273d580ba91ac1d9057a7d8a737e8ad1a485ef9c6ad804b0d10e55780105c2c",
+    "rtl/cos.sv": "38f233d5b413f739a182a57d85306b4cc3b5d9b5eef993ff6c1ecae8f1eb2bb5",
+    "rtl/ddr_bitstream_reader.sv": "0dea625cd6297de8b0867c8081b42117934a9e4f7d5412d5e772a11f76ec0389",
+    "rtl/ddr_bus_arbiter.sv": "20313264fc92936024c12507215f0595859a8c71cda59d3bfda691aec461ffb8",
+    "rtl/ddr_frame_base_mux.sv": "f02f6678c766a4e4bc64636a761f5e6873197f7a770abcf9f80ad82578ab319e",
+    "rtl/ddr_frame_layout_params.svh": "e1161fb680644a7a1508bef38e93ade9d07c4884c8aaba3b3c3da469c8eaa52e",
+    "rtl/ddr_frame_present_geom.sv": "1967674bd9275b7430f35c8dffda6b6e01d53ed248a60b580064d980deee12a9",
+    "rtl/ddr_frame_store.sv": "fd11ebcf5b0851db4093a583366c4cc4dc4903a7aa5fc324e264fff33f6cbd58",
+    "rtl/ddr_transport_mux.sv": "a422dc4958cf86fc644c77eec7c372fa76f5d7b11d382b2906946ebcfeec1921",
+    "rtl/ddram_frame_rd.sv": "e0484a86fb5c2aa1b8854d1c8bd9daa8ef3cf1236bb201ba952e2d9e0ba12b72",
+    "rtl/decode_stub.sv": "65bf3812329c99134499df3d1802408a422c77d86749910709bcdf6f7100d67f",
+    "rtl/fpga_video_publish.sv": "7482df7029b48498045a4c0b6e09f706741c829f17d926273964463ba13b4aaa",
+    "rtl/frame_ingest.sv": "035918d29f4be11b447d6a8d43ee2f6635dc8c987173d8b0bf0b0b9140c71b1a",
+    "rtl/frame_store.sv": "61187daefd37a2cd5f7d8f0d154f6396206c4d65fa6b3288bc22c223d5a37867",
+    "rtl/h264_bit_reader.sv": "e81820c8eed96541d0679e030eb5def0c035d4162e6fa381b2453e56cb55d1d1",
+    "rtl/h264_cavlc_fast_vlc.svh": "f230c0f51797dd25ff208e49a599e885eb7c05706874e8888611e62c857714df",
+    "rtl/h264_cavlc_residual.sv": "e29d6be32825a97d026b09b69a4cbcc6bf8b9c56e113063e9d0c230718f3b122",
+    "rtl/h264_chroma_nc.svh": "972b36ec6b4349daa4f13f1504c94addd83626524519ac80bfe5033efd1cfd54",
+    "rtl/h264_coeff_sat9.sv": "1c22484260e05dcfcdaa8233941a30dceaf800eaba798270c16a82242599bc4b",
+    "rtl/h264_deblock.sv": "3e35d7988d985204c3a7d0be454c8023282f40426abddcc6fb857c4bcf34d77e",
+    "rtl/h264_deblock_frame.sv": "aa552bb1f7722a968cf6c6911c123860b6177b991e61b0b53bb5d5cb48912096",
+    "rtl/h264_decode_core.sv": "1c5638fe6f02cccb201276283979644db7c9dbf6aa90105ae4246c51def85d76",
+    "rtl/h264_decode_skeleton.sv": "221d2b0023239d9ce77103027cdd6f3c8dcdb0020fb1e16bfc0ffc299a6d41a2",
+    "rtl/h264_decode_top.sv": "9074daf15b38e5408d8928b45a0e755b3f3eb7cef40dd6284281cbb1b41be241",
+    "rtl/h264_dpb.sv": "044ff5e524babaf3a4932a27c418f35edf427674c2c02c5830eb08cf2461280c",
+    "rtl/h264_i16_dc_hadamard.sv": "26980a9915ede75b12248e4c2035f5e21961851a67a83b863e1dc2df7be5d68f",
+    "rtl/h264_inter_pred.sv": "b0630e902e4e59d2b1c06bc0b3c2eab4839107bcc199b28de1a912641d040262",
+    "rtl/h264_intra_nb_ctx.sv": "37fe6102905a42be2591dacc1362bb6b7a682df89ebd8ee19dd0ba33649a5e30",
+    "rtl/h264_intra_pred.sv": "3df40aed7e0a2e98f2042d9e6216ab3e933d762beb2b49022777b53af7fff5da",
+    "rtl/h264_iq_idct_4x4.sv": "526366473adde28070d76e556ba1075b5ac7b2ee257391d6f80bdc0772ce9d43",
+    "rtl/h264_mb_ctrl.sv": "ce6833d958f99bd9575dedf795171bfee0242543aac903430efb03037e4bef5f",
+    "rtl/h264_p_slice_modes.sv": "f66ba92d8adc983fb919ee034334f4795aa353659026c839e07b8b96caf24e15",
+    "rtl/h264_recon.sv": "dda5a30a2023bc87c43e7ddd4b96b4f46ca00515d427b4222cb334579dd41e17",
+    "rtl/h264_residual_seq.sv": "7ce9a84a10ccc0a8fa515042273481c4a92ca9877fefe167dc6bd144c353b981",
+    "rtl/h264_slice_rbsp_ram.sv": "ceb2df31d89647c40309977cf14dcde134267f6d31ba05d755650f67bd551f50",
+    "rtl/h264_syntax_primitives.sv": "4a987d46a67e5d8860556f6cf57762929ce81e3808f2754b448e92ce75d93bf0",
+    "rtl/io_ack_follow.sv": "08a5b7e4bfd62c5406650e3b9a042a50a18fa7773c5611bfd81b48002c141b15",
+    "rtl/lfsr.v": "291fdc8c9ab4006e92f129aafe484d37187845d94bfb0220446d0286c5108c27",
+    "rtl/line_buf_ram.sv": "e27c20cef6babd829484227851af9e83accdcb3db4a35307673201e6d423cb83",
+    "rtl/mplex_hold_lcell.sv": "78e1f8be740f88ade3bca1a27eb5e097748be09ec6aa0dee01c678df1a7ea32f",
+    "rtl/mycore.v": "06166fbe3fdc9b0aa497e9f2f78359977d52c877120e8b4b477735c35f7598ec",
+    "rtl/nalu_scanner.sv": "dde5273961a41c9f2a1e779ac564f82fbb446b91fd1914a9f775d3e39e12ec9b",
+    "rtl/playback_overlay_plane.sv": "a90a8ec46a1def05b7a81a3ad38a25cb508cbd9a921b757269ccc5706bff46cd",
+    "rtl/plex_720p_bw_contract.svh": "a31f3893f625be6a3bafb8e4063c04cd257b93ef139fa907b4133735e92d5a75",
+    "rtl/plex_performance_clock.svh": "e9bc420ffbd9188f2d66af539b7b16aea1d94c046b6debdb23598010c3e9a008",
+    "rtl/plex_present_geom_mux.sv": "39d9875cbfa9f705c6510abfa62124fb08f88ab7d2d963bd77142af0fbf34558",
+    "rtl/pll.qip": "60c0c7b517dc7ecb736f6df65dd360c1b8493f04fc72c4518f073a29fc04a19f",
+    "rtl/pll.v": "e1156df9a7eb61adfa0a264040f1174d3f503fe6b32f152f0406be15be6ab4a6",
+    "rtl/pll/pll_0002.qip": "98c91540a36e672f25f071bfaae965b8c9f60c679db4fbe226578c8c78c5052a",
+    "rtl/pll/pll_0002.v": "7d88eb60d1786e5d384c14fef8978514091a12f492f6db8eed3d96898bd2b6e0",
+    "rtl/pll/pll_0002_q13.qip": "58d1281c86501f8926b2b156edeada9bc7c27c4156f456eb3568a5ba40baea0f",
+    "rtl/pps_parser.sv": "6c4b1b4d9c19c6ef37ad4fba0d85ad12bf7b43bee8905cf2e0a72517c1b8c3bd",
+    "rtl/present_beam_content_de.sv": "f9de1d88962b9e025164065f89c4c8520d59dc9d47f413ae735107dfc61efc90",
+    "rtl/present_beam_ppc.sv": "db4367783e498c78802af96971ed6f2b193363cde6741da0f6e32d036e13206c",
+    "rtl/present_cadence.sv": "9c473d591dd6bec2657e180e779bfc165774c68c621f5c378a8708f00653f4cf",
+    "rtl/present_content_window.sv": "4bd0f8c8c8d78bc3d3e33d3a4c55f714916be949916af1c5b2ca5e37ebb2f78d",
+    "rtl/present_core.sv": "2800a529b63a58048999c178dced39f8aea7946b9255df33fff17beca2af8204",
+    "rtl/present_geom_latch.sv": "166fef13da64144e051244f379fd1b4e79070e45d94ce7d4abf8620eb37afbbf",
+    "rtl/present_npx_path.sv": "4576b51fd951a341f47695d8d7625de37058e8cde8d094cd12307b9d99b8540d",
+    "rtl/present_pix_rate_match.sv": "080346cc6224e470d3bf7c69201c95b4f5c54aaa33b828c60bdff736cd8b08d8",
+    "rtl/present_store_geom.sv": "4ddbe36da30608e3d14516b8b4b2c2efb727102ea2f7f1b88247f330b8a33e8a",
+    "rtl/present_video_timing_720p.sv": "bd6bea9837547d4f60153540039d72bdb7fb08713e260b68068bd8ddcb6fa5db",
+    "rtl/present_video_timing_960.sv": "ebf8fd109dc98e0395e02e32abc4e3445a52331b0de3cdfe46650435a0fdefac",
+    "rtl/present_vtotal_bresenham.sv": "1cc979ebce5c765046622aece232d30d054fbf5d3e66e2ac34aee6d820ffeec6",
+    "rtl/sdram.sv": "5b7c56220225275b357c39ea86ff99b595006865cee631ceb7a378853eae1a87",
+    "rtl/sdram_memtest.sv": "bf450bab1e29aea281c78e7026fd72243e28fe0bfb4896f9eaa73a81c1646f92",
+    "rtl/slice_hdr_parser.sv": "f62041ea459bfd08c6fcf15de7a11fe9b30725883efb3fcc06ff334b727d96e8",
+    "rtl/slice_hdr_parser_bounded.svh": "09bc080864713e7db9db324106dbc136aa83fef26ab5ff33aa6ab255b0d8c426",
+    "rtl/slice_hdr_parser_legacy.svh": "1881198ff515e4d00cf3e5435efb39f32bcfb9f21e63ec3f6cc3b45addf8e009",
+    "rtl/source_aspect_ack.sv": "f035d508d25543b799eee122bc0c9fe94ecf3927eed6e4f0d1e37a2015d42063",
+    "rtl/sps_parser.sv": "3bc631c3bf6c8b4b00878f7d97507755bc8b44d74c116df6b30cfc412863691b",
+    "rtl/stream_ingest.sv": "04d118b017cf6f76decee24cd779aeb69f9b99160b98b14b2a73875999f9fbf6",
+    "rtl/stream_path.sv": "af7d993e2251288460c776a585ac067445c615b50b1de70ecfc34d18c30899a5",
+    "rtl/tb_arb_beat_conservation.sv": "f0c595ffb06b3e46d233914ddd7fd9b99c54175f1f2607622ba790ae37881bb5",
+    "rtl/tb_audio_fifo_cdc.sv": "ae1ebb1c515b96f65e0a0b941ab78c0cdc2b2b7df2242d84aaf9415d57c2a73b",
+    "rtl/yuv_bt601_npx.sv": "5667ce51da670f75feae698acd1cf04fa9aada0f2e3b63c9f9fb8b12993cfe87",
+    "sys/alsa.sv": "5de2612211372656a66735db31967b7fcadc80de45217d32f3ce887e475267e9",
+    "sys/arcade_video.v": "ce64cdd7f900ded7b9cd9aa728dab7383b7561cdc75dfe82ab23fe27a3d217d3",
+    "sys/ascal.vhd": "c789b2fe9ba9c6954e9005d5f79296248029101eaf24d69378cad7dfd29bd826",
+    "sys/audio_out.sv": "11aab123cce330e894d3ce9cf18e71460edbee43d3580a76d3bd1d516b3df40c",
+    "sys/build_id.tcl": "148dc6a8124d36ac2898a45d085960cc05178a76d7297fde8877925fc0a74e88",
+    "sys/ddr_svc.sv": "8dfa874b9a93b4dbbe3b2fcf4f9035a895262cc090d398f4099941a626f41c08",
+    "sys/emu_ports.vh": "0b8f96815236ea4fcfec6fa3592b58f4c53f12094f31a26fd509709b503225e0",
+    "sys/f2sdram_safe_terminator.sv": "400bcbcfc0b4aae324fe813866a5443d577bf4de9b4ab1454cb068733d170261",
+    "sys/gamma_corr.sv": "2754944c6fe05d921374d1fecc26621782520b3bc6fbf600ca561e9f37c7af88",
+    "sys/hps_io.sv": "f839a735befdb93cbb2857a597d24d9ee334251b340888f64b4b728d40212367",
+    "sys/hq2x.sv": "2146b69cf63c26a4b41407e9ac1b4462db4d7e3ea6d8a99f31ba12712d68f975",
+    "sys/i2c.v": "09bd7ebd5d84fb57f6a9d569e5214f3154c49e55826c15bd78884f3c781fec5b",
+    "sys/i2s.v": "927d2aea6797fb837f383e5e8a3259609e132ed24883127240ab21601f467efa",
+    "sys/iir_filter.v": "570a8095c15af84a60015b5eab105cee6e2d7edde77e20f0ce40c075ab2db8b7",
+    "sys/ltc2308.sv": "825fa1197c8e9f31c19c2fef1b01693133fb7df3cfb2dd831f2848a98fc6899c",
+    "sys/math.sv": "d384fa9fcf73100cb28a2affc5db1e4aacc87620287971c3882507fc3af056cc",
+    "sys/mcp23009.sv": "f168485e0b64c0545060f25b858c9f1c12b57024ce441754bb6a0cb0e9072e3f",
+    "sys/mt32pi.sv": "4ad39571d16a4b25347030d75ffdf601803ddec71e2e3fcabe962103cc45a1a2",
+    "sys/osd.v": "3d544d9ed6e3e39b49ec814dff884176e7f6a052e4a5693a9c5f0e6005e9d83e",
+    "sys/pll.13.qip": "f25f58e7c0290583f33ee0fdd729a4470cc69312686f0f1ecb95c61115d61cec",
+    "sys/pll_audio.13.qip": "60edce734c54e4b9f9d56f078bc797841e52c6817f4d27e0cfe77db5d77b2596",
+    "sys/pll_audio.qip": "278496eefe70d18f6b3ccf624c3a4595ccca74a9a6740eb4520200f1e929a236",
+    "sys/pll_audio.v": "1662fff7650cd443db81db7f0707f5583d223372b3e3c41af2d41ea4f3ac38f3",
+    "sys/pll_audio/pll_audio_0002.qip": "4cedd5394006286e0be61acdcbb6455f35cdf5c1488f4eb4a76b60e20eb43fb8",
+    "sys/pll_audio/pll_audio_0002.v": "2b24d2a561d81cc8b20f725884ee9c243e619058e42ebcdcf6f491d33008696c",
+    "sys/pll_cfg.qip": "7c1573f321012132479272242434d02058b1bcfe8d89843130ef11173a901eae",
+    "sys/pll_cfg/altera_pll_reconfig_core.v": "9058d2c68e9cb0b1b6b3ab5487daad8aeaf04461e162aba317857dd133329189",
+    "sys/pll_cfg/altera_pll_reconfig_top.v": "34c11c19e6bf3797d2db2e41314ce802f5a01041265ce943b54e7f20eb2027c9",
+    "sys/pll_cfg/pll_cfg.v": "e07ae93193537830b3bc9029465e763a6bfe354c25b7e7747eeeb4094b08ad10",
+    "sys/pll_cfg/pll_cfg_hdmi.v": "d3874dda124af03656054fa1ae1ee70f1a4d3cea6d4670795a5168325bb6760a",
+    "sys/pll_hdmi.13.qip": "625df824716313233400454bc1142615fb3a234a494225691c8a554753b1731b",
+    "sys/pll_hdmi.qip": "5571604010bf98858a0797a2286d2389e105d32a97b42508865b02ba4237dd0d",
+    "sys/pll_hdmi.v": "499561547c1045a46f1137558e2bab83d8e026e5d32669b5c5779a264b7ed676",
+    "sys/pll_hdmi/pll_hdmi_0002.qip": "de648286a832ee72839dd6abb444231a4238d32b2c26f29426399d2221d7bf5b",
+    "sys/pll_hdmi/pll_hdmi_0002.v": "27c77f35c89e97994477801f83edf3c7e9c5b9e57df49864434d300c40e9f1f7",
+    "sys/pll_hdmi_adj.vhd": "ae18c82eef2f6b9c7783c68ac272d03f570eb1bdaddce14a1908c351da51a71b",
+    "sys/pll_q13.qip": "c2b9c95a49d9b1100b0640bbdeea1acff845b0a8cbc11a7259c0913d2c61cfa8",
+    "sys/pll_q17.qip": "7139faf33ae28066e805f290b15401eddb092d4b7d31b529a3ce1f0213fbc90a",
+    "sys/scandoubler.v": "d36181c5fde9df0a504c547e23f60bcf201420052ada2682f081b00fd9485e6b",
+    "sys/scanlines.v": "1fc7ac5359fd224a3fc06388f7671e07bf57cf6a39f35803a265661c56c564d4",
+    "sys/sd_card.sv": "25114f9a0e9ab4dd702633ae927fc825dc79a4d9f7746c1bb75dbd10d61eb6d6",
+    "sys/shadowmask.sv": "88429d137b4ce9f6538a052f03d874604f46decf6d69b3fc824cc795efcf3193",
+    "sys/sigma_delta_dac.v": "352d31dd185bce14d9d1e8a4999fbb5f2b5b2e42b048bdc9f4b828119cc5127a",
+    "sys/spdif.v": "a617bba332c4611caf81ba585b8f6828c7899aec5f81664a870f10419cb9b451",
+    "sys/sys.qip": "246a7032e993b5e0591d22122921fd919e55dc49441fe6b2ee2b80e98fd40f84",
+    "sys/sys.tcl": "e9ab2b7c89b4347854810387550a65458aa3ec9de1bd26ad74328d73376f6a88",
+    "sys/sys_analog.tcl": "e4cbfd22985fa046b546c0cfc626fccf773d9098b7c6a595f8bea66d67d25203",
+    "sys/sys_dual_sdram.tcl": "4f41376069b2070079d8ba4ae4a722c8ecfe3ca4b99798d0bdd8cda986b5ad5b",
+    "sys/sys_top.sdc": "0a5fa4015b82ad7ce38e56d1ae4aadea6209af59c5dd9eff56a11139cf16ce86",
+    "sys/sys_top.v": "5f1c64f9ea5158d38f3ed1ed46fa21a4a46fec186ff4143eb478e77a8a8911c7",
+    "sys/sysmem.sv": "9f8cf78563cc31beb7dfc6d7048c51ba536ff4f1f9f640b4ff9f8d574456c94e",
+    "sys/vga_out.sv": "02a533c3dfd547afddea2946019ecc79bbe9c27bb6128c0999fa5fc9e78f8108",
+    "sys/video_cleaner.sv": "44b986d9bf8412e56bf8e4eae3dc87e04b4c378e58ec6119de5a8aed320e3572",
+    "sys/video_freak.sv": "6a9b8565f66894a8f2ec10c916593e980d260f29f1886bfe70bf6f3b0cf6edc0",
+    "sys/video_freezer.sv": "0f3f4710b072b7e90b0b6bfe7607dec18dbd6bed78d1994f32d6fa72a6b7aef3",
+    "sys/video_mixer.sv": "31ed2c917bd6680b4d60328e71a4f28015bd5fcec21e15b290eacec88971167d",
+    "sys/yc_out.sv": "72f3ee0f7a4cc14914d348875c86f804289a1ceb4bea2a8ec18c73fbe57715a0"
+  }
+}
