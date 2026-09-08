@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "base_public_cohort": {
+    "path": "experimental/coherent-v15",
+    "commit": "a4b4624c153d648b8fd131a5c90ef9f497ba1a1e",
+    "source_archive_sha256": "7c68c129c201c59b767aea6b1642684bd746c3ffccb80443970ba32cab6b18f5",
+    "source_sha256": "4f09a4176a6b954463e0d6b7484c3d421efdb686421bcf67f7bf254bf34604ef"
+  },
+  "project_input_members": 211,
+  "product_members": 149,
+  "validation_project_members": 62,
+  "content_changes_vs_v15": {
+    "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv": {
+      "bytes": 65045,
+      "mode": "0o644",
+      "sha256": "042659f2c58bc97f2bf706af969a7a40709e96bad112d7f955f615954a45154b"
+    },
+    "tests/rtl/ddr_frame_store_warm_reset_tb.cpp": {
+      "bytes": 48193,
+      "mode": "0o644",
+      "sha256": "b8b0a18c88b1fe81b65136f1814509867b3a7bececeedaaca8808c5436bb0d90"
+    },
+    "tests/rtl/ddr_frame_store_warm_reset_tb_top.sv": {
+      "bytes": 6233,
+      "mode": "0o644",
+      "sha256": "2815c8066d734ee34952e71d2c3358af074d1cf48107ad7f208e59dc3ddfbee0"
+    },
+    "tests/unit/test_ddr_frame_store_warm_reset.sh": {
+      "bytes": 10408,
+      "mode": "0o644",
+      "sha256": "5d8c0763ae674e8313625f3481c9a2e1cc2e28ae16f90fb69b1a4ae48a16aade"
+    }
+  },
+  "mode_only_setup_member": {
+    "scripts/run_verilator.sh": {
+      "bytes": 798,
+      "mode": "0o544",
+      "sha256": "485db26da31efe154d6d2db60b533030f81d6cbf0246feda20313839d2be4e82"
+    }
+  },
+  "validation_setup_note": "Identical helper bytes; execute bit restored from V15 archive0444 to author-used0544. Patches carry four content changes; modes restore explicitly from this manifest/source-files.tar.",
+  "unchanged_v15_product_members": 148,
+  "omitted_v15_plain_validation_members": [],
+  "git_mode_limit": "Git preserves only the executable bit; exact sealed 0444/0544 modes remain recorded in manifest.json, project-inputs.json and file-map.json."
+}

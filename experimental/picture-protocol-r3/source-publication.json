@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-picture-source-only",
+  "public_branch_base_commit": "a4b4624c153d648b8fd131a5c90ef9f497ba1a1e",
+  "manifest_sha256": "c5d2ce5623c5298e4bb48903ba815aa8070129d28ffd71d03c0429f403c223a9",
+  "project_inputs_sha256": "ce7028875909b86e3aa93c539527e4a5e2e7a06317c9860a2836498879c25a30",
+  "source_archive_sha256": "bdfdb753c43af9f6b61b6bdc0bbbbaa61ae80910c82559ebafc0d67e74f9c8f6",
+  "v15_patch_sha256": "caaad09faf701f3db712b5354483caf0687305eb8228a410469879b6aa00fd6c",
+  "r2_patch_sha256": "9985d18b4e042b48c4da55af03160b17123b943b228b599d299e363355fb7245",
+  "rtl_sha256": "042659f2c58bc97f2bf706af969a7a40709e96bad112d7f955f615954a45154b",
+  "validation_helper_sha256": "e99ac125ec4e6737cbfce9e29b3e0cf06f1ad1a9fdf06afa6381865ddbe3b469",
+  "review_receipt_sha256": "c61b46db60a31963af6908624ca3cc96f9a0c4b56104d78606ec87d3bfe90961",
+  "review_outcome": "READY_FOR_SOURCE_INTEGRATION_AND_PUBLICATION",
+  "binding": "211 project inputs bind 149 product members and 62 directly needed reviewed validation source/provenance members. Four content changes are ddr_frame_store.sv plus the warm-reset C++/SV runner trio; scripts/run_verilator.sh preserves identical bytes with an explicit execute-bit restore.",
+  "functional_change": {
+    "summary": "One immutable legacy announcement keeps expected buffer-toggle retirement, coherent DDR-local cache/bank ownership and lossless newest replacement precedence over dequeue; FPGA_PUBLISH_ONLY retains the prior native path.",
+    "central_limit": "This cohort still carries the V15 central capability advertisement. The separate central fix is under review and is not included or implied approved here."
+  },
+  "review_limits": {
+    "source_publication_approved": true,
+    "hardware_approved": false,
+    "physical_approved": false,
+    "fps_or_tier_approved": false,
+    "qualification": "Approved picture source only, not complete integrated FPGA functionality, physical timing, glass, or tier acceptance."
+  },
+  "public_plain_tree": {
+    "product_source_members": 149,
+    "validation_project_members": 62,
+    "validation_provenance_helpers": 1,
+    "total_plain_files": 212,
+    "omitted_v15_plain_validation_members": []
+  },
+  "included_records": {
+    "manifest_json_sha256": "c5d2ce5623c5298e4bb48903ba815aa8070129d28ffd71d03c0429f403c223a9",
+    "project_inputs_json_sha256": "ce7028875909b86e3aa93c539527e4a5e2e7a06317c9860a2836498879c25a30",
+    "source_files_tar_sha256": "bdfdb753c43af9f6b61b6bdc0bbbbaa61ae80910c82559ebafc0d67e74f9c8f6",
+    "picture_r3_from_v15_patch_sha256": "caaad09faf701f3db712b5354483caf0687305eb8228a410469879b6aa00fd6c",
+    "picture_r3_from_r2_patch_sha256": "9985d18b4e042b48c4da55af03160b17123b943b228b599d299e363355fb7245",
+    "validate_guarded_py_sha256": "e99ac125ec4e6737cbfce9e29b3e0cf06f1ad1a9fdf06afa6381865ddbe3b469",
+    "file_map_json_sha256": "de5c6af8f40f1af93363b2ac0abd1ed4444dea1d314554d313a7558b1daa22ca",
+    "source_map_json_sha256": "030c1c451d09d0c272326579d53a7689a41291f6ab3851dd03b948af551e9a56",
+    "validation_source_map_json_sha256": "5e206a5987734d050837d5e2ce6db28df36f1fabf1566ece04e91f5399a58b8b",
+    "member_preservation_json_sha256": "62bf6a66fd9d646fc1c6a19999d36538f3f3005672c4e7c33aa34f8a1e474a00",
+    "source_freeze_json_sha256": "8c5ae24995570a7888f1ca28aeada57b28ffcb179d3e46224bc03a8da3422d7d",
+    "review_receipt_json_sha256": "c61b46db60a31963af6908624ca3cc96f9a0c4b56104d78606ec87d3bfe90961"
+  }
+}

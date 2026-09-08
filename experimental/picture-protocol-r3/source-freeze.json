@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-picture-source-only",
+  "public_branch_base_commit": "a4b4624c153d648b8fd131a5c90ef9f497ba1a1e",
+  "review_outcome": "READY_FOR_SOURCE_INTEGRATION_AND_PUBLICATION",
+  "source_scope": "Legacy HPS frame ownership and replacement protocol leaf only; central capability wiring and final coherent composition remain outside this cohort.",
+  "reviewed_source_pins": {
+    "manifest_sha256": "c5d2ce5623c5298e4bb48903ba815aa8070129d28ffd71d03c0429f403c223a9",
+    "project_inputs_sha256": "ce7028875909b86e3aa93c539527e4a5e2e7a06317c9860a2836498879c25a30",
+    "source_archive_sha256": "bdfdb753c43af9f6b61b6bdc0bbbbaa61ae80910c82559ebafc0d67e74f9c8f6",
+    "v15_patch_sha256": "caaad09faf701f3db712b5354483caf0687305eb8228a410469879b6aa00fd6c",
+    "r2_patch_sha256": "9985d18b4e042b48c4da55af03160b17123b943b228b599d299e363355fb7245",
+    "rtl_sha256": "042659f2c58bc97f2bf706af969a7a40709e96bad112d7f955f615954a45154b",
+    "validation_helper_sha256": "e99ac125ec4e6737cbfce9e29b3e0cf06f1ad1a9fdf06afa6381865ddbe3b469",
+    "review_receipt_sha256": "c61b46db60a31963af6908624ca3cc96f9a0c4b56104d78606ec87d3bfe90961"
+  },
+  "restoration": {
+    "public_plain_tree_members": 212,
+    "project_input_members": 211,
+    "exact_product_reconstruction": "Use experimental/coherent-v15/source.tar sha256 7c68c129c201c59b767aea6b1642684bd746c3ffccb80443970ba32cab6b18f5 as the 149-member V15 base, then apply picture-r3-from-v15.patch or replace only rtl/ddr_frame_store.sv with source-files.tar/project copy.",
+    "validation_reconstruction": "Use project-inputs.json plus the plain project/ tree, source-files.tar, validate_guarded.py and review-receipt.json to replay the reviewed source/fixture cohort without selecting recursive build outputs.",
+    "mode_restoration": "Exact sealed modes are restored from project-inputs.json and manifest.json. The unchanged-byte scripts/run_verilator.sh helper requires an executable-bit restore despite unchanged content.",
+    "do_not_substitute": "Do not introduce a new build_id source substitution, a central capability fix, or active coherent integration outputs when reconstructing this cohort."
+  },
+  "qualification_limits": {
+    "source_publication_approved": true,
+    "integrated_coherent_publication_approved": false,
+    "physical_or_hardware_approved": false,
+    "fps_or_tier_approved": false,
+    "live_pair_unchanged": "cc7d/a10 remains the current live pair; V15 RBF86fb remains unapproved."
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "reviewer": "810c5e71-2ba2-41a3-95f8-b71e039bd260",
+  "verdict": "READY_FOR_SOURCE_INTEGRATION_AND_PUBLICATION",
+  "scope": "Exact frozen direct R3 picture leaf only; no changing coherent integration tree was reviewed",
+  "manifest_sha256": "c5d2ce5623c5298e4bb48903ba815aa8070129d28ffd71d03c0429f403c223a9",
+  "v15_patch_sha256": "caaad09faf701f3db712b5354483caf0687305eb8228a410469879b6aa00fd6c",
+  "r2_patch_sha256": "9985d18b4e042b48c4da55af03160b17123b943b228b599d299e363355fb7245",
+  "rtl_sha256": "042659f2c58bc97f2bf706af969a7a40709e96bad112d7f955f615954a45154b",
+  "archive_sha256": "bdfdb753c43af9f6b61b6bdc0bbbbaa61ae80910c82559ebafc0d67e74f9c8f6",
+  "findings": [],
+  "prior_findings": {
+    "P1": "CLOSED: one outstanding announcement and its expected buffer toggle retire held bank/cache ownership together; legacy scheduling, invalidation and bank-release reporting use coherent DDR-local state",
+    "P2": "CLOSED: accepted legacy requests exclude dequeue; replacements remain valid and arrivals during publication stay queued behind the held announcement"
+  },
+  "preserved_behavior": "No relevant regression found in reset handling, response retirement, request-tagged readiness or parameter-selected native path",
+  "binding": "Both patches reconstruct four exact content changes. The fifth archive member has unchanged runner bytes with explicit execute permission restoration.148 other V15 product members unchanged.",
+  "evidence": {
+    "bound_project_inputs": 211,
+    "final_campaign": "composed-r3-005",
+    "coverage": "Complete original warm-reset runner and negative checks, new protocol cases and native publication regression",
+    "observation_model": "Unoverridden second-stage mirrors match original assignments/reset; overrides select historical delayed observations without modifying production acceptance, ownership or counters",
+    "independent_clocks": "Preserved committed173 then refreshed217; genuine replacement accepted after its source bank was held17 DDR edges",
+    "negative": "Actual immutable R2 RTLf081ea3a compiled separately; distinct active-cache and dropped-replacement assertions fail, not the former production fault macro",
+    "retained_failures": "warm-r3-001 permission and warm-r3-003 compiler failures remain failures; warm-r3-002 is historical evidence only"
+  },
+  "limits": "Controlled simulation and static reasoning, not exhaustive CDC/physical qualification or glass acceptance",
+  "owned_jobs": [],
+  "physical_approved": false,
+  "hardware_approved": false
+}

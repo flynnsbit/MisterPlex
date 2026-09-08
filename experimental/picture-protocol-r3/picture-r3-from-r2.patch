@@ -1,0 +1,798 @@
+diff --git a/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv b/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+--- a/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
++++ b/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+@@ -241,8 +241,9 @@
+ 	reg publication_cache_pending;
+ 	reg queued_refresh_valid;
+ 	reg queued_refresh_bank;
+-	reg queued_refresh_clear_second;
+-	reg queued_refresh_wait_swap;
++	reg legacy_swap_active, legacy_swap_target_buf;
++	reg legacy_display_buf, legacy_display_bank, legacy_has_frame;
++	wire queued_refresh_wait_swap = legacy_swap_active;
+ 	reg swap_req_t_ddr;
+ 	reg vsync_toggle;
+ 	reg reset_ddr_s1, reset_ddr_s2;
+@@ -259,11 +260,7 @@
+ 	assign generation_idle = !FPGA_PUBLISH_ONLY || (!reset && !generation_hold);
+ 	// A synced ready level is not enough once swaps can be superseded; bind it
+ 	// to the announced request so stale readiness cannot authorize new metadata.
+-`ifdef DDR_FRAME_STORE_FAULT_R1_SUPERSESSION_CDC
+-	wire pending_ready_match = pending_ready_s2;
+-`else
+ 	wire pending_ready_match = pending_ready_s2 && (pending_ready_id_s2 == pending_req_id);
+-`endif
+ 
+ 	always @(posedge clk_ddr) begin
+ 		if (reset) begin
+@@ -659,6 +656,17 @@
+ 	reg swap_pending_d1, swap_pending_d2;
+ 	reg pending_bank_d1, pending_bank_d2;
+ 	reg [Y_W-1:0] pending_top_d1, pending_top_d2;
++	// Only one legacy swap is announced at a time. Its expected buffer toggle
++	// is the commit acknowledgement; bank and ownership retire together here,
++	// without combining independently synchronized pending/bank/owner levels.
++	wire legacy_swap_retired = legacy_swap_active &&
++	                          (disp_buf_d2 == legacy_swap_target_buf);
++	wire display_buf_ddr = FPGA_PUBLISH_ONLY ? disp_buf_d2 : legacy_display_buf;
++	wire display_bank_ddr = FPGA_PUBLISH_ONLY ? disp_bank_d2 : legacy_display_bank;
++	wire display_valid_ddr = FPGA_PUBLISH_ONLY ? has_frame_d2 : legacy_has_frame;
++	wire prepare_pending_ddr = FPGA_PUBLISH_ONLY ? swap_pending_d2 :
++	                           (legacy_swap_active && !legacy_swap_retired);
++	wire prepare_bank_ddr = FPGA_PUBLISH_ONLY ? pending_bank_d2 : pending_bank_ddr;
+ 	reg [Y_W-1:0] want_y_gray_s1, want_y_gray_s2;  // Gray-coded 2-FF sync
+ 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
+ 	reg [15:0] poll_div;
+@@ -859,7 +867,7 @@
+ 			end
+ 
+ 			// PREP: Y home + C free-list hole (swap-only).
+-			if (swap_pending_d2) begin
++			if (prepare_pending_ddr) begin
+ 				prep_y = RUNTIME_GEOMETRY ? clamp_ahead(pending_top_d2, ti) : ti[Y_W-1:0];
+ 				prep_c = prep_y[Y_W-1:1];
+ 				yh = y_home_off(prep_y);
+@@ -904,7 +912,7 @@
+ 				found_slot_c_cur = 1'b1;
+ 				target_c_idx_cur_c = cur_base_idx_r + tj[SLOT_W-1:0];
+ 			end
+-			if (swap_pending_d2) begin
++			if (prepare_pending_ddr) begin
+ 				if (!c_valid_prep_r[tj] && !found_slot_c_prep) begin
+ 					found_slot_c_prep = 1'b1;
+ 					target_c_idx_prep_c = prep_base_idx_r + tj[SLOT_W-1:0];
+@@ -924,7 +932,7 @@
+ 	wire line_tag_commit = state_ddr == S_LINE_WAIT && DDRAM_DOUT_READY &&
+ 	                       qwords_remaining == 1 && (!fill_is_chroma || fill_plane_v);
+ 	wire prep_tags_clear = state_ddr == S_IDLE &&
+-		(generation_hold_ddr || (FPGA_PUBLISH_ONLY && publication_cache_pending));
++		(generation_hold_ddr || publication_cache_pending);
+ 	reg [7:0] imbox_cmd_seq;
+ 	reg [15:0] imbox_seq;
+ 	wire [28:0] fill_bank_base;
+@@ -1023,6 +1031,13 @@
+ 	wire db_new_seq = (db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed)) ||
+ 	                  db_stale_fallback;
+ 	wire spi_edge_ddr = start_d2 != start_seen;
++	wire start_accepted_ddr = spi_edge_ddr && !generation_hold_ddr &&
++	                         (!STRICT_YUV_DOORBELL || (have_seq && !format_error));
++	wire legacy_refresh_accepted = !FPGA_PUBLISH_ONLY &&
++	                               (db_new_seq || start_accepted_ddr);
++	wire pending_publication_ddr = FPGA_PUBLISH_ONLY ? swap_pending_d2 :
++		(legacy_swap_active || queued_refresh_valid || publication_cache_pending ||
++		 legacy_refresh_accepted);
+ 
+ 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
+ 
+@@ -1092,8 +1107,11 @@
+ 			publication_cache_pending <= 1'b0;
+ 			queued_refresh_valid <= 1'b0;
+ 			queued_refresh_bank <= 1'b0;
+-			queued_refresh_clear_second <= 1'b0;
+-			queued_refresh_wait_swap <= 1'b0;
++			legacy_swap_active <= 1'b0;
++			legacy_swap_target_buf <= 1'b0;
++			legacy_display_buf <= 1'b0;
++			legacy_display_bank <= 1'b0;
++			legacy_has_frame <= 1'b0;
+ 			generation_req_d1 <= 1'b0;
+ 			generation_req_d2 <= 1'b0;
+ 			generation_ack <= 1'b0;
+@@ -1206,34 +1224,40 @@
+ 			swap_pending_d2 <= swap_pending_d1;
+ 			pending_bank_d1 <= pending_bank;
+ 			pending_bank_d2 <= pending_bank_d1;
++			if (!FPGA_PUBLISH_ONLY && legacy_swap_retired) begin
++				legacy_swap_active <= 1'b0;
++				legacy_display_buf <= legacy_swap_target_buf;
++				legacy_display_bank <= pending_bank_ddr;
++				legacy_has_frame <= 1'b1;
++			end
+ 			// Held geometry crosses with the pending-bank request, before prefill.
+ 			pending_top_d1 <= Y_W'(pending_crop_top);
+ 			pending_top_d2 <= pending_top_d1;
+ 
+ 			// Select both flat tag windows before the need/target comparison cones.
+-			cur_base_idx_r <= disp_buf_d2 ? SECOND_SET_BASE : '0;
+-			prep_base_idx_r <= disp_buf_d2 ? '0 : SECOND_SET_BASE;
+-			disp_bank_cur_r <= disp_bank_d2;
+-			pending_bank_prep_r <= pending_bank_d2;
++			cur_base_idx_r <= display_buf_ddr ? SECOND_SET_BASE : '0;
++			prep_base_idx_r <= display_buf_ddr ? '0 : SECOND_SET_BASE;
++			disp_bank_cur_r <= display_bank_ddr;
++			pending_bank_prep_r <= prepare_bank_ddr;
+ 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+-				y_valid_cur_r[ti] <= y_valid[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				c_valid_cur_r[ti] <= c_valid[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				y_bank_cur_r[ti]  <= y_bank[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				c_bank_cur_r[ti]  <= c_bank[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				y_line_cur_r[ti]  <= y_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				c_line_cur_r[ti]  <= c_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				y_valid_cur_r[ti] <= y_valid[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				c_valid_cur_r[ti] <= c_valid[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				y_bank_cur_r[ti]  <= y_bank[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				c_bank_cur_r[ti]  <= c_bank[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				y_line_cur_r[ti]  <= y_line[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				c_line_cur_r[ti]  <= c_line[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+ 				y_valid_prep_r[ti] <= !prep_tags_clear &&
+-					y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++					y_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+ 				c_valid_prep_r[ti] <= !prep_tags_clear &&
+-					c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				y_bank_prep_r[ti] <= y_bank[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				c_bank_prep_r[ti] <= c_bank[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				y_line_prep_r[ti] <= y_line[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				c_line_prep_r[ti] <= c_line[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++					c_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				y_bank_prep_r[ti] <= y_bank[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				c_bank_prep_r[ti] <= c_bank[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				y_line_prep_r[ti] <= y_line[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				c_line_prep_r[ti] <= c_line[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+ 				// Forward the simultaneous tag commit so PREP sees exactly the
+ 				// live tags, without an extra refill or an early ready decision.
+ 				if (line_tag_commit &&
+-				    fill_idx == (disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]) begin
++				    fill_idx == (display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]) begin
+ 					if (fill_is_chroma) begin
+ 						c_valid_prep_r[ti] <= 1'b1;
+ 						c_bank_prep_r[ti] <= fill_bank;
+@@ -1327,22 +1351,8 @@
+ 			if (db_token_new)
+ 				stale_db_polls <= '0;
+ 			if (!FPGA_PUBLISH_ONLY && db_new_seq) begin
+-				if (has_frame_d2 || swap_pending_d2) begin
+-					queued_refresh_valid <= 1'b1;
+-					queued_refresh_bank <= DDRAM_DOUT[63];
+-`ifdef DDR_FRAME_STORE_FAULT_R1_SUPERSESSION_CDC
+-					queued_refresh_clear_second <= !disp_buf_d2;
+-					queued_refresh_wait_swap <= 1'b0;
+-`else
+-					queued_refresh_clear_second <= swap_pending_d2 ? disp_buf_d2 : !disp_buf_d2;
+-					queued_refresh_wait_swap <= swap_pending_d2;
+-`endif
+-					pending_ready_ddr <= 1'b0;
+-				end else begin
+-					pending_bank_ddr <= DDRAM_DOUT[63];
+-					swap_req_t_ddr <= ~swap_req_t_ddr;
+-					pending_ready_ddr <= 1'b0;
+-				end
++				queued_refresh_valid <= 1'b1;
++				queued_refresh_bank <= DDRAM_DOUT[63];
+ 				doorbell_ok <= 1'b1;
+ 				stale_db_polls <= '0;
+ 			end
+@@ -1350,7 +1360,6 @@
+ 				start_seen <= start_d2;
+ 				publication_cache_pending <= 1'b0;
+ 				queued_refresh_valid <= 1'b0;
+-				queued_refresh_wait_swap <= 1'b0;
+ 			end else if (spi_edge_ddr) begin
+ 				start_seen <= start_d2;
+ 				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
+@@ -1358,21 +1367,9 @@
+ 						pending_bank_ddr <= bank_sel_d2;
+ 						publication_cache_pending <= 1'b1;
+ 						pending_ready_ddr <= 1'b0;
+-					end else if (has_frame_d2 || swap_pending_d2) begin
++					end else begin
+ 						queued_refresh_valid <= 1'b1;
+ 						queued_refresh_bank <= bank_sel_d2;
+-`ifdef DDR_FRAME_STORE_FAULT_R1_SUPERSESSION_CDC
+-						queued_refresh_clear_second <= !disp_buf_d2;
+-						queued_refresh_wait_swap <= 1'b0;
+-`else
+-						queued_refresh_clear_second <= swap_pending_d2 ? disp_buf_d2 : !disp_buf_d2;
+-						queued_refresh_wait_swap <= swap_pending_d2;
+-`endif
+-						pending_ready_ddr <= 1'b0;
+-					end else begin
+-						pending_bank_ddr <= bank_sel_d2;
+-						swap_req_t_ddr <= ~swap_req_t_ddr;
+-						pending_ready_ddr <= 1'b0;
+ 					end
+ 				end
+ 			end
+@@ -1387,22 +1384,20 @@
+ 					if (generation_req_d2 && generation_start == start_d2 &&
+ 					    start_seen == start_d2 && !DDRAM_RD && !DDRAM_WE && !poll_pending)
+ 						generation_ack <= 1'b1;
+-				end else if (queued_refresh_valid && (!queued_refresh_wait_swap || !swap_pending_d2)) begin
++				end else if (!FPGA_PUBLISH_ONLY && queued_refresh_valid &&
++				             !legacy_swap_active && !publication_cache_pending &&
++				             !legacy_refresh_accepted) begin
+ 					pending_ready_ddr <= 1'b0;
+ 					sched_valid <= 1'b0;
+-					// Wait for an older announced swap to retire before clearing the
+-					// set that will truly be inactive for the queued refresh.
++					// The newest accepted replacement wins over dequeue. Stage
++					// its held descriptor before toggling the request in the next state.
+ 					if (!DDRAM_RD && !DDRAM_WE && !poll_pending) begin
+-						for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+-							y_valid[(queued_refresh_clear_second ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]] <= 1'b0;
+-							c_valid[(queued_refresh_clear_second ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]] <= 1'b0;
+-						end
+ 						pending_bank_ddr <= queued_refresh_bank;
+ 						queued_refresh_valid <= 1'b0;
+-						queued_refresh_wait_swap <= 1'b0;
+-						swap_req_t_ddr <= ~swap_req_t_ddr;
++						publication_cache_pending <= 1'b1;
+ 					end
+-				end else if (FPGA_PUBLISH_ONLY && publication_cache_pending) begin
++				end else if (publication_cache_pending &&
++				             (FPGA_PUBLISH_ONLY || !legacy_swap_active)) begin
+ 					pending_ready_ddr <= 1'b0;
+ 					sched_valid <= 1'b0;
+ 					// A reused DDR bank is a new picture, not a cache hit.
+@@ -1410,16 +1405,20 @@
+ 					// inactive line set before announcing its new swap request.
+ 					if (!DDRAM_RD && !DDRAM_WE && !poll_pending) begin
+ 						for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+-							y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+-							c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
++							y_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
++							c_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+ 						end
+ 						publication_cache_pending <= 1'b0;
+ 						swap_req_t_ddr <= ~swap_req_t_ddr;
++						if (!FPGA_PUBLISH_ONLY) begin
++							legacy_swap_active <= 1'b1;
++							legacy_swap_target_buf <= !legacy_display_buf;
++						end
+ 					end
+ 				end else begin
+-					pending_ready_ddr <= swap_pending_d2 &&
++					pending_ready_ddr <= prepare_pending_ddr &&
+ 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
+-					if (swap_pending_d2 &&
++					if (prepare_pending_ddr &&
+ 					    (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c))
+ 						pending_ready_id_ddr <= swap_req_t_ddr;
+ 					poll_div <= poll_div + 16'd1;
+@@ -1443,10 +1442,10 @@
+ 						DDRAM_BURSTCNT <= 8'd1;
+ 						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
+ 						              12'd0,                                // [47:36] reserved
+-						              swap_pending_d2,                      // [35]
+-						              disp_bank_d2,                         // [34]
+-						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask
+-						                (disp_bank_d2 ? 2'b01 : 2'b10),
++						              pending_publication_ddr,              // [35]
++						              display_bank_ddr,                     // [34]
++						              pending_publication_ddr ? 2'b00 :     // [33:32] free_bank_mask
++						                (display_bank_ddr ? 2'b01 : 2'b10),
+ 						              MAGIC_D};                             // [31:0]
+ 						DDRAM_WE <= 1'b1;
+ 						bank_mbox_seq <= bank_mbox_seq + 8'd1;
+@@ -1482,36 +1481,36 @@
+ 						if (PIPELINE_REFILL_SCHEDULER) begin
+ 							sched_valid <= 1'b1;
+ 							sched_is_y <= 1'b0;
+-							sched_for_pending <= swap_pending_d2 && need_c_prep_c;
+-							sched_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							sched_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							sched_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							sched_for_pending <= prepare_pending_ddr && need_c_prep_c;
++							sched_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							sched_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							sched_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							sched_pending_ready <= pending_ready_c;
+ 						end else begin
+-							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							fill_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							fill_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							fill_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							fill_is_chroma <= 1'b1;
+ 							fill_plane_v <= 1'b0;
+ 							fill_qword <= '0;
+ 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+ 							state_ddr <= S_LINE_PREP;
+ 						end
+-					end else if ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c)) begin
++					end else if ((prepare_pending_ddr && need_y_prep_c) || (display_valid_ddr && need_y_cur_c)) begin
+ 						if (C_INTERLEAVE_ON_Y_BEAM && c_rr_r < 2'd2)
+ 							c_rr_r <= c_rr_r + 2'd1;
+ 						if (PIPELINE_REFILL_SCHEDULER) begin
+ 							sched_valid <= 1'b1;
+ 							sched_is_y <= 1'b1;
+-							sched_for_pending <= swap_pending_d2 && need_y_prep_c;
+-							sched_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							sched_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
+-							sched_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
++							sched_for_pending <= prepare_pending_ddr && need_y_prep_c;
++							sched_bank <= (prepare_pending_ddr && need_y_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							sched_y <= (prepare_pending_ddr && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
++							sched_idx <= (prepare_pending_ddr && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
+ 							sched_pending_ready <= pending_ready_c;
+ 						end else begin
+-							fill_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							fill_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
+-							fill_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
++							fill_bank <= (prepare_pending_ddr && need_y_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							fill_y <= (prepare_pending_ddr && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
++							fill_idx <= (prepare_pending_ddr && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
+ 							fill_is_chroma <= 1'b0;
+ 							fill_plane_v <= 1'b0;
+ 							fill_qword <= '0;
+@@ -1523,22 +1522,22 @@
+ 					// under FOAR Y_FILL_STRIDE=2 (keepv22 gray RCA).
+ 					// L4 C_INTERLEAVE_ON_Y_BEAM: after two Y fills, fetch C even
+ 					// if the beam still wants Y (720p LC=8 otherwise stays grey).
+-					end else if (((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c))
+-					            && (!(has_frame_d2 && need_y_beam_c)
++					end else if (((prepare_pending_ddr && need_c_prep_c) || (display_valid_ddr && need_c_cur_c))
++					            && (!(display_valid_ddr && need_y_beam_c)
+ 					                || (C_INTERLEAVE_ON_Y_BEAM && c_rr_r >= 2'd2))) begin
+ 						c_rr_r <= 2'd0;
+ 						if (PIPELINE_REFILL_SCHEDULER) begin
+ 							sched_valid <= 1'b1;
+ 							sched_is_y <= 1'b0;
+-							sched_for_pending <= swap_pending_d2 && need_c_prep_c;
+-							sched_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							sched_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							sched_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							sched_for_pending <= prepare_pending_ddr && need_c_prep_c;
++							sched_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							sched_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							sched_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							sched_pending_ready <= pending_ready_c;
+ 						end else begin
+-							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							fill_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							fill_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							fill_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							fill_is_chroma <= 1'b1;
+ 							fill_plane_v <= 1'b0;
+ 							fill_qword <= '0;
+diff --git a/tests/rtl/ddr_frame_store_warm_reset_tb.cpp b/tests/rtl/ddr_frame_store_warm_reset_tb.cpp
+--- a/tests/rtl/ddr_frame_store_warm_reset_tb.cpp
++++ b/tests/rtl/ddr_frame_store_warm_reset_tb.cpp
+@@ -73,8 +73,18 @@
+     bool sawDroppedLineRead = false;
+     bool forceDdrBusy = false;
+     bool startToggle = false;
+-
+-    Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
++    int ddrPeriod = 0;
++    int ddrPhase = 0;
++    uint64_t clockTime = 0;
++    uint64_t ddrEdges = 0;
++    bool watchActiveCache = false;
++    bool replaceOnRetire = false;
++    bool replacementObserved = false;
++    uint64_t replacementPostedAt = 0;
++    std::string protocolLabel;
++
++    explicit Sim(int period = 0, int phase = 0)
++        : mem((2 * kBankStrideBytes) / 8, 0), ddrPeriod(period), ddrPhase(phase) {
+         top.clk = 0;
+         top.clk_ddr = 0;
+         top.reset = 0;
+@@ -86,6 +96,12 @@
+         top.vsync_pulse = 0;
+         top.input_cmd_valid = 0;
+         top.input_cmd = 0;
++        top.test_override_disp_sync = 0;
++        top.test_disp_sync = 0;
++        top.test_override_pending_sync = 0;
++        top.test_pending_sync = 0;
++        top.test_override_start_sync = 0;
++        top.test_start_sync = 0;
+         top.DDRAM_BUSY = 0;
+         top.DDRAM_DOUT = 0;
+         top.DDRAM_DOUT_READY = 0;
+@@ -196,25 +212,75 @@
+         }
+     }
+ 
+-    void tick() {
++    void clockEdge(bool pixelEdge, bool ddrEdge) {
+         top.clk = 0;
+         top.clk_ddr = 0;
+         top.eval();
+-        schedHighBeforeEdge = top.debug_sched_valid;
+-        if (schedHighBeforeEdge) {
+-            sawSchedValid = true;
+-            schedulerArmed = true;
+-        }
+-        serviceDdrDrive();
+-        top.clk = 1;
+-        top.clk_ddr = 1;
++        bool replacementEdge = false;
++        if (ddrEdge) {
++            schedHighBeforeEdge = top.debug_sched_valid;
++            if (schedHighBeforeEdge) {
++                sawSchedValid = true;
++                schedulerArmed = true;
++            }
++            serviceDdrDrive();
++            if (replaceOnRetire && top.debug_queue_retire_opportunity) {
++                if (ddrEdges - replacementPostedAt < 2 || top.debug_bank_sel_d2 != 1)
++                    throw std::runtime_error("replacement fixture lacks held source setup");
++                top.test_start_sync = top.start_req;
++                top.eval();
++                if (top.debug_start_d2 == top.debug_start_seen)
++                    throw std::runtime_error("replacement fixture did not deliver a new accepted start");
++                replacementEdge = true;
++                replaceOnRetire = false;
++            }
++        }
++        const uint8_t yValidBefore = top.debug_y_valid;
++        const uint8_t cValidBefore = top.debug_c_valid;
++        top.clk = pixelEdge;
++        top.clk_ddr = ddrEdge;
+         top.eval();
+-        serviceDdrStart();
++        if (ddrEdge) {
++            ++ddrEdges;
++            serviceDdrStart();
++            if (watchActiveCache && !top.reset && top.has_frame) {
++                const uint8_t activeMask = top.debug_disp_buf ? 0xf0 : 0x0f;
++                const uint8_t cleared = (yValidBefore & ~top.debug_y_valid) |
++                                        (cValidBefore & ~top.debug_c_valid);
++                if ((cleared & activeMask) != 0)
++                    throw std::runtime_error(protocolLabel + ": ownership CDC cleared an active cache");
++            }
++            if (replacementEdge) {
++                replacementObserved = true;
++                if (!top.debug_queued_refresh_valid || top.debug_queued_refresh_bank != 1)
++                    throw std::runtime_error(protocolLabel + ": accepted replacement lost at queue retirement");
++                std::cout << "ddr_frame_store protocol: replacement collision"
++                          << " source_lead_ddr_edges=" << ddrEdges - replacementPostedAt
++                          << " queued_bank=" << int(top.debug_queued_refresh_bank) << "\n";
++            }
++        }
+         top.clk = 0;
+         top.clk_ddr = 0;
+         top.eval();
+-        ++cycle;
+-        top.vsync_pulse = 0;
++        if (pixelEdge) {
++            ++cycle;
++            top.vsync_pulse = 0;
++        }
++    }
++
++    void tick() {
++        if (ddrPeriod == 0) {
++            clockEdge(true, true);
++            return;
++        }
++        bool pixelEdge;
++        do {
++            ++clockTime;
++            pixelEdge = clockTime % 10 == 0;
++            const bool ddrEdge = (clockTime + ddrPhase) % ddrPeriod == 0;
++            if (pixelEdge || ddrEdge)
++                clockEdge(pixelEdge, ddrEdge);
++        } while (!pixelEdge);
+     }
+ 
+     void videoTick() {
+@@ -968,6 +1034,94 @@
+               << " underruns=" << sim.top.underrun_count
+               << " cycles=" << sim.cycle << "\n";
+     return sim.schedulerProven();
++}
++
++void prepareProtocolOverlap(Sim& sim, const std::string& label) {
++    sim.protocolLabel = label;
++    sim.fillFrame(0, 96);
++    sim.fillFrame(1, 173);
++    sim.resetCore();
++    for (int i = 0; i < 3000; ++i) sim.tick();
++    sim.ringDoorbell(0, 31);
++    if (!sim.waitForFrame(50000))
++        throw std::runtime_error(label + ": initial frame missing");
++    expectFreshSample(label + " initial", sim, 96);
++    sim.triggerStart(1);
++    if (!sim.waitForPendingReady(50000))
++        throw std::runtime_error(label + ": announced swap not ready");
++}
++
++void runOwnershipCrossing(int period, int phase, bool delayOwner) {
++    Sim sim(period, phase);
++    const std::string label = delayOwner ? "delayed_owner" : "delayed_pending";
++    prepareProtocolOverlap(sim, label);
++    sim.watchActiveCache = true;
++    sim.top.test_override_disp_sync = delayOwner;
++    sim.top.test_disp_sync = sim.top.debug_disp_buf_d2;
++    sim.top.test_override_pending_sync = !delayOwner;
++    sim.top.test_pending_sync = sim.top.debug_swap_pending_d2;
++    sim.pulseVsync();
++    for (int i = 0; i < 8; ++i) sim.tick();
++    if (sim.top.frames_done != 2 || sim.top.swap_pending)
++        throw std::runtime_error(label + ": pending swap did not commit");
++    if (delayOwner && sim.top.debug_disp_buf_d2 == sim.top.debug_disp_buf)
++        throw std::runtime_error(label + ": owner crossing was not delayed");
++    if (!delayOwner && !sim.top.debug_swap_pending_d2)
++        throw std::runtime_error(label + ": pending crossing was not delayed");
++    sim.fillFrame(0, 217);
++    sim.triggerStart(0);
++    sim.forceDdrBusy = true;
++    for (int i = 0; i < 80; ++i) sim.tick();
++    expectFreshSample(label + " under backpressure", sim, 173);
++    sim.top.test_override_disp_sync = 0;
++    sim.top.test_override_pending_sync = 0;
++    for (int i = 0; i < 20; ++i) sim.tick();
++    expectFreshSample(label + " after crossing release", sim, 173);
++    sim.forceDdrBusy = false;
++    if (!sim.waitForPendingReady(50000) || !sim.waitForFrameCountStatic(3, 2000))
++        throw std::runtime_error(label + ": refreshed frame missing");
++    expectFreshSample(label + " refresh", sim, 217);
++    std::cout << "ddr_frame_store protocol: " << label
++              << " pixel_period=10 ddr_period=" << period << " ddr_phase=" << phase
++              << " frames=" << sim.top.frames_done << " preserved=173 refreshed=217\n";
++}
++
++void runIndependentOwnership() {
++    runOwnershipCrossing(7, 2, true);
++    runOwnershipCrossing(7, 2, false);
++    runOwnershipCrossing(13, 4, true);
++    runOwnershipCrossing(13, 4, false);
++}
++
++void runAcceptedReplacement() {
++    Sim sim(7, 1);
++    prepareProtocolOverlap(sim, "accepted_replacement");
++    sim.triggerStart(0);
++    for (int i = 0; i < 20 && !sim.top.debug_queued_refresh_valid; ++i) sim.tick();
++    if (!sim.top.debug_queued_refresh_valid)
++        throw std::runtime_error("accepted_replacement: no queued predecessor");
++
++    // The external token and bank are posted first; only their synchronized
++    // observation is held until the exact dequeue opportunity.
++    sim.top.test_override_start_sync = 1;
++    sim.top.test_start_sync = sim.top.debug_start_d2;
++    sim.top.bank_sel = 1;
++    sim.startToggle = !sim.startToggle;
++    sim.top.start_req = sim.startToggle;
++    sim.replacementPostedAt = sim.ddrEdges;
++    for (int i = 0; i < 8; ++i) sim.tick();
++    sim.replaceOnRetire = true;
++    sim.pulseVsync();
++    for (int i = 0; i < 50000 && !sim.replacementObserved; ++i) sim.tick();
++    if (!sim.replacementObserved)
++        throw std::runtime_error("accepted_replacement: no simultaneous accepted-start/dequeue witness");
++    for (int i = 0; i < 8; ++i) sim.tick();
++    sim.top.test_override_start_sync = 0;
++    if (!sim.waitForPendingReady(50000) || !sim.waitForFrameCountStatic(3, 2000))
++        throw std::runtime_error("accepted_replacement: newest request did not present");
++    expectFreshSample("accepted_replacement newest bank", sim, 173);
++    std::cout << "ddr_frame_store protocol: accepted replacement retained"
++              << " frames=" << sim.top.frames_done << " newest_bank=1 sample_r=173\n";
+ }
+ 
+ void run() {
+@@ -992,6 +1146,8 @@
+     schedulerSeen |= runSupersessionOverlap("supersession_before_pending_vsync", 2, false);
+     schedulerSeen |= runSupersessionOverlap("supersession_on_pending_vsync", 0, false);
+     schedulerSeen |= runSupersessionOverlap("supersession_after_pending_vsync", 0, true);
++    runIndependentOwnership();
++    runAcceptedReplacement();
+     if (!schedulerSeen) {
+         std::cerr << "FAIL ddr_frame_store warm-reset: refill scheduler pipeline not observed\n";
+         std::exit(1);
+@@ -1003,7 +1159,14 @@
+ int main(int argc, char** argv) {
+     Verilated::commandArgs(argc, argv);
+     try {
+-        run();
++        if (argc == 1)
++            run();
++        else if (argc == 2 && std::string(argv[1]) == "--picture-cdc")
++            runIndependentOwnership();
++        else if (argc == 2 && std::string(argv[1]) == "--picture-replacement")
++            runAcceptedReplacement();
++        else
++            throw std::runtime_error("unknown warm-reset test selector");
+         return 0;
+     } catch (const std::exception& e) {
+         std::cerr << "FAIL ddr_frame_store warm-reset: " << e.what() << "\n";
+diff --git a/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv b/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv
+--- a/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv
++++ b/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv
+@@ -19,6 +19,12 @@
+ 	input  wire        vsync_pulse,
+ 	input  wire        input_cmd_valid,
+ 	input  wire [7:0]  input_cmd,
++	input  wire        test_override_disp_sync,
++	input  wire        test_disp_sync,
++	input  wire        test_override_pending_sync,
++	input  wire        test_pending_sync,
++	input  wire        test_override_start_sync,
++	input  wire        test_start_sync,
+ 	output wire [7:0]  rd_r,
+ 	output wire [7:0]  rd_g,
+ 	output wire [7:0]  rd_b,
+@@ -36,6 +42,16 @@
+ 	output wire        debug_disp_buf_d2,
+ 	output wire        debug_queued_refresh_valid,
+ 	output wire        debug_queued_refresh_wait_swap,
++	output wire        debug_swap_pending_d2,
++	output wire        debug_start_d2,
++	output wire        debug_start_seen,
++	output wire        debug_bank_sel_d2,
++	output wire        debug_pending_bank_ddr,
++	output wire        debug_queued_refresh_bank,
++	output wire        debug_publication_cache_pending,
++	output wire        debug_queue_retire_opportunity,
++	output wire [7:0]  debug_y_valid,
++	output wire [7:0]  debug_c_valid,
+ 	output wire [7:0]  debug_state,
+ 	input  wire        DDRAM_BUSY,
+ 	input  wire [63:0] DDRAM_DOUT,
+@@ -118,6 +134,43 @@
+ 	assign debug_disp_buf_d2 = dut.disp_buf_d2;
+ 	assign debug_queued_refresh_valid = dut.queued_refresh_valid;
+ 	assign debug_queued_refresh_wait_swap = dut.queued_refresh_wait_swap;
++	assign debug_swap_pending_d2 = dut.swap_pending_d2;
++	assign debug_start_d2 = dut.start_d2;
++	assign debug_start_seen = dut.start_seen;
++	assign debug_bank_sel_d2 = dut.bank_sel_d2;
++	assign debug_pending_bank_ddr = dut.pending_bank_ddr;
++	assign debug_queued_refresh_bank = dut.queued_refresh_bank;
++	assign debug_publication_cache_pending = dut.publication_cache_pending;
++	assign debug_y_valid = dut.y_valid;
++	assign debug_c_valid = dut.c_valid;
++`ifdef DDR_FRAME_STORE_TEST_REFERENCE_R2
++	assign debug_queue_retire_opportunity = dut.queued_refresh_valid &&
++		(!dut.queued_refresh_wait_swap || !dut.swap_pending_d2) &&
++		dut.state_ddr == 0 && !dut.poll_pending && !DDRAM_RD && !DDRAM_WE;
++`else
++	assign debug_queue_retire_opportunity = dut.queued_refresh_valid &&
++		!dut.legacy_swap_active && !dut.publication_cache_pending &&
++		dut.state_ddr == 0 && !dut.poll_pending && !DDRAM_RD && !DDRAM_WE;
++`endif
++	// Mirror the original second stages exactly unless observation is delayed.
++	// Permanent forces avoid release/NBA ambiguity in the simulator.
++	reg normal_disp_sync, normal_pending_sync, normal_start_sync;
++	always @(posedge clk_ddr) begin
++		if (dut.reset_ddr) begin
++			normal_disp_sync <= 0;
++			normal_pending_sync <= 0;
++			normal_start_sync <= 0;
++		end else begin
++			normal_disp_sync <= dut.disp_buf_d1;
++			normal_pending_sync <= dut.swap_pending_d1;
++			normal_start_sync <= dut.start_d1;
++		end
++	end
++	initial begin
++		force dut.disp_buf_d2 = test_override_disp_sync ? test_disp_sync : normal_disp_sync;
++		force dut.swap_pending_d2 = test_override_pending_sync ? test_pending_sync : normal_pending_sync;
++		force dut.start_d2 = test_override_start_sync ? test_start_sync : normal_start_sync;
++	end
+ endmodule
+ 
+ `default_nettype wire
+diff --git a/tests/unit/test_ddr_frame_store_warm_reset.sh b/tests/unit/test_ddr_frame_store_warm_reset.sh
+--- a/tests/unit/test_ddr_frame_store_warm_reset.sh
++++ b/tests/unit/test_ddr_frame_store_warm_reset.sh
+@@ -2,6 +2,10 @@
+ set -euo pipefail
+ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
++case "${1:-}" in
++  ""|--positive-only|--protocol-only) ;;
++  *) echo "usage: $0 [--positive-only|--protocol-only]" >&2; exit 2 ;;
++esac
+ set +e
+ VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"
+ VERILATOR_RC=$?
+@@ -37,8 +41,47 @@
+ UV_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_uv_fault"
+ CHROMA_VERTICAL_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_chroma_vertical_fault"
+ CHROMA_STRIDE_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_chroma_stride_fault"
+-SUPERSESSION_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_supersession_fault"
+-mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD" "$UV_FAULT_BUILD" "$CHROMA_VERTICAL_FAULT_BUILD" "$CHROMA_STRIDE_FAULT_BUILD" "$SUPERSESSION_FAULT_BUILD"
++REFERENCE_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_rejected_r2"
++mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD" "$UV_FAULT_BUILD" "$CHROMA_VERTICAL_FAULT_BUILD" "$CHROMA_STRIDE_FAULT_BUILD"
++
++run_rejected_reference() {
++  if [[ -z "${MPX_REJECTED_R2_RTL:-}" ]]; then
++    echo "RTL SIM: no rejected-R2 source supplied; cross-revision negatives were not run." >&2
++    return 0
++  fi
++  printf 'f081ea3a3b1211b441b5786870e1d356b549aa324451be26616e76e879e57dad  %s\n' "$MPX_REJECTED_R2_RTL" |
++    sha256sum --check --status
++  mkdir -p "$REFERENCE_BUILD"
++  "$RUN_VERILATOR" --cc --exe --build \
++    --Mdir "$REFERENCE_BUILD" \
++    --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 \
++    +define+DDR_FRAME_STORE_TEST_REFERENCE_R2 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
++    -CFLAGS "-std=c++17 -O2" \
++    "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
++    "$MPX_REJECTED_R2_RTL" "${RTL_SOURCES[@]:1}" \
++    "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
++  for selector in picture-cdc picture-replacement; do
++    set +e
++    REFERENCE_OUT="$("$REFERENCE_BUILD/Vddr_frame_store_warm_reset_tb" "--$selector" 2>&1)"
++    REFERENCE_RC=$?
++    set -e
++    printf '%s\n' "$REFERENCE_OUT"
++    if [[ "$REFERENCE_RC" -eq 0 ]]; then
++      echo "FAIL DDR protocol reference: immutable R2 unexpectedly passed $selector" >&2
++      exit 1
++    fi
++    if [[ "$selector" == picture-cdc ]]; then
++      expected="ownership CDC cleared an active cache"
++    else
++      expected="accepted replacement lost at queue retirement"
++    fi
++    if ! grep -Fq "$expected" <<<"$REFERENCE_OUT"; then
++      echo "FAIL DDR protocol reference: missing expected $selector failure" >&2
++      exit 1
++    fi
++    echo "OK DDR protocol reference: immutable R2 failed $selector as expected"
++  done
++}
+ echo "RTL SIM: using $VERILATOR_VERSION" >&2
+ "$RUN_VERILATOR" --cc --exe --build \
+   --Mdir "$BUILD" \
+@@ -47,7 +90,16 @@
+   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
+   "${RTL_SOURCES[@]}" \
+   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
++if [[ "${1:-}" == "--protocol-only" ]]; then
++  "$BUILD/Vddr_frame_store_warm_reset_tb" --picture-cdc
++  "$BUILD/Vddr_frame_store_warm_reset_tb" --picture-replacement
++  run_rejected_reference
++  exit 0
++fi
+ "$BUILD/Vddr_frame_store_warm_reset_tb"
++if [[ "${1:-}" == "--positive-only" ]]; then
++  exit 0
++fi
+ 
+ "$RUN_VERILATOR" --cc --exe --build \
+   --Mdir "$FAULT_BUILD" \
+@@ -181,24 +233,4 @@
+ fi
+ echo "OK ddr_frame_store warm-reset red-check: disabled refill scheduler failed pipeline proof"
+ 
+-"$RUN_VERILATOR" --cc --exe --build \
+-  --Mdir "$SUPERSESSION_FAULT_BUILD" \
+-  --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_R1_SUPERSESSION_CDC -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+-  -CFLAGS "-std=c++17 -O2" \
+-  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
+-  "${RTL_SOURCES[@]}" \
+-  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
+-set +e
+-SUPERSESSION_FAULT_OUT="$("$SUPERSESSION_FAULT_BUILD/Vddr_frame_store_warm_reset_tb" 2>&1)"
+-SUPERSESSION_FAULT_RC=$?
+-set -e
+-printf '%s\n' "$SUPERSESSION_FAULT_OUT"
+-if [[ "$SUPERSESSION_FAULT_RC" -eq 0 ]]; then
+-  echo "FAIL ddr_frame_store warm-reset red-check: supersession CDC fault unexpectedly passed" >&2
+-  exit 1
+-fi
+-if ! grep -q 'supersession_.*pending_vsync' <<<"$SUPERSESSION_FAULT_OUT"; then
+-  echo "FAIL ddr_frame_store warm-reset red-check: expected supersession overlap diagnostic" >&2
+-  exit 1
+-fi
+-echo "OK ddr_frame_store warm-reset red-check: supersession CDC fault failed"
++run_rejected_reference
