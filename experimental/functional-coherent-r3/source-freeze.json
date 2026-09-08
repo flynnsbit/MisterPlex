@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-functional-source-only",
+  "public_branch_base_commit": "a5efbfe0f3fde8cebfe646e8a8f9d38fc3eccd25",
+  "source_sha256": "9217adef21e2bf54acd41d80faea9a0fbeb1e03bb69fa325841fcda92688608a",
+  "effective_sha256": "0d53325d4c3eaecb5793b584fe23b0939ed138b91539620df40f17c4e285666b",
+  "manifest_sha256": "7d175d19a63a054f6bf85f86ce1abcbf63191e27daf1bc62463ea24c50f7708a",
+  "review_outcome": "READY_FOR_SOURCE_INTEGRATION_AND_PUBLICATION",
+  "binding": "149-source/150-effective is exactly approved central plus approved R3. Three product changes,146 other source and147 other effective unchanged. Neither rejected picture implementation is present. Both approval supplements bind without rewriting historical pending labels.",
+  "validation_binding": "All88 validation members, execution modes and96 fixtures bind. Derived QSF9217adef and fixed effective date260906 are correctly distinct.",
+  "restoration": {
+    "full_product_source_tree": "project/fpga/Plex_MiSTer/** from source.tar",
+    "validation_source_tree": "plain extracted validation-code.tar members plus validation-source-map.json and validation-execution-modes.json",
+    "exact_effective_cohort": "inputs.tar and inputs.json remain authoritative for the 150-member effective fit cohort, including fixed build date 260906 and the separate build_id.v identity.",
+    "mode_restoration": "Exact sealed modes are recorded in file-map.json, member-preservation.json and fixture-preservation.json. Git preserves only the executable bit.",
+    "do_not_substitute": "Do not alter the published SYS120 selector, build ID, or central/leaf source when reconstructing this cohort. The conservative SYS20 derivative is a separate future identity."
+  },
+  "qualification_limits": {
+    "source_publication_approved": true,
+    "constrained_contract_only": "320x240 default 8192-byte AU + separate 8192-byte VCL with existing I/P/reference/filter/ingress/audio/reset/publication/original-DAR/diagnostic painting",
+    "hardware_approved": false,
+    "physical_approved": false,
+    "fps_or_tier_approved": false,
+    "unsupported_scope": "Not unrestricted H264 or accepted resolution tiers; tier bits 9..12 remain clear.",
+    "sys20_derivative_note": "This frozen source still selects SYS120. The separate in-flight SYS20 derivative/output is not included, inspected or approved here."
+  },
+  "review_supplemental_bindings": {
+    "central_receipt_sha256": "4b104fbfbb40df1c92c92d2e584abb40016abc24bbafa6381756413c866bbfe1",
+    "leaf_receipt_sha256": "c61b46db60a31963af6908624ca3cc96f9a0c4b56104d78606ec87d3bfe90961",
+    "coherent_r3_central_review_sha256": "ee6156ad225876091f1d319db3412a3aa45acd24a5c7b4ffc9713e91cb5a3778",
+    "coherent_r3_leaf_review_sha256": "c6b7edc883dcf828c7f0b866f1286313736ce47a6d358dc89b60b275abbb0063"
+  }
+}

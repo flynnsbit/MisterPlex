@@ -1,0 +1,40 @@
+--- a/Plex.qsf
++++ b/Plex.qsf
+@@ -128,11 +128,11 @@
+ 
+ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+ 
+-# Unfitted coherent-a11 engineering source; capability remains zero.
++# Preserve the complete decoder's existing CAVLC implementation.
+ set_global_assignment -name VERILOG_MACRO "CAVLC_WINDOW_BYTES=8"
+ set_global_assignment -name VERILOG_MACRO "CAVLC_LEVEL_LANES=1"
+ 
+-# Restricted diagnostic fit proposal; capability remains zero.
++# Functional inter/filter configuration; no timing or resolution-tier qualification.
+ set_global_assignment -name SEARCH_PATH rtl
+ set_global_assignment -name VERILOG_MACRO "PLEX_H264_INTER=1"
+ set_global_assignment -name VERILOG_MACRO "PLEX_H264_FRAME_DEBLOCK=1"
+--- a/Plex.sv
++++ b/Plex.sv
+@@ -837,13 +837,19 @@
+ `else
+ localparam bit H264_FRAME_DEBLOCK = 1'b0;
+ `endif
++// Existing AU/picture, H.264/color/intra, audio/session, overlay, feedback and
++// fenced-reset interfaces. Resolution-tier bits 9..12 make no unmeasured claim.
++// Inter/filter claims use the same selectors as the instantiated decoder.
++localparam [31:0] VIDEO_FUNCTIONAL_FEATURES = FPGA320_CONFIG ?
++	(32'h0000e19f |
++	 (H264_STATIC_IDR ? 32'd0 : 32'h00000020) |
++	 (H264_FRAME_DEBLOCK ? 32'h00000040 : 32'd0)) : 32'd0;
+ stream_path #(
+ 	.FRAME_W(320),
+ 	.FRAME_H(240),
+ 	.ENABLE_AU_PROTOCOL(STREAM_AU_PROTOCOL),
+ 	.ENABLE_PICTURE_PUBLISH(FPGA320_CONFIG),
+-	// Source-only engineering cohort, not the fitted/qualified E19F product.
+-	.VIDEO_FEATURES(32'd0),
++	.VIDEO_FEATURES(VIDEO_FUNCTIONAL_FEATURES),
+ 	.IDR_ONLY_PROFILE(H264_STATIC_IDR),
+ 	.ENABLE_FRAME_DEBLOCK(H264_FRAME_DEBLOCK),
+ `ifdef PLEX_ENCODED_AU_BYTES

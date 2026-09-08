@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "reviewer": "810c5e71-2ba2-41a3-95f8-b71e039bd260",
+  "verdict": "READY_FOR_SOURCE_INTEGRATION_AND_PUBLICATION",
+  "scope": "COMPLETE frozen coherent source under the supported constrained contract",
+  "source_sha256": "9217adef21e2bf54acd41d80faea9a0fbeb1e03bb69fa325841fcda92688608a",
+  "effective_sha256": "0d53325d4c3eaecb5793b584fe23b0939ed138b91539620df40f17c4e285666b",
+  "manifest_sha256": "7d175d19a63a054f6bf85f86ce1abcbf63191e27daf1bc62463ea24c50f7708a",
+  "product_patch_sha256": "8f2a8333806688ced8a484a4035ccc50bbba79441925ffb0a5a49cdddcfa43a4",
+  "findings": [],
+  "binding": "149-source/150-effective is exactly approved central plus approved R3. Three product changes,146 other source and147 other effective unchanged. Neither rejected picture implementation is present. Both approval supplements bind without rewriting historical pending labels.",
+  "validation_binding": "All88 validation members, execution modes and96 fixtures bind. Derived QSF9217adef and fixed effective date260906 are correctly distinct.",
+  "connected_evidence": "Genuine source-bound emu5/E1FF admission,4096 colour returns at existing3-cycle latency, warm/protocol positives and11 composed cases/38 pictures. All35 primary metric rows match V15 in every field; three recovery pictures have no separate historical per-picture CSV baseline.",
+  "separate_evidence": "R3 full negatives/immutable-R2 failures and additional central audio/transport modes retain separate approved origins, not coherent-rerun claims.",
+  "sys20_selector": {
+    "source_contract": "QUALIFIED",
+    "allowed_derivation": "Remove only active PLEX_CLK_SYS_120 with no competing override; existing header/PLL/timebase consistently selectSYS20/MULT1/PLL20. DDR90/native20/SDRAM142 remain unchanged.",
+    "constraint_basis": "Existing derive_pll_clocks, no waived clock period; no unrelated RTL or SDC edit required",
+    "limits": "Derivative has a new identity and still needs exact staged-map and actual clock/physical proof. SYS120 simulation metrics do not become SYS20 wall-time/cadence guarantees; no24fps or final performance ceiling claim."
+  },
+  "limits": "Supported constrained functionality only, not unrestricted H264, timing closure, deployment or glass acceptance. Physical staging tree was not inspected.",
+  "owned_jobs": [],
+  "physical_approved": false,
+  "hardware_approved": false
+}

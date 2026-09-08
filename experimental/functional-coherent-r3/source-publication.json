@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-functional-source-only",
+  "public_branch_base_commit": "a5efbfe0f3fde8cebfe646e8a8f9d38fc3eccd25",
+  "published_public_tree": "experimental/functional-coherent-r3",
+  "reviewed_source_pins": {
+    "source_sha256": "9217adef21e2bf54acd41d80faea9a0fbeb1e03bb69fa325841fcda92688608a",
+    "effective_sha256": "0d53325d4c3eaecb5793b584fe23b0939ed138b91539620df40f17c4e285666b",
+    "manifest_sha256": "7d175d19a63a054f6bf85f86ce1abcbf63191e27daf1bc62463ea24c50f7708a",
+    "source_archive_sha256": "f93b01ea7d84ae8cab1e143f4113b28c4fb03d62ec04ae7dc84bf22a1fb42a1a",
+    "inputs_archive_sha256": "8e66942cf667375c8dbf93f277899e4d921e81b88bfd41cd3f881c2ac6eaadfd",
+    "inputs_json_sha256": "39d9e2688d0509c020d1d6726b3e62a3ad2afc55691a0fd3c2e0a4c3f50fb477",
+    "product_patch_sha256": "8f2a8333806688ced8a484a4035ccc50bbba79441925ffb0a5a49cdddcfa43a4",
+    "central_patch_sha256": "24702ffde335b64d46f9508058b716801447bbc1fa27bf88df79839e2de1687f",
+    "picture_r3_patch_sha256": "caaad09faf701f3db712b5354483caf0687305eb8228a410469879b6aa00fd6c",
+    "validation_archive_sha256": "0d156f4b99434120c26be8eae60f41677008a5dc664ef323e6c9e236b31c3970",
+    "validation_execution_modes_sha256": "1a74a2770797a4c1879465053fb6404b2c57ebbd20021e0b78a930ba29a5cc9f",
+    "source_map_sha256": "9d3447c1bfb39c40f2afad35583743da98b72818cc46af5940d82bc2ffe75aa4",
+    "effective_input_map_sha256": "2cdf6c6a930720b745cc84732c2bc6d00289834cbda501106f8642571bcda426",
+    "validation_source_map_sha256": "9bba1878705d8342191cbb84b89cdf4e56897e1292b114f79655726208d0af5d",
+    "member_preservation_sha256": "ac1f1fbafd747c4f2922da7c26ca2dd5697fe73eada21b38f4ec472a7393963d",
+    "fixture_preservation_sha256": "e4afaa65f7ad457538d58346c00563ce36e48014416f2894f29305fdc8d5b98c",
+    "owner_result_sha256": "b7e24c3781e16fc9bde1983d66719a19a1c125e4d4e9e82ea26c237dc0a6b363",
+    "review_receipt_sha256": "5bf7fdd44f3eef2639e657651a7b4c9f155526c45baddf99bdcedff8db61b5f5"
+  },
+  "review_supplements": {
+    "central_review_receipt_sha256": "4b104fbfbb40df1c92c92d2e584abb40016abc24bbafa6381756413c866bbfe1",
+    "leaf_review_receipt_sha256": "c61b46db60a31963af6908624ca3cc96f9a0c4b56104d78606ec87d3bfe90961",
+    "coherent_r3_central_review_sha256": "ee6156ad225876091f1d319db3412a3aa45acd24a5c7b4ffc9713e91cb5a3778",
+    "coherent_r3_leaf_review_sha256": "c6b7edc883dcf828c7f0b866f1286313736ce47a6d358dc89b60b275abbb0063"
+  },
+  "binding": "149-source/150-effective is exactly approved central plus approved R3. Three product changes,146 other source and147 other effective unchanged. Neither rejected picture implementation is present. Both approval supplements bind without rewriting historical pending labels.",
+  "validation_evidence": "Genuine source-bound emu5/E1FF admission,4096 colour returns at existing3-cycle latency, warm/protocol positives and11 composed cases/38 pictures. All35 primary metric rows match V15 in every field; three recovery pictures have no separate historical per-picture CSV baseline.",
+  "separate_evidence_limits": "R3 full negatives/immutable-R2 failures and additional central audio/transport modes retain separate approved origins, not coherent-rerun claims.",
+  "source_delta": [
+    "Plex.qsf",
+    "Plex.sv",
+    "rtl/ddr_frame_store.sv"
+  ],
+  "product_contract": {
+    "width_height": "320x240",
+    "default_au_bytes": 8192,
+    "separate_vcl_bytes": 8192,
+    "tier_bits_9_to_12": "CLEAR",
+    "sys_clock_selection": "SYS120 in the published frozen source",
+    "sys20_derivative": {
+      "source_contract": "QUALIFIED",
+      "allowed_derivation": "Remove only active PLEX_CLK_SYS_120 with no competing override; existing header/PLL/timebase consistently selectSYS20/MULT1/PLL20. DDR90/native20/SDRAM142 remain unchanged.",
+      "constraint_basis": "Existing derive_pll_clocks, no waived clock period; no unrelated RTL or SDC edit required",
+      "limits": "Derivative has a new identity and still needs exact staged-map and actual clock/physical proof. SYS120 simulation metrics do not become SYS20 wall-time/cadence guarantees; no24fps or final performance ceiling claim."
+    }
+  },
+  "public_plain_tree": {
+    "product_source_members": 149,
+    "validation_source_members": 88,
+    "total_plain_files": 237,
+    "fixture_members_preserved_by_identity_only": 96
+  },
+  "excluded_not_published": [
+    "results.json and results.tar from release-coherent-r3",
+    "in-flight SYS20 physical derivative and all physical output files",
+    "raw logs/reports/process/browser/PMS/auth/capture/media payloads",
+    "compiled binaries/RBF/DB/vendor/SDK/toolchains and unreviewed helper/runtime public source"
+  ]
+}

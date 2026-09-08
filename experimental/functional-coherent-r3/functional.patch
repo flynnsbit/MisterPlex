@@ -1,0 +1,422 @@
+--- a/Plex.qsf
++++ b/Plex.qsf
+@@ -128,11 +128,11 @@
+ 
+ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+ 
+-# Unfitted coherent-a11 engineering source; capability remains zero.
++# Preserve the complete decoder's existing CAVLC implementation.
+ set_global_assignment -name VERILOG_MACRO "CAVLC_WINDOW_BYTES=8"
+ set_global_assignment -name VERILOG_MACRO "CAVLC_LEVEL_LANES=1"
+ 
+-# Restricted diagnostic fit proposal; capability remains zero.
++# Functional inter/filter configuration; no timing or resolution-tier qualification.
+ set_global_assignment -name SEARCH_PATH rtl
+ set_global_assignment -name VERILOG_MACRO "PLEX_H264_INTER=1"
+ set_global_assignment -name VERILOG_MACRO "PLEX_H264_FRAME_DEBLOCK=1"
+--- a/Plex.sv
++++ b/Plex.sv
+@@ -837,13 +837,19 @@
+ `else
+ localparam bit H264_FRAME_DEBLOCK = 1'b0;
+ `endif
++// Existing AU/picture, H.264/color/intra, audio/session, overlay, feedback and
++// fenced-reset interfaces. Resolution-tier bits 9..12 make no unmeasured claim.
++// Inter/filter claims use the same selectors as the instantiated decoder.
++localparam [31:0] VIDEO_FUNCTIONAL_FEATURES = FPGA320_CONFIG ?
++	(32'h0000e19f |
++	 (H264_STATIC_IDR ? 32'd0 : 32'h00000020) |
++	 (H264_FRAME_DEBLOCK ? 32'h00000040 : 32'd0)) : 32'd0;
+ stream_path #(
+ 	.FRAME_W(320),
+ 	.FRAME_H(240),
+ 	.ENABLE_AU_PROTOCOL(STREAM_AU_PROTOCOL),
+ 	.ENABLE_PICTURE_PUBLISH(FPGA320_CONFIG),
+-	// Source-only engineering cohort, not the fitted/qualified E19F product.
+-	.VIDEO_FEATURES(32'd0),
++	.VIDEO_FEATURES(VIDEO_FUNCTIONAL_FEATURES),
+ 	.IDR_ONLY_PROFILE(H264_STATIC_IDR),
+ 	.ENABLE_FRAME_DEBLOCK(H264_FRAME_DEBLOCK),
+ `ifdef PLEX_ENCODED_AU_BYTES
+--- a/rtl/ddr_frame_store.sv
++++ b/rtl/ddr_frame_store.sv
+@@ -235,8 +235,15 @@
+ 	reg swap_req_s1, swap_req_s2, swap_req_seen;
+ 	reg pending_bank_s1, pending_bank_s2;
+ 	reg pending_ready_s1, pending_ready_s2;
++	reg pending_ready_id_s1, pending_ready_id_s2;
+ 	reg pending_ready_ddr;
++	reg pending_ready_id_ddr;
+ 	reg publication_cache_pending;
++	reg queued_refresh_valid;
++	reg queued_refresh_bank;
++	reg legacy_swap_active, legacy_swap_target_buf;
++	reg legacy_display_buf, legacy_display_bank, legacy_has_frame;
++	wire queued_refresh_wait_swap = legacy_swap_active;
+ 	reg swap_req_t_ddr;
+ 	reg vsync_toggle;
+ 	reg reset_ddr_s1, reset_ddr_s2;
+@@ -245,11 +252,15 @@
+ 	reg generation_req_d1, generation_req_d2;
+ 	reg generation_ack, generation_ack_s1, generation_ack_s2;
+ 	reg generation_start, generation_start_s1, generation_start_s2;
++	reg pending_req_id;
+ 	wire generation_clear_active = FPGA_PUBLISH_ONLY && generation_clear;
+ 	wire generation_hold = FPGA_PUBLISH_ONLY &&
+ 	                       (generation_clear_active || generation_req || generation_ack_s2);
+ 	wire generation_hold_ddr = FPGA_PUBLISH_ONLY && (generation_req_d2 || generation_ack);
+ 	assign generation_idle = !FPGA_PUBLISH_ONLY || (!reset && !generation_hold);
++	// A synced ready level is not enough once swaps can be superseded; bind it
++	// to the announced request so stale readiness cannot authorize new metadata.
++	wire pending_ready_match = pending_ready_s2 && (pending_ready_id_s2 == pending_req_id);
+ 
+ 	always @(posedge clk_ddr) begin
+ 		if (reset) begin
+@@ -277,6 +288,9 @@
+ 			pending_bank_s2 <= 1'b0;
+ 			pending_ready_s1 <= 1'b0;
+ 			pending_ready_s2 <= 1'b0;
++			pending_ready_id_s1 <= 1'b0;
++			pending_ready_id_s2 <= 1'b0;
++			pending_req_id <= 1'b0;
+ 			generation_req <= 1'b0;
+ 			generation_ack_s1 <= 1'b0;
+ 			generation_ack_s2 <= 1'b0;
+@@ -304,6 +318,8 @@
+ 			pending_bank_s2 <= pending_bank_s1;
+ 			pending_ready_s1 <= pending_ready_ddr;
+ 			pending_ready_s2 <= pending_ready_s1;
++			pending_ready_id_s1 <= pending_ready_id_ddr;
++			pending_ready_id_s2 <= pending_ready_id_s1;
+ 
+ 			// Clear wins over VSync immediately; the level handshake retires DDR
+ 			// ownership and baselines in-flight start/swap toggles before reuse.
+@@ -315,6 +331,7 @@
+ 				if (swap_req_s2 != swap_req_seen) begin
+ 					swap_req_seen <= swap_req_s2;
+ 					pending_bank <= pending_bank_s2;
++					pending_req_id <= swap_req_s2;
+ 					swap_pending <= 1'b1;
+ 					if (RUNTIME_GEOMETRY) begin
+ 						pending_coded_width <= picture_coded_width;
+@@ -326,7 +343,7 @@
+ 					end
+ 				end
+ 
+-				if (vsync_pulse && swap_pending && pending_ready_s2) begin
++				if (vsync_pulse && swap_pending && pending_ready_match) begin
+ 					disp_bank <= pending_bank;
+ 					disp_buf <= ~disp_buf;
+ 					has_frame <= 1'b1;
+@@ -639,6 +656,17 @@
+ 	reg swap_pending_d1, swap_pending_d2;
+ 	reg pending_bank_d1, pending_bank_d2;
+ 	reg [Y_W-1:0] pending_top_d1, pending_top_d2;
++	// Only one legacy swap is announced at a time. Its expected buffer toggle
++	// is the commit acknowledgement; bank and ownership retire together here,
++	// without combining independently synchronized pending/bank/owner levels.
++	wire legacy_swap_retired = legacy_swap_active &&
++	                          (disp_buf_d2 == legacy_swap_target_buf);
++	wire display_buf_ddr = FPGA_PUBLISH_ONLY ? disp_buf_d2 : legacy_display_buf;
++	wire display_bank_ddr = FPGA_PUBLISH_ONLY ? disp_bank_d2 : legacy_display_bank;
++	wire display_valid_ddr = FPGA_PUBLISH_ONLY ? has_frame_d2 : legacy_has_frame;
++	wire prepare_pending_ddr = FPGA_PUBLISH_ONLY ? swap_pending_d2 :
++	                           (legacy_swap_active && !legacy_swap_retired);
++	wire prepare_bank_ddr = FPGA_PUBLISH_ONLY ? pending_bank_d2 : pending_bank_ddr;
+ 	reg [Y_W-1:0] want_y_gray_s1, want_y_gray_s2;  // Gray-coded 2-FF sync
+ 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
+ 	reg [15:0] poll_div;
+@@ -839,7 +867,7 @@
+ 			end
+ 
+ 			// PREP: Y home + C free-list hole (swap-only).
+-			if (swap_pending_d2) begin
++			if (prepare_pending_ddr) begin
+ 				prep_y = RUNTIME_GEOMETRY ? clamp_ahead(pending_top_d2, ti) : ti[Y_W-1:0];
+ 				prep_c = prep_y[Y_W-1:1];
+ 				yh = y_home_off(prep_y);
+@@ -884,7 +912,7 @@
+ 				found_slot_c_cur = 1'b1;
+ 				target_c_idx_cur_c = cur_base_idx_r + tj[SLOT_W-1:0];
+ 			end
+-			if (swap_pending_d2) begin
++			if (prepare_pending_ddr) begin
+ 				if (!c_valid_prep_r[tj] && !found_slot_c_prep) begin
+ 					found_slot_c_prep = 1'b1;
+ 					target_c_idx_prep_c = prep_base_idx_r + tj[SLOT_W-1:0];
+@@ -904,7 +932,7 @@
+ 	wire line_tag_commit = state_ddr == S_LINE_WAIT && DDRAM_DOUT_READY &&
+ 	                       qwords_remaining == 1 && (!fill_is_chroma || fill_plane_v);
+ 	wire prep_tags_clear = state_ddr == S_IDLE &&
+-		(generation_hold_ddr || (FPGA_PUBLISH_ONLY && publication_cache_pending));
++		(generation_hold_ddr || publication_cache_pending);
+ 	reg [7:0] imbox_cmd_seq;
+ 	reg [15:0] imbox_seq;
+ 	wire [28:0] fill_bank_base;
+@@ -1003,6 +1031,13 @@
+ 	wire db_new_seq = (db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed)) ||
+ 	                  db_stale_fallback;
+ 	wire spi_edge_ddr = start_d2 != start_seen;
++	wire start_accepted_ddr = spi_edge_ddr && !generation_hold_ddr &&
++	                         (!STRICT_YUV_DOORBELL || (have_seq && !format_error));
++	wire legacy_refresh_accepted = !FPGA_PUBLISH_ONLY &&
++	                               (db_new_seq || start_accepted_ddr);
++	wire pending_publication_ddr = FPGA_PUBLISH_ONLY ? swap_pending_d2 :
++		(legacy_swap_active || queued_refresh_valid || publication_cache_pending ||
++		 legacy_refresh_accepted);
+ 
+ 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
+ 
+@@ -1068,7 +1103,15 @@
+ 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
+ 				desired_y_r[ti] <= '0;
+ 			pending_ready_ddr <= 1'b0;
++			pending_ready_id_ddr <= 1'b0;
+ 			publication_cache_pending <= 1'b0;
++			queued_refresh_valid <= 1'b0;
++			queued_refresh_bank <= 1'b0;
++			legacy_swap_active <= 1'b0;
++			legacy_swap_target_buf <= 1'b0;
++			legacy_display_buf <= 1'b0;
++			legacy_display_bank <= 1'b0;
++			legacy_has_frame <= 1'b0;
+ 			generation_req_d1 <= 1'b0;
+ 			generation_req_d2 <= 1'b0;
+ 			generation_ack <= 1'b0;
+@@ -1181,34 +1224,40 @@
+ 			swap_pending_d2 <= swap_pending_d1;
+ 			pending_bank_d1 <= pending_bank;
+ 			pending_bank_d2 <= pending_bank_d1;
++			if (!FPGA_PUBLISH_ONLY && legacy_swap_retired) begin
++				legacy_swap_active <= 1'b0;
++				legacy_display_buf <= legacy_swap_target_buf;
++				legacy_display_bank <= pending_bank_ddr;
++				legacy_has_frame <= 1'b1;
++			end
+ 			// Held geometry crosses with the pending-bank request, before prefill.
+ 			pending_top_d1 <= Y_W'(pending_crop_top);
+ 			pending_top_d2 <= pending_top_d1;
+ 
+ 			// Select both flat tag windows before the need/target comparison cones.
+-			cur_base_idx_r <= disp_buf_d2 ? SECOND_SET_BASE : '0;
+-			prep_base_idx_r <= disp_buf_d2 ? '0 : SECOND_SET_BASE;
+-			disp_bank_cur_r <= disp_bank_d2;
+-			pending_bank_prep_r <= pending_bank_d2;
++			cur_base_idx_r <= display_buf_ddr ? SECOND_SET_BASE : '0;
++			prep_base_idx_r <= display_buf_ddr ? '0 : SECOND_SET_BASE;
++			disp_bank_cur_r <= display_bank_ddr;
++			pending_bank_prep_r <= prepare_bank_ddr;
+ 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+-				y_valid_cur_r[ti] <= y_valid[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				c_valid_cur_r[ti] <= c_valid[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				y_bank_cur_r[ti]  <= y_bank[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				c_bank_cur_r[ti]  <= c_bank[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				y_line_cur_r[ti]  <= y_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+-				c_line_cur_r[ti]  <= c_line[(disp_buf_d2 ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				y_valid_cur_r[ti] <= y_valid[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				c_valid_cur_r[ti] <= c_valid[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				y_bank_cur_r[ti]  <= y_bank[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				c_bank_cur_r[ti]  <= c_bank[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				y_line_cur_r[ti]  <= y_line[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
++				c_line_cur_r[ti]  <= c_line[(display_buf_ddr ? SECOND_SET_BASE : '0) + ti[SLOT_W-1:0]];
+ 				y_valid_prep_r[ti] <= !prep_tags_clear &&
+-					y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++					y_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+ 				c_valid_prep_r[ti] <= !prep_tags_clear &&
+-					c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				y_bank_prep_r[ti] <= y_bank[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				c_bank_prep_r[ti] <= c_bank[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				y_line_prep_r[ti] <= y_line[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+-				c_line_prep_r[ti] <= c_line[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++					c_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				y_bank_prep_r[ti] <= y_bank[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				c_bank_prep_r[ti] <= c_bank[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				y_line_prep_r[ti] <= y_line[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
++				c_line_prep_r[ti] <= c_line[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]];
+ 				// Forward the simultaneous tag commit so PREP sees exactly the
+ 				// live tags, without an extra refill or an early ready decision.
+ 				if (line_tag_commit &&
+-				    fill_idx == (disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]) begin
++				    fill_idx == (display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]) begin
+ 					if (fill_is_chroma) begin
+ 						c_valid_prep_r[ti] <= 1'b1;
+ 						c_bank_prep_r[ti] <= fill_bank;
+@@ -1302,23 +1351,26 @@
+ 			if (db_token_new)
+ 				stale_db_polls <= '0;
+ 			if (!FPGA_PUBLISH_ONLY && db_new_seq) begin
+-				pending_bank_ddr <= DDRAM_DOUT[63];
+-				swap_req_t_ddr <= ~swap_req_t_ddr;
++				queued_refresh_valid <= 1'b1;
++				queued_refresh_bank <= DDRAM_DOUT[63];
+ 				doorbell_ok <= 1'b1;
+ 				stale_db_polls <= '0;
+ 			end
+ 			if (generation_hold_ddr) begin
+ 				start_seen <= start_d2;
+ 				publication_cache_pending <= 1'b0;
++				queued_refresh_valid <= 1'b0;
+ 			end else if (spi_edge_ddr) begin
+ 				start_seen <= start_d2;
+ 				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
+-					pending_bank_ddr <= bank_sel_d2;
+ 					if (FPGA_PUBLISH_ONLY) begin
++						pending_bank_ddr <= bank_sel_d2;
+ 						publication_cache_pending <= 1'b1;
+ 						pending_ready_ddr <= 1'b0;
+-					end else
+-						swap_req_t_ddr <= ~swap_req_t_ddr;
++					end else begin
++						queued_refresh_valid <= 1'b1;
++						queued_refresh_bank <= bank_sel_d2;
++					end
+ 				end
+ 			end
+ 
+@@ -1332,7 +1384,20 @@
+ 					if (generation_req_d2 && generation_start == start_d2 &&
+ 					    start_seen == start_d2 && !DDRAM_RD && !DDRAM_WE && !poll_pending)
+ 						generation_ack <= 1'b1;
+-				end else if (FPGA_PUBLISH_ONLY && publication_cache_pending) begin
++				end else if (!FPGA_PUBLISH_ONLY && queued_refresh_valid &&
++				             !legacy_swap_active && !publication_cache_pending &&
++				             !legacy_refresh_accepted) begin
++					pending_ready_ddr <= 1'b0;
++					sched_valid <= 1'b0;
++					// The newest accepted replacement wins over dequeue. Stage
++					// its held descriptor before toggling the request in the next state.
++					if (!DDRAM_RD && !DDRAM_WE && !poll_pending) begin
++						pending_bank_ddr <= queued_refresh_bank;
++						queued_refresh_valid <= 1'b0;
++						publication_cache_pending <= 1'b1;
++					end
++				end else if (publication_cache_pending &&
++				             (FPGA_PUBLISH_ONLY || !legacy_swap_active)) begin
+ 					pending_ready_ddr <= 1'b0;
+ 					sched_valid <= 1'b0;
+ 					// A reused DDR bank is a new picture, not a cache hit.
+@@ -1340,15 +1405,22 @@
+ 					// inactive line set before announcing its new swap request.
+ 					if (!DDRAM_RD && !DDRAM_WE && !poll_pending) begin
+ 						for (ti = 0; ti < LINE_COUNT; ti = ti + 1) begin
+-							y_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+-							c_valid[(disp_buf_d2 ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
++							y_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
++							c_valid[(display_buf_ddr ? '0 : SECOND_SET_BASE) + ti[SLOT_W-1:0]] <= 1'b0;
+ 						end
+ 						publication_cache_pending <= 1'b0;
+ 						swap_req_t_ddr <= ~swap_req_t_ddr;
++						if (!FPGA_PUBLISH_ONLY) begin
++							legacy_swap_active <= 1'b1;
++							legacy_swap_target_buf <= !legacy_display_buf;
++						end
+ 					end
+ 				end else begin
+-					pending_ready_ddr <= swap_pending_d2 &&
++					pending_ready_ddr <= prepare_pending_ddr &&
+ 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
++					if (prepare_pending_ddr &&
++					    (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c))
++						pending_ready_id_ddr <= swap_req_t_ddr;
+ 					poll_div <= poll_div + 16'd1;
+ 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+ 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+@@ -1370,10 +1442,10 @@
+ 						DDRAM_BURSTCNT <= 8'd1;
+ 						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
+ 						              12'd0,                                // [47:36] reserved
+-						              swap_pending_d2,                      // [35]
+-						              disp_bank_d2,                         // [34]
+-						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask
+-						                (disp_bank_d2 ? 2'b01 : 2'b10),
++						              pending_publication_ddr,              // [35]
++						              display_bank_ddr,                     // [34]
++						              pending_publication_ddr ? 2'b00 :     // [33:32] free_bank_mask
++						                (display_bank_ddr ? 2'b01 : 2'b10),
+ 						              MAGIC_D};                             // [31:0]
+ 						DDRAM_WE <= 1'b1;
+ 						bank_mbox_seq <= bank_mbox_seq + 8'd1;
+@@ -1409,36 +1481,36 @@
+ 						if (PIPELINE_REFILL_SCHEDULER) begin
+ 							sched_valid <= 1'b1;
+ 							sched_is_y <= 1'b0;
+-							sched_for_pending <= swap_pending_d2 && need_c_prep_c;
+-							sched_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							sched_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							sched_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							sched_for_pending <= prepare_pending_ddr && need_c_prep_c;
++							sched_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							sched_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							sched_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							sched_pending_ready <= pending_ready_c;
+ 						end else begin
+-							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							fill_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							fill_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							fill_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							fill_is_chroma <= 1'b1;
+ 							fill_plane_v <= 1'b0;
+ 							fill_qword <= '0;
+ 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+ 							state_ddr <= S_LINE_PREP;
+ 						end
+-					end else if ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c)) begin
++					end else if ((prepare_pending_ddr && need_y_prep_c) || (display_valid_ddr && need_y_cur_c)) begin
+ 						if (C_INTERLEAVE_ON_Y_BEAM && c_rr_r < 2'd2)
+ 							c_rr_r <= c_rr_r + 2'd1;
+ 						if (PIPELINE_REFILL_SCHEDULER) begin
+ 							sched_valid <= 1'b1;
+ 							sched_is_y <= 1'b1;
+-							sched_for_pending <= swap_pending_d2 && need_y_prep_c;
+-							sched_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							sched_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
+-							sched_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
++							sched_for_pending <= prepare_pending_ddr && need_y_prep_c;
++							sched_bank <= (prepare_pending_ddr && need_y_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							sched_y <= (prepare_pending_ddr && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
++							sched_idx <= (prepare_pending_ddr && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
+ 							sched_pending_ready <= pending_ready_c;
+ 						end else begin
+-							fill_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							fill_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
+-							fill_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
++							fill_bank <= (prepare_pending_ddr && need_y_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							fill_y <= (prepare_pending_ddr && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
++							fill_idx <= (prepare_pending_ddr && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
+ 							fill_is_chroma <= 1'b0;
+ 							fill_plane_v <= 1'b0;
+ 							fill_qword <= '0;
+@@ -1450,22 +1522,22 @@
+ 					// under FOAR Y_FILL_STRIDE=2 (keepv22 gray RCA).
+ 					// L4 C_INTERLEAVE_ON_Y_BEAM: after two Y fills, fetch C even
+ 					// if the beam still wants Y (720p LC=8 otherwise stays grey).
+-					end else if (((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c))
+-					            && (!(has_frame_d2 && need_y_beam_c)
++					end else if (((prepare_pending_ddr && need_c_prep_c) || (display_valid_ddr && need_c_cur_c))
++					            && (!(display_valid_ddr && need_y_beam_c)
+ 					                || (C_INTERLEAVE_ON_Y_BEAM && c_rr_r >= 2'd2))) begin
+ 						c_rr_r <= 2'd0;
+ 						if (PIPELINE_REFILL_SCHEDULER) begin
+ 							sched_valid <= 1'b1;
+ 							sched_is_y <= 1'b0;
+-							sched_for_pending <= swap_pending_d2 && need_c_prep_c;
+-							sched_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							sched_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							sched_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							sched_for_pending <= prepare_pending_ddr && need_c_prep_c;
++							sched_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							sched_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							sched_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							sched_pending_ready <= pending_ready_c;
+ 						end else begin
+-							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+-							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+-							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
++							fill_bank <= (prepare_pending_ddr && need_c_prep_c) ? prepare_bank_ddr : display_bank_ddr;
++							fill_cy <= (prepare_pending_ddr && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
++							fill_idx <= (prepare_pending_ddr && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+ 							fill_is_chroma <= 1'b1;
+ 							fill_plane_v <= 1'b0;
+ 							fill_qword <= '0;
