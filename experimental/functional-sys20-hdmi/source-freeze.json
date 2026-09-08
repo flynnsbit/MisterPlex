@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-functional-source-only",
+  "public_branch_base_commit": "74b758f6150e50b9fcbd1e0b117e1e257e42f61b",
+  "source_sha256": "4ca23f39cc5b8a45f2aab30a95b6877da58e9fa0f4644b2ea4dd8b1aea4c19d7",
+  "effective_sha256": "8a72c03653c45cf7bdd993bed164aa8299d517efef95d70638d637d515324697",
+  "manifest_sha256": "4334c6878e76b83d5e7267982034663bfc8effc67e0882e836f57b3448dc5fdc",
+  "review_outcome": "READY_FOR_SOURCE_PUBLICATION_AND_ONE_PHYSICAL_FIT",
+  "binding": "Frozen owner-result and manifest are preserved exactly; the later review supplement is the authoritative precision correction for counts. No rewritten source or metadata substitutions were made.",
+  "validation_binding": "All 6 validation/provenance source members bind, including the campaign driver. Exact source/effective/validation maps, preimages.tar and effective-identity.patch remain authoritative for reconstruction.",
+  "restoration": {
+    "full_product_source_tree": "project/fpga/Plex_MiSTer/** from source.tar",
+    "validation_source_tree": "plain extracted validation-source.tar members at repository root",
+    "exact_effective_cohort": "inputs.tar and inputs.json remain authoritative for the 150-member effective fit cohort, including the derived eight-character QSF identity.",
+    "mode_restoration": "Original tar members are sealed 0444; Git preserves only executable semantics. Use the copied tarballs plus the exact maps for byte/mode reconstruction.",
+    "do_not_substitute": "Do not alter SYS20/native20/DDR90/SDRAM142 selection, fixed effective date260906, or the single reviewed ascal.vhd change when reconstructing this cohort."
+  },
+  "qualification_limits": {
+    "source_publication_approved": true,
+    "physical_fit_approved": false,
+    "hardware_approved": false,
+    "fps_or_tier_approved": false,
+    "image_or_glass_approved": false,
+    "unsupported_scope": "Not full Cartesian/system/glass proof. Boundary/random, startup/truncation, post-run tool observations and packaging-failure limits remain. The separately owned fixed-cohort fit is out of scope."
+  },
+  "review_supplemental_bindings": {
+    "review_receipt_sha256": "5122f9f36883d11e89eacad026688ef71ca89357bd73df79b10840b26ea3d731",
+    "route_review_receipt_sha256": "5fa439ac0082e3bcc9f24395c674841a55d057f84c8c52ce4cd900f3c2558487"
+  }
+}

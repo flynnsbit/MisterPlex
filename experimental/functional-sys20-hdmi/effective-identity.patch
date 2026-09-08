@@ -1,0 +1,8 @@
+--- a/Plex.qsf
++++ b/Plex.qsf
+@@ -136,4 +136,4 @@
+ set_global_assignment -name SEARCH_PATH rtl
+ set_global_assignment -name VERILOG_MACRO "PLEX_H264_INTER=1"
+ set_global_assignment -name VERILOG_MACRO "PLEX_H264_FRAME_DEBLOCK=1"
+-set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_BUILD_ID=32'hc4d81df4"
++set_global_assignment -name VERILOG_MACRO "FPGA_VIDEO_BUILD_ID=32'h4ca23f39"

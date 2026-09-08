@@ -1,0 +1,182 @@
+{
+  "approval": "SOURCE_CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY",
+  "ascal_after": "b4d1a4d52012d0d1a1b76f4ed2827f0cc41d76774a5d085e1a9603e9a04b3c3a",
+  "ascal_before": "c789b2fe9ba9c6954e9005d5f79296248029101eaf24d69378cad7dfd29bd826",
+  "base": {
+    "input_sha256": "de6fbd0f074e21f0c3c707e484b0bc982350925eda7afa7e6977cdfc0a1ca3bc",
+    "path": ".worktrees/fpga-h264-fleet-30ff2997/build/coherent-functional-sys20-5754/staged/release-coherent-r3-sys20",
+    "source_sha256": "c4d81df4ca25d32700f69c0b9f23db8c0d0c77674487fdd47d31f53d96807443"
+  },
+  "build_id": "4ca23f39",
+  "changed_effective_members": [
+    "Plex.qsf",
+    "sys/ascal.vhd"
+  ],
+  "changed_source_members": [
+    "sys/ascal.vhd"
+  ],
+  "changed_validation_members": [
+    "tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py",
+    "tests/unit/test_fpga_sys_top_elaboration.py"
+  ],
+  "created_at": "2026-09-08T08:33:19.925465+00:00",
+  "effective_members": 150,
+  "effective_qsf_change": "Derived FPGA_VIDEO_BUILD_ID only; source QSF unchanged",
+  "files": {
+    "effective-identity.patch": "b314a5de7cff808e2641ca22623b0f052c8bc166f481d33a6dba342005681e08",
+    "effective-input-map.json": "630efa56c1d8c7b60605bccddb7f17a5a8119ad58af4ce35b087a59316812481",
+    "evidence-map.json": "af401f1342e07ccf059ba3573ca299cb574092062926c3b8502140c3be3a9556",
+    "evidence.tar": "a8a8c0c5f7fda0badf78c743652e435414b4ffd8d233af666effdd5386afacf5",
+    "inputs.json": "8351f83adf530bdbf8b76d97380fa52e0d18120c72ccaa8b15ef1e68bafbad8f",
+    "inputs.tar": "74be17d185a880c2196b27bdf5e48d871c04daaf9010fcc62b9bbb41156b1bc7",
+    "preimages.tar": "ec1d1336e1033a063925a20fce745b346cff6cba9d8ccf3494cf34d577c19a66",
+    "source-map.json": "5e051708d4ab357df1f4804ae0861239336442d668944b96303dd0bd36c25bb3",
+    "source.patch": "98a5d2637fd2ed3c161d4c49dfcc24dffe40b8f743ae9a8a3ad2beea64c595b9",
+    "source.tar": "182e388df1402e0f069a31f7447af9a652196ad8bcf6dcdff31eba5941fd92ba",
+    "validation-source-map.json": "4e138da7e68c8cd0e2d6484edd7cedc13dd0184d7a613902de705a0c61f6ad96",
+    "validation-source.tar": "609d7a076bde39ea27e077c1617197fba1e97505c77cafd8ee319efd0dfc1d16",
+    "validation.patch": "ed53b0c9e055d63dae4fbec1fa0caf68cbffc5d3ddd1b867a2a3a67f35781e79"
+  },
+  "guards": {
+    "receipt": "results/campaign-01/receipt.json",
+    "released": {
+      "controller_value": 1,
+      "execution_value": 1,
+      "owned_child_terminal": true,
+      "repository_owner_absent": true
+    }
+  },
+  "input_sha256": "8a72c03653c45cf7bdd993bed164aa8299d517efef95d70638d637d515324697",
+  "limits": [
+    "No new Quartus, synthesis, fit, STA, SDK, hardware or publication executed.",
+    "No physical improvement or timing closure measured; next separately owned fit must qualify.",
+    "No hardware/glass/24fps/deployment acceptance.",
+    "Known binary arithmetic equivalence; HDL unknown-state propagation not claimed identical.",
+    "No full 2^21 * 4096 Cartesian arithmetic sweep; boundary coverage plus signed interval proof."
+  ],
+  "mission": "close-functional-hdmi-fraction-path-5754",
+  "owner_agent_id": "d57727ed-8537-429b-ac32-d83800e6c994",
+  "schema": "misterplex.hdmi-fraction-source-handoff.v1",
+  "source_members": 149,
+  "source_sha256": "4ca23f39cc5b8a45f2aab30a95b6877da58e9fa0f4644b2ea4dd8b1aea4c19d7",
+  "validation": {
+    "adaptive_coefficient_cycles": 851972,
+    "arithmetic_pairs_per_combination": 167936,
+    "arithmetic_pairs_total": 4198400,
+    "frac_ohres_combinations": 25,
+    "frame_count_per_combination": 12,
+    "frame_count_total": 300,
+    "hscal_osweep_cycles_per_combination": 32768,
+    "hscal_osweep_cycles_total": 819200,
+    "methods": 2,
+    "phase_scope": "Extracted actual complete HSCAL and OSWEEP, unchanged remainder-of-source check; after 32-cycle warmup. Existing extracted coefficient/pixel/vertical regression. Not full-port DDR/A-V system simulation.",
+    "pixel_cycles": 8192,
+    "review_status": "Author inspected exact source extraction and baseline independence; new test changes await independent review.",
+    "seconds": 300.232,
+    "status": "PASS",
+    "vertical_edge_cycles": 114690,
+    "warning_disposition": "Retained unsuppressed. Truncation is original cycle1 o_hacc*256 21-bit modulo behavior at high valid accumulator range; unknown comparisons occur during uninitialized warmup.",
+    "warnings": {
+      "10.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "11.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "12.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192
+      },
+      "13.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192
+      },
+      "14.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "15.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "16.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "17.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9
+      },
+      "18.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9
+      },
+      "19.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "2.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192
+      },
+      "20.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "21.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "22.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9
+      },
+      "23.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9
+      },
+      "24.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "25.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "26.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.\">=\": metavalue detected, returning FALSE": 9,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "3.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192
+      },
+      "4.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "5.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "6.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      },
+      "7.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192
+      },
+      "8.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192
+      },
+      "9.log": {
+        "NUMERIC_STD.\"/=\": metavalue detected, returning TRUE": 192,
+        "NUMERIC_STD.TO_UNSIGNED: vector truncated": 32656
+      }
+    }
+  }
+}

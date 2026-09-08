@@ -1,0 +1,39 @@
+--- a/sys/ascal.vhd
++++ b/sys/ascal.vhd
+@@ -2557,6 +2557,8 @@
+ 	HSCAL:PROCESS(o_clk) IS
+ 		VARIABLE div_v : unsigned(20 DOWNTO 0);
+ 		VARIABLE dir_v : unsigned(11 DOWNTO 0);
++		VARIABLE mag_v : unsigned(19 DOWNTO 0);
++		VARIABLE ge2_v,ge4_v,ge6_v : std_logic;
+ 	BEGIN
+ 		IF rising_edge(o_clk) THEN
+ 			-- Pipeline signals
+@@ -2621,19 +2623,14 @@
+ 			div_v:=o_div(2);
+ 			dir_v:=o_dir(2);
+ 			IF FRAC>6 THEN
+-				IF div_v(20)='0' THEN
+-					div_v:=div_v-to_unsigned(o_hsize*4,21);
+-				ELSE
+-					div_v:=div_v+to_unsigned(o_hsize*4,21);
+-				END IF;
+-				dir_v(5):=NOT div_v(20);
+-
+-				IF div_v(20)='0' THEN
+-					div_v:=div_v-to_unsigned(o_hsize*2,21);
+-				ELSE
+-					div_v:=div_v+to_unsigned(o_hsize*2,21);
+-				END IF;
+-				dir_v(4):=NOT div_v(20);
++				-- Two quotient bits in parallel, without a serial remainder carry.
++				-- For negative x, NOT x = -x-1 preserves the exact zero boundary.
++				mag_v:=div_v(19 DOWNTO 0) XOR (19 DOWNTO 0 => div_v(20));
++				ge2_v:=to_std_logic(mag_v>=to_unsigned(o_hsize*2,20));
++				ge4_v:=to_std_logic(mag_v>=to_unsigned(o_hsize*4,20));
++				ge6_v:=to_std_logic(mag_v>=to_unsigned(o_hsize*6,20));
++				dir_v(5):=ge4_v XOR div_v(20);
++				dir_v(4):=((ge2_v AND NOT ge4_v) OR ge6_v) XOR div_v(20);
+ 			END IF;
+ 
+ 			-----------------------------------

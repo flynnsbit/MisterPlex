@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "mission": "review-frozen-hdmi-fractional-source-5754",
+  "reviewer": "810c5e71-2ba2-41a3-95f8-b71e039bd260",
+  "disposition": "READY_FOR_SOURCE_PUBLICATION_AND_ONE_PHYSICAL_FIT",
+  "significant_findings": [],
+  "source_sha256": "4ca23f39cc5b8a45f2aab30a95b6877da58e9fa0f4644b2ea4dd8b1aea4c19d7",
+  "effective_sha256": "8a72c03653c45cf7bdd993bed164aa8299d517efef95d70638d637d515324697",
+  "manifest_sha256": "4334c6878e76b83d5e7267982034663bfc8effc67e0882e836f57b3448dc5fdc",
+  "product_patch_sha256": "98a5d2637fd2ed3c161d4c49dfcc24dffe40b8f743ae9a8a3ad2beea64c595b9",
+  "validation_patch_sha256": "ed53b0c9e055d63dae4fbec1fa0caf68cbffc5d3ddd1b867a2a3a67f35781e79",
+  "ascal_before": "c789b2fe9ba9c6954e9005d5f79296248029101eaf24d69378cad7dfd29bd826",
+  "ascal_after": "b4d1a4d52012d0d1a1b76f4ed2827f0cc41d76774a5d085e1a9603e9a04b3c3a",
+  "reviewed_code": ".worktrees/fpga-h264-fleet-30ff2997/build/hdmi-fractional-closure-5754/source-tree/sys/ascal.vhd:2623-2634",
+  "correctness": [
+    "Original unsigned operations implement signed21-bit toward-zero steps without signed overflow over the full stated dividend/divisor domain.",
+    "One's-complement folding is exactly -x-1 and preserves strict negative boundaries; it is not an absolute-value approximation.",
+    "All thresholds fit20 bits; maximum6*4095=24570. Zero divisor preserves sign-dependent11/00.",
+    "No relationship with an earlier divisor is needed; arbitrary stage-to-stage geometry changes are covered by the equivalence.",
+    "Discarded final remainder has no subsequent consumer; FRAC4-6 bypass, remaining quotient bits, registers, CE and output phase are unchanged."
+  ],
+  "timing_rationale": "The intermediate remainder-sign dependency is removed. Actual synthesis/placement/slack improvement remains unmeasured.",
+  "binding": {
+    "source_members": 149,
+    "effective_members": 150,
+    "changed_source_members": ["sys/ascal.vhd"],
+    "unchanged_source_members": 148,
+    "effective_qsf_delta": "Only the eight-character derived build identity; whitespace and all other material preserved.",
+    "oracle": "Generated serial oracle and both complete HSCAL/OSWEEP copies match their respective frozen sources.",
+    "compared_signal_groups": 44,
+    "excluded_signal_element": "Unwritten fraction-array element",
+    "replayed_regression_import_files": 5,
+    "additional_validation_archive_member": "Campaign driver"
+  },
+  "count_precision": {
+    "arithmetic_pairs": 4198400,
+    "frac_ohres_runs": 25,
+    "driven_pipeline_cycles": 819200,
+    "warmup_cycles_per_run": 32,
+    "warmup_cycles_excluded_total": 800,
+    "post_warmup_cycle_comparisons": 818400,
+    "reported_reference_frames": 300,
+    "clarification": "819200 is the driven-cycle count, not the post-warmup comparison count. Preserve frozen predecessor metadata and use this supplement for precise reporting."
+  },
+  "limits": [
+    "Boundary/random evidence is not a full Cartesian sweep or full-port system/glass proof.",
+    "Unknown propagation is not claimed identical; nonzero-time startup and original first-divider-stage truncation warnings remain.",
+    "Tool observations are post-execution observations, not launch-time executable pins.",
+    "Both packaging failures and the exact corrected replay are preserved.",
+    "No new tests/toolchain/physical operations, edits or publication were performed by the reviewer."
+  ],
+  "fit_authority": "Parent has separately assigned ONE fixed-cohort fit; this source disposition does not create additional fit/STA budget.",
+  "approval_limit": "Source readiness only. No timing, image deployment, FPS/tier or hardware acceptance;19e160b1 remains unapproved.",
+  "owned_jobs_remaining": [],
+  "authority_after_completion": "NONE"
+}

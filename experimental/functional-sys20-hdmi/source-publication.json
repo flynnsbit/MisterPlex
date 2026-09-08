@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "publication": "reviewed-experimental-functional-source-only",
+  "public_branch_base_commit": "74b758f6150e50b9fcbd1e0b117e1e257e42f61b",
+  "published_public_tree": "experimental/functional-sys20-hdmi",
+  "reviewed_source_pins": {
+    "source_sha256": "4ca23f39cc5b8a45f2aab30a95b6877da58e9fa0f4644b2ea4dd8b1aea4c19d7",
+    "effective_sha256": "8a72c03653c45cf7bdd993bed164aa8299d517efef95d70638d637d515324697",
+    "manifest_sha256": "4334c6878e76b83d5e7267982034663bfc8effc67e0882e836f57b3448dc5fdc",
+    "source_archive_sha256": "182e388df1402e0f069a31f7447af9a652196ad8bcf6dcdff31eba5941fd92ba",
+    "inputs_archive_sha256": "74be17d185a880c2196b27bdf5e48d871c04daaf9010fcc62b9bbb41156b1bc7",
+    "inputs_json_sha256": "8351f83adf530bdbf8b76d97380fa52e0d18120c72ccaa8b15ef1e68bafbad8f",
+    "product_patch_sha256": "98a5d2637fd2ed3c161d4c49dfcc24dffe40b8f743ae9a8a3ad2beea64c595b9",
+    "validation_archive_sha256": "609d7a076bde39ea27e077c1617197fba1e97505c77cafd8ee319efd0dfc1d16",
+    "validation_patch_sha256": "ed53b0c9e055d63dae4fbec1fa0caf68cbffc5d3ddd1b867a2a3a67f35781e79",
+    "source_map_sha256": "5e051708d4ab357df1f4804ae0861239336442d668944b96303dd0bd36c25bb3",
+    "effective_input_map_sha256": "630efa56c1d8c7b60605bccddb7f17a5a8119ad58af4ce35b087a59316812481",
+    "validation_source_map_sha256": "4e138da7e68c8cd0e2d6484edd7cedc13dd0184d7a613902de705a0c61f6ad96",
+    "preimages_archive_sha256": "ec1d1336e1033a063925a20fce745b346cff6cba9d8ccf3494cf34d577c19a66",
+    "effective_identity_patch_sha256": "b314a5de7cff808e2641ca22623b0f052c8bc166f481d33a6dba342005681e08",
+    "owner_result_sha256": "a984daedcd2ca1cf9d957d7f35c9b0d6758b66cdb40fe1d0f7176c5dd08ef162",
+    "review_receipt_sha256": "5122f9f36883d11e89eacad026688ef71ca89357bd73df79b10840b26ea3d731"
+  },
+  "binding": "149-source/150-effective exact cohort. Only sys/ascal.vhd changed; 148 other source members and all clocks/constraints/features are unchanged. Effective QSF delta is only the eight-character derived identity. Validation-source.tar contains the campaign driver plus 5 replayed regression/import files.",
+  "count_precision": {
+    "arithmetic_pairs": 4198400,
+    "frac_ohres_runs": 25,
+    "driven_pipeline_cycles": 819200,
+    "warmup_cycles_per_run": 32,
+    "warmup_cycles_excluded_total": 800,
+    "post_warmup_cycle_comparisons": 818400,
+    "reported_reference_frames": 300,
+    "clarification": "819200 is the driven-cycle count, not the post-warmup comparison count. Preserve frozen predecessor metadata and use this supplement for precise reporting."
+  },
+  "product_contract": {
+    "width_height": "320x240 constrained functionality only",
+    "default_au_bytes": 8192,
+    "separate_vcl_bytes": 8192,
+    "feature_admission": "E1FF",
+    "native_path": "native20",
+    "ddr_clock": "DDR90",
+    "sdram_clock": "SDRAM142",
+    "sys_clock_selection": "SYS20 in the published frozen source",
+    "fixed_effective_date": "260906",
+    "painter_and_dar": "unchanged native DAR and diagnostic painter"
+  },
+  "public_plain_tree": {
+    "product_source_members": 149,
+    "validation_source_members": 6,
+    "total_plain_files": 155
+  },
+  "excluded_not_published": [
+    "release/evidence.tar and all raw results/log payloads",
+    "all active fixed-cohort fit outputs from WT/build/coherent-functional-sys20-frac-5754",
+    "RBF/binary/retained DB/vendor/SDK/toolchain payloads",
+    "runtime/browser/PMS/auth/media/conversation/usage/financial data",
+    "unreviewed helper or runtime source and unrelated dirty work"
+  ]
+}
