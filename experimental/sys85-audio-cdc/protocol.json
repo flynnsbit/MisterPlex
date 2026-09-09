@@ -1,0 +1,23 @@
+{
+  "CDC": "Thirteen precise new groups; all12 Gray capture bits and actual top-bit alias proved. Numeric min-period Gray/readiness/status bounds; held-data/REQ/ACK destination-period bounds; actual async-reset sources to reset pipes only. No blanket clock cuts or downstream MCP/hold waivers.",
+  "FIFO": "Depth2048/stereo32-bit/65536bits and divider512 unchanged. Common reset OR flush asserts both local reset pipes asynchronously; each releases locally. Peer-ready two-stage observation blocks new epoch writes/read consumption until both pointer owners have reset. Reset-aborted samples are discarded, never counted as played.",
+  "FIFO_read": "Existing registered address/read pipeline remains. RAM output register is unreset, with resettable two-bit visibility protection. Prefetch works while disabled; sample divider pauses while disabled. Full-width modulo occupancy includes2048 and wrap.",
+  "audio_controls": "179-bit complete controls plus retained reset intent. src_hold/request remains owned through two-stage ACK; separate dst_capture and ordinarily timed dst_data. Source coalesces latest unsubmitted complete tuple, never cancels reset intent. Runtime resets do not reset channel phases.",
+  "caller_commit": "Two consecutive SYS idle observations after io_uio account for final acx attenuation shift. Output attenuation stays muted until dst_valid.",
+  "changed_product": [
+    "files.qip",
+    "rtl/audio_control_cdc.sv",
+    "rtl/audio_fifo.sv",
+    "rtl/present_core.sv",
+    "sys/audio_cdc.sdc",
+    "sys/sys_top.sdc",
+    "sys/sys_top.v"
+  ],
+  "control_latency": "Nominal five destination sampling edges to active data/ACK, then three source edges to reuse. Metastability or stopped clocks may add delay; no fixed wall-time guarantee. Active tuple is coherent, not a crossfade/pop-free transition guarantee.",
+  "no_hardware_or_fit_authority": true,
+  "physical_limits": "Numeric bounds include clock latency/uncertainty, not datapath_only. Routed first-hop delay/skew, synchronizer MTBF/placement, reset pulse/recovery, timing-driven synthesis and routability still require independent physical work. Async_Reg warnings are not synchronizer qualification.",
+  "preserved": "Exactc31 admitted framework66ca/sys_topb4e behavior unless directly necessary, hpsc1e/ascal93b, all41 framework binding and local timing protections. SYS85/nativeCE4/17, DDR90/Avalon100/HDMI148.5CE1/palette-audio24.576/management50/retainedSDRAM142selector, seed6/2processors/ALWAYS/HIGHperformance/date260906/normal newsourceID,81920bit96M10K floors/override/default8KiBAU+VCL/P-reference-deblock/R3E1FF/R2II2/nativeDAR/painting and modes.",
+  "reset_topology": "Global HPS/CLK100-init/CLK50-request and SYS areset feed local audio reset assertion. Local release and downstream reset recovery/removal remain timed. External global reset roots retain inherited timing exclusions as explicitly itemized in causal-bindings.",
+  "status": "has_audio and sticky underrun now have two-SYS-register diagnostic observation in present_core. No native/video datapath change.",
+  "unchanged_c31_product_members": 148
+}

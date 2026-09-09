@@ -1,0 +1,19 @@
+{
+  "scope_id": "fix-sys85-audio-hold-pressure-5754",
+  "owner_agent_id": "6ded7f4c-016e-423a-acb9-ecefc982b4e2",
+  "frozen_manifest_sha256": "637bf8c73c14123bd5754f78aceb40820f4360465fdd233c023185f5bae4f1a7",
+  "frozen_artifacts_modified": false,
+  "clarification": "resources.json's clock_seed_effort_QSF_bytes_unchanged=false compares unmodified product-source QSF with the baseline effective QSF, which contains the injected build ID. It is not evidence of a clock, seed or effort change.",
+  "base_and_candidate_source_QSF_sha256": "408c4e5294b73b0fce7dfb726da3e141c78f96ac7dd69c2a3e0ccaa0a43e87b4",
+  "baseline_effective_QSF_sha256": "0924c0c9451c8fb01b8d4a05ffa0435af203ff2afdb25253d13ef8fddda4409d",
+  "candidate_effective_QSF_sha256": "ad9fc44c50f57cef641188fa7ae23e70e32c7dee185d6970d76a5914b68f45a3",
+  "sole_effective_QSF_difference": {
+    "line": 143,
+    "macro": "FPGA_VIDEO_BUILD_ID",
+    "baseline": "32'hc31b6992",
+    "candidate": "32'hf2bdd413"
+  },
+  "source_QSF_bytes_identical": true,
+  "clock_seed_effort_settings_unchanged": true,
+  "observation": "Read-only source-map/SHA comparison and complete effective-QSF diff after guard settlement; no further SDK or source operation."
+}

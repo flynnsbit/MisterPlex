@@ -1,0 +1,489 @@
+{
+  "limitations": "Original validation fixture/media archive is excluded. Fixture-dependent methods need separate inputs; all selected bytes/imports remain unchanged.",
+  "omitted_members": 16,
+  "original_archive_sha256": "8a137ff11c759375eb3d9a673d62b7c1541254225861e668bab04ccbddffc5e3",
+  "original_members": 111,
+  "public_subset": {
+    "archive": "support-public-source.tar",
+    "member_map": {
+      "project/host/libmisterplex/h264_cavlc.hpp": {
+        "archive_mode": "0444",
+        "bytes": 23192,
+        "sha256": "efed97e7958835c82c6d37cb22eb00c7a383ff01b7f77dcb9381d0c5b3bf1334"
+      },
+      "project/host/libmisterplex/h264_nal.hpp": {
+        "archive_mode": "0444",
+        "bytes": 7623,
+        "sha256": "ff358e3b279bb331b301e9bc7dfa89cdb0efea51baa465e720f1d5ad212a7252"
+      },
+      "project/host/libmisterplex/h264_recon.hpp": {
+        "archive_mode": "0444",
+        "bytes": 56431,
+        "sha256": "3b95811245e4dc2332014b56ced6c15df338af9a57ae0b46a4bf06a2a6fed03b"
+      },
+      "project/host/libmisterplex/h264_residual_gold.hpp": {
+        "archive_mode": "0444",
+        "bytes": 6710,
+        "sha256": "bd03b38cc189a90b93e90cfcff560fa3a6cb02d54893b7271ef6944298e0c746"
+      },
+      "project/host/libmisterplex/h264_slice_walk.hpp": {
+        "archive_mode": "0444",
+        "bytes": 11613,
+        "sha256": "bd52930714a6afd47d61e630e50ca4ada957f962449cf50fd19192c7362088ff"
+      },
+      "project/host/libmisterplex/h264_sps.hpp": {
+        "archive_mode": "0444",
+        "bytes": 5615,
+        "sha256": "cad197666c0c819a3f6e99a6142975d5d231e171817fa3d554a9e4387dc281c0"
+      },
+      "project/scripts/check_define_parity.py": {
+        "archive_mode": "0444",
+        "bytes": 7657,
+        "sha256": "dffce45176530c6edb54040753f814ef73d5c92f92a8d83210eaa019f07a99f3"
+      },
+      "project/scripts/generate_audio_session_abi.py": {
+        "archive_mode": "0444",
+        "bytes": 1643,
+        "sha256": "758072a552acda0c8588672a1cd01947e6261200572ed3109ca18344a976f5f4"
+      },
+      "project/scripts/rbf_build.py": {
+        "archive_mode": "0444",
+        "bytes": 50198,
+        "sha256": "8166ff885959bf94b23effcf76cebfcd8de2bb7b356c0747abb7e694acb0f26f"
+      },
+      "project/scripts/rtl_lint.py": {
+        "archive_mode": "0444",
+        "bytes": 18619,
+        "sha256": "58ad86de09e9c3eeb1e841ae9254940365b36cd56e3530d7976e58118cfaa20f"
+      },
+      "project/scripts/run_verilator.sh": {
+        "archive_mode": "0555",
+        "bytes": 798,
+        "sha256": "485db26da31efe154d6d2db60b533030f81d6cbf0246feda20313839d2be4e82"
+      },
+      "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp": {
+        "archive_mode": "0444",
+        "bytes": 14850,
+        "sha256": "2d1ce53f5e60fbe79a74a95e9bf72318eedf1f694c2f918df4d98a32d678a55e"
+      },
+      "project/tests/cavlc-host/libmisterplex/h264_cavlc.hpp": {
+        "archive_mode": "0444",
+        "bytes": 23192,
+        "sha256": "efed97e7958835c82c6d37cb22eb00c7a383ff01b7f77dcb9381d0c5b3bf1334"
+      },
+      "project/tests/cavlc-host/libmisterplex/h264_nal.hpp": {
+        "archive_mode": "0444",
+        "bytes": 7623,
+        "sha256": "ff358e3b279bb331b301e9bc7dfa89cdb0efea51baa465e720f1d5ad212a7252"
+      },
+      "project/tests/cavlc-host/libmisterplex/h264_residual_gold.hpp": {
+        "archive_mode": "0444",
+        "bytes": 6710,
+        "sha256": "bd03b38cc189a90b93e90cfcff560fa3a6cb02d54893b7271ef6944298e0c746"
+      },
+      "project/tests/cavlc-host/libmisterplex/h264_sps.hpp": {
+        "archive_mode": "0444",
+        "bytes": 5615,
+        "sha256": "cad197666c0c819a3f6e99a6142975d5d231e171817fa3d554a9e4387dc281c0"
+      },
+      "project/tests/cavlc-host/libmisterplex/mailbox_abi_spec.hpp": {
+        "archive_mode": "0444",
+        "bytes": 11143,
+        "sha256": "ee0807b907a587e076e6eed5673935d84f7238bdac2746595e33e2b8e32e64d9"
+      },
+      "project/tests/frozen-host/audio_session.hpp": {
+        "archive_mode": "0444",
+        "bytes": 5370,
+        "sha256": "3fbb9fcfcb9dbeb9a40cd3f6628dcbd8fa44faff39941555539276fe5f050a7c"
+      },
+      "project/tests/frozen-host/ddr_bitstream_ring.hpp": {
+        "archive_mode": "0444",
+        "bytes": 14850,
+        "sha256": "2d1ce53f5e60fbe79a74a95e9bf72318eedf1f694c2f918df4d98a32d678a55e"
+      },
+      "project/tests/frozen-host/mailbox_abi_spec.hpp": {
+        "archive_mode": "0444",
+        "bytes": 11143,
+        "sha256": "ee0807b907a587e076e6eed5673935d84f7238bdac2746595e33e2b8e32e64d9"
+      },
+      "project/tests/frozen-overlay/fpga_playback_overlay.hpp": {
+        "archive_mode": "0444",
+        "bytes": 10808,
+        "sha256": "8794259390ba30d869a560d5e0591a170d0b0cef7e42f2a6f5ec3e6714702a22"
+      },
+      "project/tests/frozen-overlay/playback_overlay.hpp": {
+        "archive_mode": "0444",
+        "bytes": 34250,
+        "sha256": "2deb4d84bb3e695e0b3e233c6c3d434626af7dbb8fddd6435966afb9e85c9195"
+      },
+      "project/tests/frozen-rtl/h264_cavlc_residual_reference.sv": {
+        "archive_mode": "0444",
+        "bytes": 66589,
+        "sha256": "2163a781b29d973c63942538bbe9c42b3f949fbee9a32feaa7bad6b53d767df3"
+      },
+      "project/tests/frozen-rtl/h264_cavlc_residual_reference_v12.sv": {
+        "archive_mode": "0444",
+        "bytes": 68198,
+        "sha256": "950035b164b0cfd4e954166bc8bb32de99951f10d9b603026828a4010bbbb513"
+      },
+      "project/tests/rtl/ascal_c4e.vhd": {
+        "archive_mode": "0444",
+        "bytes": 96768,
+        "sha256": "b4d1a4d52012d0d1a1b76f4ed2827f0cc41d76774a5d085e1a9603e9a04b3c3a"
+      },
+      "project/tests/rtl/audio_control_boundary_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 2820,
+        "sha256": "a4ec96e9a709e5f4577d7d1a1d87ca85cba96e941dd3b7d4bb6b34eb056ad709"
+      },
+      "project/tests/rtl/audio_fifo_boundary_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 4365,
+        "sha256": "f4022160440e08061adae2a8ea9825ceb8fa882f349a0fb11535a9eadca8a26d"
+      },
+      "project/tests/rtl/audio_session_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 33097,
+        "sha256": "35a37d1d4aa38cfca18821af0ba2951827becaf176b0e0157907bb364369cf3b"
+      },
+      "project/tests/rtl/audio_session_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 7159,
+        "sha256": "8e70ab2f75838f3d900365a405c530eb8003b629ed64fe0ed0340d97907f965f"
+      },
+      "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 71800,
+        "sha256": "d1c2c42467b95db2e2a00b8ba082c3fdab6b46b8148c233adf7c9739d00fcf41"
+      },
+      "project/tests/rtl/ddr_bitstream_reader_transport_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 9608,
+        "sha256": "162df46f6368dea7181c10faa7ce216c6aed3d8cf58947e56e17f8dca8a77a77"
+      },
+      "project/tests/rtl/ddr_bitstream_ring_bfm.hpp": {
+        "archive_mode": "0444",
+        "bytes": 9085,
+        "sha256": "69ad170e5793ce2e04e14e8ab02ce63459bbdfa3db63f7a7fbe3dcba528cd294"
+      },
+      "project/tests/rtl/ddr_bus_arbiter_transport_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 9515,
+        "sha256": "57fe3f5be11f4e8e8fc9ae4fe9df2f598339acff4b99c3b1780dc00579be68be"
+      },
+      "project/tests/rtl/ddr_frame_store_warm_reset_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 48193,
+        "sha256": "b8b0a18c88b1fe81b65136f1814509867b3a7bececeedaaca8808c5436bb0d90"
+      },
+      "project/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 6233,
+        "sha256": "2815c8066d734ee34952e71d2c3358af074d1cf48107ad7f208e59dc3ddfbee0"
+      },
+      "project/tests/rtl/ddr_reader_cdc_reset_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 9138,
+        "sha256": "c2a7430c7231571931c965270c4755834a667bbdf6ae63356ea997f576d4cd12"
+      },
+      "project/tests/rtl/ddr_reader_cdc_reset_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 3965,
+        "sha256": "33315f43cee894c0f82161b46c8719f5a3f37dabc19ad05eb093c0bd8df66921"
+      },
+      "project/tests/rtl/decode_stub_recon_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 7499,
+        "sha256": "f31e645b77fc1c1b8c12cb8b1402d3fc44e9ebc98376c6d448afe3e0f9f92921"
+      },
+      "project/tests/rtl/decode_stub_recon_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 1951,
+        "sha256": "bb20e3e71c35f89ca9daa0c68b8117e6e7c71bf5d5087666b8fb72db3dd8b1c3"
+      },
+      "project/tests/rtl/fpga_audio_routing/build_id.v": {
+        "archive_mode": "0444",
+        "bytes": 52,
+        "sha256": "af488a2d5b979e4b99e73410f2aee45982e9b200e7663a01fc6ba8e4bcc0ab64"
+      },
+      "project/tests/rtl/fpga_audio_routing_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 4985,
+        "sha256": "757c3206b407aafa0a885cd8cdfc29367d84903e537038069b7c30ddabe2c691"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/ascal_config_tb.vhd": {
+        "archive_mode": "0444",
+        "bytes": 13594,
+        "sha256": "dbf0850ac48275e5fbb267e02ee6feaba56b2bbeeb801acc6db64e10b094abae"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/build_id.v": {
+        "archive_mode": "0444",
+        "bytes": 161,
+        "sha256": "45bf7ac5bbee237f66d6677ddd1aeb5923072c559d4d25e1c7840ffc67e8e451"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/framework_constraints.tcl": {
+        "archive_mode": "0444",
+        "bytes": 18153,
+        "sha256": "d4e6684560a67a460e8197e312463e0a8e43134a32b1888a530d98d3fb764284"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/native_reset_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 25448,
+        "sha256": "5dd43fa4d808132d3317c48f4f58c95f12f32e057e1740deff59dff7dded9981"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/palette_reset_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 5794,
+        "sha256": "b133c81a61d468efb6e8035184fb9cb9079c34f0e65988a5d690e8c8aed93893"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/pll_mode_tb.vhd": {
+        "archive_mode": "0444",
+        "bytes": 2562,
+        "sha256": "34fa430eafbf2c8db7304165fe303e51ce3b02e4b42e2dc411bbd9db7f8c5427"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/reference_sys_top.sdc": {
+        "archive_mode": "0444",
+        "bytes": 3642,
+        "sha256": "0a5fa4015b82ad7ce38e56d1ae4aadea6209af59c5dd9eff56a11139cf16ce86"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/scaler_config_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 6554,
+        "sha256": "006c85d429a2d77fdab0f0579f0a4e9624cfff462f1ac23a7de2377511665f83"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/scaler_palette_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 5875,
+        "sha256": "655c9a467db0d948fcbe6c751ed4776f1db7b261d5a9ea30dd9c4340d94f383f"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/scaler_reset_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 11404,
+        "sha256": "97df8f9ad03cde6f2fddd45110d48c20d4b1f6468a5156ce6f2fb9b03f37a8ad"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py": {
+        "archive_mode": "0444",
+        "bytes": 38827,
+        "sha256": "6ddff5c0cd05f5b215e945b4f3fe18d1798ff8ba8f391f8810f6bf0a890fc6f9"
+      },
+      "project/tests/rtl/fpga_sys_top_elaboration/terminator_reset_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 3154,
+        "sha256": "a2bf91f2611101bddd633b3fda10ccd0e874b8f6c3a662dfecf0bd76272fab75"
+      },
+      "project/tests/rtl/fpga_video_audio_feedback_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 4757,
+        "sha256": "56acded3f3ba22e9b65476ce29cd712a0a65771cc7821c22b1c8b004b1630f4b"
+      },
+      "project/tests/rtl/fpga_video_publish_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 86934,
+        "sha256": "6e7ad83b2a90a0be290ef0c92647fd7d5748f50fec7a37ea0af749670ac6cea1"
+      },
+      "project/tests/rtl/fpga_video_publish_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 25800,
+        "sha256": "75a30853cba431384c2b84f71012021669c86bc8dfb666d449cfdcc277dd3f4f"
+      },
+      "project/tests/rtl/gop12_oracle_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 21940,
+        "sha256": "1ae7d1c4485e17288a8c1b7f668bad22216e2ab1c0ce383c5b93009b20aba222"
+      },
+      "project/tests/rtl/gop12_oracle_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 5401,
+        "sha256": "febab14322f13fae37b0c6eb833422fea15d7b36e2822f420a493b97af485f52"
+      },
+      "project/tests/rtl/h264_cavlc_residual_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 38877,
+        "sha256": "4ced34af47e394e32a61dbe50e38af5944fdf2edc71a78b67836b97f932db0ae"
+      },
+      "project/tests/rtl/h264_cavlc_residual_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 10424,
+        "sha256": "5798e3e51deb7d1d853923cf7918caef2561a239395e72ca3105df4ceb34a867"
+      },
+      "project/tests/rtl/h264_deblock_frame_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 18050,
+        "sha256": "0a0c7ef335c842fb343c25815ad9fb69d09b3fe1f20c8e96a054aff3908fd9bb"
+      },
+      "project/tests/rtl/h264_inter_reference_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 37192,
+        "sha256": "1ef5ff90cfae2c8eedbc331a9f8bcef99e5d47f60013cd052f47268413e78709"
+      },
+      "project/tests/rtl/h264_inter_reference_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 7271,
+        "sha256": "9f2fb19a5acb916285af8c6c65d64da39968800bf153fbf978723b306eca8914"
+      },
+      "project/tests/rtl/h264_iq_idct_4x4_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 17024,
+        "sha256": "f26b701476d2d38432ec90bb1ce0438757b9fe423b4735f5bf191f3f878bc14b"
+      },
+      "project/tests/rtl/h264_iq_idct_4x4_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 2008,
+        "sha256": "f7eccd0da5f4d6b7e3a7591054be9fa2bb32e390dfd6852afb1256b40334755b"
+      },
+      "project/tests/rtl/p2_chroma_pred_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 6313,
+        "sha256": "b1cb603d5cb7ca3a6b1a6b2eadc539b153d57e383360d6b9a377d454ae4b9536"
+      },
+      "project/tests/rtl/p2_chroma_pred_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 1441,
+        "sha256": "f81988b39afc882fbfebf0df5c52930a285a31baf699d87d557824a753454b88"
+      },
+      "project/tests/rtl/p2_intra_controller_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 29951,
+        "sha256": "a3225077768fc59d7f6508fa688c4bc035e661c198c9da762695743618e39f90"
+      },
+      "project/tests/rtl/p2_intra_controller_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 9230,
+        "sha256": "6870ab7e0c3cbdca6c12b9c6088751abd13bba435f2456d11d180861f33f3590"
+      },
+      "project/tests/rtl/playback_overlay_plane_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 18280,
+        "sha256": "bf56c7b295d452211d587a5d617b4626e20e928597cc2ce918e4588fcb22ee0c"
+      },
+      "project/tests/rtl/stream_au_frontend_tb.cpp": {
+        "archive_mode": "0444",
+        "bytes": 7805,
+        "sha256": "445a6411f370434afaa1eafd85031c66593f1985a765a9d20150df7b512d5bff"
+      },
+      "project/tests/rtl/stream_au_frontend_tb_top.sv": {
+        "archive_mode": "0444",
+        "bytes": 1933,
+        "sha256": "8f65f66b9be37e904a9f7e17caf6ddcc2417752f9a9a88059b8e088473681987"
+      },
+      "project/tests/rtl/video_measurement_event_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 11998,
+        "sha256": "db4405ac9683cefd7200a2b903474ad5ae10f4a50f919f939a8853388d8ec78c"
+      },
+      "project/tests/rtl/video_measurement_tb.sv": {
+        "archive_mode": "0444",
+        "bytes": 11979,
+        "sha256": "baaa4d6fe05110af33781403c233112f273d5c7e2f24befade17733c87958dd2"
+      },
+      "project/tests/run_reset_boundary.py": {
+        "archive_mode": "0444",
+        "bytes": 11038,
+        "sha256": "869612017471cb5612b5bdc02e183fca773fd80b0c38494aef530494e643988e"
+      },
+      "project/tests/unit/h264_deblock_frame_vectors.py": {
+        "archive_mode": "0444",
+        "bytes": 3032,
+        "sha256": "f50c065840a04ffb68588ef224bd37a177ede1f2fc706660b2b7da366b186549"
+      },
+      "project/tests/unit/test_720p_clk_ddr_arith.py": {
+        "archive_mode": "0444",
+        "bytes": 16639,
+        "sha256": "1bb7649362a16521ab96fe4223f8353ca1cd19bb6e6f1641229652b96f050d9d"
+      },
+      "project/tests/unit/test_audio_session.sh": {
+        "archive_mode": "0444",
+        "bytes": 1037,
+        "sha256": "a7bd7f80d6b7006621818471fb1ff88df42636208c71dfca38c0ca0d9f33b7d8"
+      },
+      "project/tests/unit/test_ddr_bitstream_reader_transport.sh": {
+        "archive_mode": "0444",
+        "bytes": 4940,
+        "sha256": "9e6dbb8cf0be511e83547800a9bda54f5bf8a88f2f0d90db1f8d531314b9d930"
+      },
+      "project/tests/unit/test_ddr_bus_arbiter_transport.sh": {
+        "archive_mode": "0444",
+        "bytes": 3045,
+        "sha256": "7e29c5a19b15ca9e202bbf0c00b058f15b5245895a6459d9cc53967f50a7b6b3"
+      },
+      "project/tests/unit/test_ddr_frame_store_warm_reset.sh": {
+        "archive_mode": "0444",
+        "bytes": 10408,
+        "sha256": "5d8c0763ae674e8313625f3481c9a2e1cc2e28ae16f90fb69b1a4ae48a16aade"
+      },
+      "project/tests/unit/test_fpga_audio_routing.py": {
+        "archive_mode": "0444",
+        "bytes": 14277,
+        "sha256": "aabcbd7b658c647a0ce336975166956a065852c52ff6c7d82fd374cb27d36152"
+      },
+      "project/tests/unit/test_fpga_playback_overlay.sh": {
+        "archive_mode": "0444",
+        "bytes": 1377,
+        "sha256": "4fa273c7fb0269f99bc24972e5832cffd0534281eb86dedecd11c9cbe59dee4c"
+      },
+      "project/tests/unit/test_fpga_sys_top_elaboration.py": {
+        "archive_mode": "0444",
+        "bytes": 52258,
+        "sha256": "caa068c7e733ce1aebf6d40e72d15ce57fcd0ae34fee361a41aed7c62b6ad40a"
+      },
+      "project/tests/unit/test_fpga_video_audio_feedback.sh": {
+        "archive_mode": "0444",
+        "bytes": 559,
+        "sha256": "f103290cf3dc937a2811bc2ad087f83e0c7d798d5a55ceba8164ce6fcdaf2bbf"
+      },
+      "project/tests/unit/test_fpga_video_publish.sh": {
+        "archive_mode": "0444",
+        "bytes": 2036,
+        "sha256": "5f0b04a0974626b47b9fca6d42cfd7bc1114d6810e5c73eb3562fe0955da7f92"
+      },
+      "project/tests/unit/test_h264_cavlc_timing.sh": {
+        "archive_mode": "0444",
+        "bytes": 1894,
+        "sha256": "0704acf2f6f0f53206c769b41b8e2e229e825120f7cbe45c404cc56ebf83c8f6"
+      },
+      "project/tests/unit/test_h264_deblock_frame.sh": {
+        "archive_mode": "0444",
+        "bytes": 908,
+        "sha256": "3d72eec458137d5d8919eb9da812faa03ca5a74042168447b4449075d7f05bcf"
+      },
+      "project/tests/unit/test_h264_inter_reference.sh": {
+        "archive_mode": "0444",
+        "bytes": 856,
+        "sha256": "7a2b95134cecabf331237d91fd26f6be6e083b03077813dd16db0e979d3b9358"
+      },
+      "project/tests/unit/test_ingress_frozen_pair.sh": {
+        "archive_mode": "0444",
+        "bytes": 5306,
+        "sha256": "3a6f58bfcfe9d2c9b889e87933121f78e96e7144374754d64a4ae8b8ab028695"
+      },
+      "project/tests/unit/test_p2_chroma_pred.sh": {
+        "archive_mode": "0444",
+        "bytes": 604,
+        "sha256": "88966132e6fb227b46a86f2f5f4fc2c84a98f9fe1cc7d2963363790f7691b73b"
+      },
+      "project/tests/unit/test_p2_intra_controller.sh": {
+        "archive_mode": "0444",
+        "bytes": 23508,
+        "sha256": "fd276c1a1dd86cfa3c6dddaad62ffd33a84bbe930854bff70be083e69ce3351c"
+      },
+      "project/tests/unit/test_p3_idct_rtl_sim.sh": {
+        "archive_mode": "0444",
+        "bytes": 3898,
+        "sha256": "baf85fc8af0d5a6b23164d29594dd8c93ebf7974ac6e324662f70386556a1595"
+      },
+      "project/tests/unit/test_stream_au_frontend.sh": {
+        "archive_mode": "0444",
+        "bytes": 1242,
+        "sha256": "bb39b2a62707d011a8bb9c602aafa2fcb888b657ab1040005f4374d7aa80b900"
+      },
+      "run_preservation.py": {
+        "archive_mode": "0444",
+        "bytes": 1089,
+        "sha256": "760cdcc04e4b827e9633bde662955f71a4432453b8908fc5a4e19c91d9b01f0c"
+      }
+    },
+    "members": 95,
+    "sha256": "87ae905397a447cf6aec975501363cdd11a43ff4f7b6aa65cca1ec437ddc7ff6"
+  },
+  "whole_original_archive_published": false
+}

@@ -1,0 +1,559 @@
+--- a/files.qip
++++ b/files.qip
+@@ -15,6 +15,7 @@
+ set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
+ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv
+ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
++set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_control_cdc.sv
+ set_global_assignment -name SYSTEMVERILOG_FILE rtl/async_fifo.sv
+ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
+ set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
+@@ -62,4 +63,5 @@
+ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
+ set_global_assignment -name SDC_FILE Plex.sdc
+ set_global_assignment -name SDC_FILE sys/framework_cdc.sdc
++set_global_assignment -name SDC_FILE sys/audio_cdc.sdc
+ set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
+--- a/rtl/audio_fifo.sv
++++ b/rtl/audio_fifo.sv
+@@ -45,73 +45,87 @@
+ 	(* ramstyle = "M10K" *)
+ 	reg [31:0] mem [0:DEPTH-1];
+ 
+-	reg [AW:0] wr_ptr;      // binary, clk_wr domain
+-	reg [AW:0] wr_gray;     // Gray,   clk_wr domain
+-	reg [AW:0] rd_ptr;      // binary, clk_rd domain
+-	reg [AW:0] rd_gray;     // Gray,   clk_rd domain
+-	reg        has_wr;
+-
+-	// CDC: Gray-coded pointers through 2-FF synchronizers
+-	reg [AW:0] rd_gray_w1, rd_gray_w2;   // rd Gray → clk_wr
+-	reg [AW:0] wr_gray_r1, wr_gray_r2;   // wr Gray → clk_rd
+-	reg        has_wr_s1, has_wr_s2;
+-
+-	// Convert synchronized Gray rd pointer back to binary for wr_level arithmetic.
+-	// Only the address bits [AW-1:0] are used; MSB serves full/wrap detection
+-	// which is handled by the Gray-coded comparison below.
+-	/* verilator lint_off UNUSEDSIGNAL */
++	wire reset_request = reset | wr_flush;
++	(* async_reg = "true", preserve = "true" *)
++	reg [1:0] wr_reset_pipe = 2'b11, rd_reset_pipe = 2'b11;
++	always @(posedge clk_wr or posedge reset_request)
++		if (reset_request) wr_reset_pipe <= 2'b11;
++		else wr_reset_pipe <= {wr_reset_pipe[0],1'b0};
++	always @(posedge clk_rd or posedge reset_request)
++		if (reset_request) rd_reset_pipe <= 2'b11;
++		else rd_reset_pipe <= {rd_reset_pipe[0],1'b0};
++	wire wr_reset = wr_reset_pipe[1];
++	wire rd_reset = rd_reset_pipe[1];
++
++	reg [AW:0] wr_ptr, rd_ptr;
++	(* preserve = "true" *) reg [AW:0] wr_gray, rd_gray;
++	(* preserve = "true" *) reg has_wr;
++	(* async_reg = "true", preserve = "true" *)
++	reg [AW:0] rd_gray_w1, rd_gray_w2, wr_gray_r1, wr_gray_r2;
++	(* async_reg = "true", preserve = "true" *) reg has_wr_s1, has_wr_s2;
++	(* async_reg = "true", preserve = "true" *)
++	reg rd_up_w1, rd_up_w2, wr_up_r1, wr_up_r2;
++
+ 	wire [AW:0] rd_bin_in_wr = gray2bin(rd_gray_w2);
+-	/* verilator lint_on UNUSEDSIGNAL */
+-
+-	always @(posedge clk_wr) begin
+-		if (reset) begin
++
++	// Assertion reaches both pointer owners even if either clock is stopped.
++	// Only local, synchronized release can restart that owner's traffic.
++	always @(posedge clk_wr or posedge wr_reset) begin
++		if (wr_reset) begin
+ 			rd_gray_w1 <= '0;
+ 			rd_gray_w2 <= '0;
++			rd_up_w1 <= 0;
++			rd_up_w2 <= 0;
+ 		end else begin
+ 			rd_gray_w1 <= rd_gray;
+ 			rd_gray_w2 <= rd_gray_w1;
+-		end
+-	end
+-
+-	always @(posedge clk_rd) begin
+-		if (reset) begin
++			rd_up_w1 <= !rd_reset;
++			rd_up_w2 <= rd_up_w1;
++		end
++	end
++
++	always @(posedge clk_rd or posedge rd_reset) begin
++		if (rd_reset) begin
+ 			wr_gray_r1 <= '0;
+ 			wr_gray_r2 <= '0;
+ 			has_wr_s1  <= 1'b0;
+ 			has_wr_s2  <= 1'b0;
++			wr_up_r1 <= 0;
++			wr_up_r2 <= 0;
+ 		end else begin
+ 			wr_gray_r1 <= wr_gray;
+ 			wr_gray_r2 <= wr_gray_r1;
+ 			has_wr_s1  <= has_wr;
+ 			has_wr_s2  <= has_wr_s1;
++			wr_up_r1 <= !wr_reset;
++			wr_up_r2 <= wr_up_r1;
+ 		end
+ 	end
+ 
+ 	// Full/empty use Gray-coded comparisons (safe across CDC)
+ 	wire [AW:0] wr_gray_full = {~rd_gray_w2[AW:AW-1], rd_gray_w2[AW-2:0]};
+-	assign wr_full = (wr_gray == wr_gray_full);
++	assign wr_full = wr_reset || !rd_up_w2 || (wr_gray == wr_gray_full);
+ 	wire rd_empty = (rd_gray == wr_gray_r2);
+-
+-	// Write port
+-	always @(posedge clk_wr) begin
+-		if (reset) begin
++	wire wr_accept = wr_en && !wr_full;
++	wire [AW:0] wr_next = wr_ptr + {{AW{1'b0}},wr_accept};
++	wire [AW:0] wr_used = wr_next - rd_bin_in_wr;
++
++	always @(posedge clk_wr)
++		if (wr_accept) mem[wr_ptr[AW-1:0]] <= wr_data;
++
++	always @(posedge clk_wr or posedge wr_reset) begin
++		if (wr_reset) begin
+ 			wr_ptr   <= '0;
+ 			wr_gray  <= '0;
+ 			wr_level <= 16'd0;
+ 			has_wr   <= 1'b0;
+-		end else if (wr_flush) begin
+-			wr_ptr   <= '0;
+-			wr_gray  <= '0;
+-			wr_level <= 16'd0;
+-		end else begin
+-			if (wr_en && !wr_full) begin
+-				mem[wr_ptr[AW-1:0]] <= wr_data;
+-				wr_ptr  <= wr_ptr + 1'd1;
+-				wr_gray <= bin2gray(wr_ptr + 1'd1);
++		end else begin
++			if (wr_accept) begin
++				wr_ptr  <= wr_next;
++				wr_gray <= bin2gray(wr_next);
+ 				has_wr  <= 1'b1;
+ 			end
+-			// level ≈ wr - rd (binary, address bits only)
+-			wr_level <= 16'(wr_ptr[AW-1:0] - rd_bin_in_wr[AW-1:0]);
++			wr_level <= 16'(wr_used);
+ 		end
+ 	end
+ 
+@@ -121,27 +135,36 @@
+ 	reg [8:0]  sdiv;
+ 	reg [31:0] rd_data;
+ 	reg [AW-1:0] rd_addr_r;
+-
+-	always @(posedge clk_rd) begin
+-		if (reset) begin
++	reg [1:0] read_primed;
++
++	// Do not reset the RAM read port. The visibility pipeline is reset
++	// instead, retaining M10K inference and keeping old-epoch data hidden.
++	always @(posedge clk_rd)
++		if (!rd_reset) rd_data <= mem[rd_addr_r];
++	always @(posedge clk_rd or posedge rd_reset) begin
++		if (rd_reset) begin
++			rd_addr_r <= '0;
++			read_primed <= 0;
++		end else begin
++			rd_addr_r <= rd_ptr[AW-1:0];
++			read_primed <= {read_primed[0],1'b1};
++		end
++	end
++
++	always @(posedge clk_rd or posedge rd_reset) begin
++		if (rd_reset) begin
+ 			rd_ptr    <= '0;
+ 			rd_gray   <= '0;
+ 			sdiv      <= 9'd0;
+ 			sample_l  <= 16'd0;
+ 			sample_r  <= 16'd0;
+ 			underrun  <= 1'b0;
+-			rd_data   <= 32'd0;
+-			rd_addr_r <= '0;
+-		end else if (!rd_enable) begin
++		end else if (!rd_enable || !wr_up_r2) begin
+ 			sample_l <= 16'd0;
+ 			sample_r <= 16'd0;
+ 		end else begin
+ 			sdiv <= sdiv + 1'd1;
+-			// continuous registered read of current address
+-			rd_addr_r <= rd_ptr[AW-1:0];
+-			rd_data   <= mem[rd_addr_r];
+-
+-			if (sdiv == 0) begin
++			if (sdiv == 0 && read_primed[1]) begin
+ 				if (!rd_empty) begin
+ 					sample_l <= rd_data[15:0];
+ 					sample_r <= rd_data[31:16];
+@@ -165,22 +188,26 @@
+ `ifdef SIMULATION
+ 	reg [AW:0] _red_prev_wr_gray = '0;
+ 	reg [AW:0] _red_prev_rd_gray = '0;
+-	reg        _red_wr_flushed = 1'b0;
+-	always @(posedge clk_wr) begin
+-		_red_wr_flushed <= wr_flush;
++	always @(posedge clk_wr or posedge wr_reset) begin
++		if (wr_reset) _red_prev_wr_gray <= '0;
++		else begin
+ 		_red_prev_wr_gray <= wr_gray;
+-		if (!reset && !_red_wr_flushed && (_red_prev_wr_gray !== wr_gray)) begin
++		if (_red_prev_wr_gray !== wr_gray) begin
+ 			// Gray codes must differ in exactly one bit per transition
+ 			if ($countones(_red_prev_wr_gray ^ wr_gray) != 1)
+ 				$error("RED GUARD: wr_gray changed >1 bit — binary CDC regression");
+ 		end
+-	end
+-	always @(posedge clk_rd) begin
++		end
++	end
++	always @(posedge clk_rd or posedge rd_reset) begin
++		if (rd_reset) _red_prev_rd_gray <= '0;
++		else begin
+ 		_red_prev_rd_gray <= rd_gray;
+-		if (!reset && (_red_prev_rd_gray !== rd_gray)) begin
++		if (_red_prev_rd_gray !== rd_gray) begin
+ 			if ($countones(_red_prev_rd_gray ^ rd_gray) != 1)
+ 				$error("RED GUARD: rd_gray changed >1 bit — binary CDC regression");
+ 		end
++		end
+ 	end
+ `endif
+ 
+--- a/rtl/present_core.sv
++++ b/rtl/present_core.sv
+@@ -1062,8 +1062,19 @@
+ 	assign stat_advance       = advance;
+ 	assign stat_has_frame     = has_frame;
+ 	assign stat_wr_count      = wr_count;
+-	assign stat_has_audio     = has_audio;
+-	assign stat_audio_underrun = fifo_underrun;
++	(* async_reg = "true", preserve = "true" *)
++	reg [1:0] audio_status_s1 = 0, audio_status_s2 = 0;
++	always @(posedge clk) begin
++		if (reset) begin
++			audio_status_s1 <= 0;
++			audio_status_s2 <= 0;
++		end else begin
++			audio_status_s1 <= {fifo_underrun,has_audio};
++			audio_status_s2 <= audio_status_s1;
++		end
++	end
++	assign stat_has_audio     = audio_status_s2[0];
++	assign stat_audio_underrun = audio_status_s2[1];
+ 	assign stat_swap_pending  = swap_pending;
+ 	assign stat_frame_underruns = frame_underruns;
+ 	assign stat_frame_sdram_state = frame_sdram_state;
+--- a/sys/sys_top.sdc
++++ b/sys/sys_top.sdc
+@@ -43,7 +43,7 @@
+       palette {*scaler_palette*|ready_tag* *scaler_palette*|req_meta*}
+       measurement {*video_calc*|*src_req* *video_calc*|*req_meta*}
+       mode {*pll_hdmi_adj*|llena_meta*}
+-      audio {*|audio_session|snapshot_capture* *|audio_session_mailbox:audio_session|snapshot_capture*}
++      audio {*|audio_session|snapshot_capture* *|audio_session_mailbox:audio_session|snapshot_capture* *audio_config*|src_req*}
+    } {
+       set enabled($area) [expr {[get_collection_size [get_registers -nowarn $pattern]] != 0}]
+    }
+@@ -101,7 +101,12 @@
+ set_false_path -to   [get_ports {AUDIO_R}]
+ set_false_path -from {get_ports {SW[*]}}
+ set_false_path -to   {cfg[*]}
+-set_false_path -from {cfg[*]}
++set legacy_cfg {}
++foreach_in_collection node [get_registers -nowarn {cfg[*]}] {
++   set name [get_object_info -name $node]
++   if {![regexp {(^|\|)cfg\[6\](~DUPLICATE[0-9]*)?$} $name]} { lappend legacy_cfg $name }
++}
++if {[llength $legacy_cfg]} { set_false_path -from [get_registers $legacy_cfg] }
+ set_false_path -to   {deb_* btn_en btn_up}
+ 
+ set_multicycle_path -to {*_osd|osd_vcnt*} -setup 2
+@@ -121,8 +126,7 @@
+ set_false_path -to   {FB_BASE[*] FB_BASE[*] FB_WIDTH[*] FB_HEIGHT[*] LFB_HMIN[*] LFB_HMAX[*] LFB_VMIN[*] LFB_VMAX[*]}
+ set_false_path -from {FB_BASE[*] FB_BASE[*] FB_WIDTH[*] FB_HEIGHT[*] LFB_HMIN[*] LFB_HMAX[*] LFB_VMIN[*] LFB_VMAX[*]}
+ set_false_path -to   {vol_att[*] led_overtake[*] led_state[*]}
+-set_false_path -from {vol_att[*] led_overtake[*] led_state[*]}
+-set_false_path -from {aflt_* acx* acy* areset*}
++set_false_path -from {led_overtake[*] led_state[*]}
+ set_false_path -from {vs_line*}
+ set_false_path -from {ColorBurst_Range* PhaseInc* pal_en cvbs yc_en}
+ 
+--- a/sys/sys_top.v
++++ b/sys/sys_top.v
+@@ -1488,26 +1488,51 @@
+ );
+ 
+ wire spdif;
++reg audio_io_idle = 0;
++always @(posedge clk_sys) audio_io_idle <= !io_uio;
++wire [178:0] audio_controls;
++wire audio_controls_valid, audio_reset;
++audio_control_cdc audio_config
++(
++	.src_clk(clk_sys),
++	.src_valid(!io_uio && audio_io_idle),
++	.src_data({audio_96k,aflt_rate,acx,acx0,acx1,acx2,acy0,acy1,acy2,vol_att,vol_boost,audio_mix,audio_s}),
++	.src_reset_event(areset),
++	.async_reset(reset | areset),
++	.dst_clk(clk_audio),
++	.dst_data(audio_controls),
++	.dst_valid(audio_controls_valid),
++	.dst_reset(audio_reset)
++);
++wire audio_rate_local, audio_signed_local;
++wire [31:0] audio_filter_rate;
++wire [39:0] audio_cx;
++wire [7:0] audio_cx0, audio_cx1, audio_cx2;
++wire [23:0] audio_cy0, audio_cy1, audio_cy2;
++wire [4:0] audio_att;
++wire [1:0] audio_boost, audio_mix_local;
++assign {audio_rate_local,audio_filter_rate,audio_cx,audio_cx0,audio_cx1,audio_cx2,
++	audio_cy0,audio_cy1,audio_cy2,audio_att,audio_boost,audio_mix_local,audio_signed_local} = audio_controls;
+ audio_out audio_out
+ (
+-	.reset(reset | areset),
++	.reset(audio_reset),
+ 	.clk(clk_audio),
+ 
+-	.att(vol_att),
+-	.boost(vol_boost),
+-	.mix(audio_mix),
+-	.sample_rate(audio_96k),
+-
+-	.flt_rate(aflt_rate),
+-	.cx(acx),
+-	.cx0(acx0),
+-	.cx1(acx1),
+-	.cx2(acx2),
+-	.cy0(acy0),
+-	.cy1(acy1),
+-	.cy2(acy2),
+-
+-	.is_signed(audio_s),
++	.att(audio_controls_valid ? audio_att : 5'b11111),
++	.boost(audio_boost),
++	.mix(audio_mix_local),
++	.sample_rate(audio_rate_local),
++
++	.flt_rate(audio_filter_rate),
++	.cx(audio_cx),
++	.cx0(audio_cx0),
++	.cx1(audio_cx1),
++	.cx2(audio_cx2),
++	.cy0(audio_cy0),
++	.cy1(audio_cy1),
++	.cy2(audio_cy2),
++
++	.is_signed(audio_signed_local),
+ 	.core_l(audio_l),
+ 	.core_r(audio_r),
+ 
+--- /dev/null
++++ b/rtl/audio_control_cdc.sv
+@@ -0,0 +1,57 @@
++// Held-data/request/ACK pattern used by video_measurement_cdc, with explicit
++// reset-intent retention and a separate, ordinary-timed active control bank.
++module audio_control_cdc #(parameter WIDTH = 179) (
++	input wire src_clk,
++	input wire src_valid,
++	input wire [WIDTH-1:0] src_data,
++	input wire src_reset_event,
++	input wire async_reset,
++	input wire dst_clk,
++	output reg [WIDTH-1:0] dst_data = 0,
++	output reg dst_valid = 0,
++	output wire dst_reset
++);
++	(* preserve = "true" *) reg [WIDTH:0] src_hold = 0, dst_capture = 0;
++	(* preserve = "true" *) reg src_req = 0, dst_ack = 0;
++	(* async_reg = "true", preserve = "true" *)
++	reg ack_meta = 0, ack_sync = 0, req_meta = 0, req_sync = 0;
++	(* async_reg = "true", preserve = "true" *) reg [1:0] reset_pipe = 2'b11;
++	reg sent = 0, reset_pending = 1;
++	reg pending = 0, apply_pending = 0, reset_event = 0;
++
++	always @(posedge dst_clk or posedge async_reset)
++		if (async_reset) reset_pipe <= 2'b11;
++		else reset_pipe <= {reset_pipe[0],1'b0};
++	assign dst_reset = reset_pipe[1] || !dst_valid || reset_event;
++
++	// Runtime resets must not abandon an outstanding transfer or wrap its
++	// phase. Multiple unsubmitted reset requests coalesce, never cancel.
++	always @(posedge src_clk) begin
++		ack_meta <= dst_ack;
++		ack_sync <= ack_meta;
++		if (src_valid && src_req == ack_sync &&
++		    (!sent || reset_pending || src_reset_event || src_data != src_hold[WIDTH-1:0])) begin
++			src_hold <= {reset_pending | src_reset_event,src_data};
++			src_req <= ~src_req;
++			sent <= 1;
++			reset_pending <= 0;
++		end else if (src_reset_event) reset_pending <= 1;
++	end
++
++	always @(posedge dst_clk) begin
++		req_meta <= src_req;
++		req_sync <= req_meta;
++		reset_event <= 0;
++		if (apply_pending) begin
++			dst_data <= dst_capture[WIDTH-1:0];
++			dst_valid <= 1;
++			reset_event <= dst_capture[WIDTH];
++			dst_ack <= req_sync;
++			apply_pending <= 0;
++		end else if (pending) begin
++			dst_capture <= src_hold;
++			pending <= 0;
++			apply_pending <= 1;
++		end else if (req_sync != dst_ack) pending <= 1;
++	end
++endmodule
+--- /dev/null
++++ b/sys/audio_cdc.sdc
+@@ -0,0 +1,139 @@
++# Only protocol-owned first captures. No local DSP, second-stage, or whole
++# clock-pair exception. Numeric bounds retain clock latency/uncertainty.
++namespace eval plex_runtime_audio_cdc {
++	variable bindings {}
++	proc remember {label from to kind} {
++		variable bindings
++		if {[dict exists $bindings $label]} { error "Audio CDC duplicate transfer $label" }
++		set source_names {}; set capture_names {}
++		foreach_in_collection node $from { lappend source_names [get_object_info -name $node] }
++		foreach_in_collection node $to { lappend capture_names [get_object_info -name $node] }
++		dict set bindings $label [list from $source_names to $capture_names kind $kind]
++	}
++	proc bit {label stem member width wanted} {
++		set selected {}
++		foreach_in_collection node [::plex_framework_cdc::reg $label $stem $member $width] {
++			set name [get_object_info -name $node]
++			if {![regexp {\[([0-9]+)\](~DUPLICATE[0-9]*)?$} $name ignored index]} {
++				error "Audio CDC $label is not a vector register"
++			}
++			if {$index == $wanted} { lappend selected $name }
++		}
++		if {![llength $selected]} { error "Audio CDC $label required bit $wanted is absent" }
++		return [get_registers $selected]
++	}
++	proc transfer {label from to origin destination maximum} {
++		::plex_framework_cdc::require_clock $label-source $from $origin
++		::plex_framework_cdc::bound $label $from $to $destination $maximum
++		remember $label $from $to setup
++	}
++	proc gray_transfer {label stem member pointer capture origin destination maximum} {
++		set sinks [::plex_framework_cdc::reg $label-capture $stem $capture 12]
++		set sources {}; set bits {}
++		foreach_in_collection sink $sinks {
++			set name [get_object_info -name $sink]
++			regexp {\[([0-9]+)\](~DUPLICATE[0-9]*)?$} $name ignored index
++			lappend bits $index
++			set fanins [get_fanins -synch [list $name]]
++			if {[get_collection_size $fanins] != 1} {
++				error "Audio CDC $label bit $index has non-direct/ambiguous data ownership"
++			}
++			foreach_in_collection source $fanins {
++				set physical [get_object_info -name $source]
++				set normal [::plex_framework_cdc::normalize $physical]
++				regsub {~DUPLICATE[0-9]*$} $normal {} normal
++				set expected "${stem}|${member}\[$index\]"
++				# Gray[AW] == binary[AW]. Q17 can merge just this bit;
++				# prove the actual direct D fan-in rather than guessing an alias.
++				set upper "${stem}|${pointer}\[11\]"
++				if {$normal ne $expected && !($index == 11 && $normal eq $upper)} {
++					error "Audio CDC $label unexpected bit $index data source $physical"
++				}
++				lappend sources $physical
++			}
++		}
++		if {[lsort -integer -unique $bits] ne {0 1 2 3 4 5 6 7 8 9 10 11}} {
++			error "Audio CDC $label has missing/constant Gray capture bits"
++		}
++		set sources [lsort -unique $sources]
++		set from [get_registers $sources]
++		if {[get_collection_size $from] != [llength $sources]} {
++			error "Audio CDC $label contains non-register Gray ownership"
++		}
++		post_message -type info "Framework CDC $label-source: logical width 12; retained bits [lsort -integer -unique $bits]; physical registers $sources"
++		transfer $label $from $sinks $origin $destination $maximum
++	}
++	proc reset_landing {label stem member destination maximum} {
++		set sinks [::plex_framework_cdc::reg $label-capture $stem $member 2]
++		set names {}
++		foreach_in_collection sink $sinks {
++			foreach_in_collection source [get_fanins -asynch [list [get_object_info -name $sink]]] {
++				lappend names [get_object_info -name $source]
++			}
++		}
++		set names [lsort -unique $names]
++		if {![llength $names]} { error "Audio CDC $label has no actual asynchronous reset driver" }
++		set sources [get_keepers $names]
++		if {[get_collection_size $sources] != [llength $names]} {
++			error "Audio CDC $label reset driver collection is incomplete"
++		}
++		# Both reset-synchronizer async pins take assertion. Their D/Q chain
++		# remains local and timed: none of its registers is a reset driver.
++		foreach_in_collection sink $sinks {
++			if {[get_object_info -name $sink] in $names} {
++				error "Audio CDC $label reset driver includes its local release pipeline"
++			}
++		}
++		foreach_in_collection source $sources {
++			if {[lsearch -exact $names [get_object_info -name $source]] < 0} {
++				error "Audio CDC $label unexpected reset driver"
++			}
++		}
++		::plex_framework_cdc::bound $label $sources $sinks $destination $maximum
++		remember $label $sources $sinks recovery
++		post_message -type info "Audio CDC $label asynchronous-only drivers: $names"
++	}
++	proc install {} {
++		set sys_pattern {emu|pll|sys85_pll|*|divclk}
++		if {[get_collection_size [get_clocks -nowarn $sys_pattern]] == 0} {
++			set sys_pattern {emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk}
++		}
++		set sys [::plex_framework_cdc::clock AUDIO-SYS $sys_pattern]
++		set audio [::plex_framework_cdc::clock AUDIO {pll_audio|pll_audio_inst|altera_pll_i|*[0].*|divclk}]
++		set short [expr {min([get_clock_info -period $sys],[get_clock_info -period $audio])}]
++		foreach {label from to width origin destination} [list \
++			audio-controls src_hold dst_capture 180 $sys $audio \
++			audio-request src_req req_meta 0 $sys $audio \
++			audio-ack dst_ack ack_meta 0 $audio $sys] {
++			transfer $label [::plex_framework_cdc::reg $label-source audio_config $from $width] \
++				[::plex_framework_cdc::reg $label-capture audio_config $to $width] \
++				$origin $destination [get_clock_info -period $destination]
++		}
++		reset_landing audio-reset audio_config reset_pipe $audio $short
++
++		set stem emu|present|afifo
++		if {![::plex_framework_cdc::present {*afifo*|wr_gray*}]} {
++			error "Core audio FIFO ownership is absent"
++		}
++		foreach {label from pointer to origin destination} [list \
++			fifo-write-gray wr_gray wr_ptr wr_gray_r1 $sys $audio \
++			fifo-read-gray rd_gray rd_ptr rd_gray_w1 $audio $sys] {
++			gray_transfer $label $stem $from $pointer $to $origin $destination $short
++		}
++		transfer fifo-has-write [::plex_framework_cdc::reg fifo-has-write-source $stem has_wr 0] \
++			[::plex_framework_cdc::reg fifo-has-write-capture $stem has_wr_s1 0] $sys $audio $short
++		foreach {label from to origin destination} [list \
++			fifo-writer-ready wr_reset_pipe wr_up_r1 $sys $audio \
++			fifo-reader-ready rd_reset_pipe rd_up_w1 $audio $sys] {
++			transfer $label [bit $label-source $stem $from 2 1] \
++				[::plex_framework_cdc::reg $label-capture $stem $to 0] $origin $destination $short
++		}
++		reset_landing fifo-write-reset $stem wr_reset_pipe $sys $short
++		reset_landing fifo-read-reset $stem rd_reset_pipe $audio $short
++		foreach {label from index} {audio-has-status has_wr_s2 0 audio-underrun-status underrun 1} {
++			transfer $label [::plex_framework_cdc::reg $label-source $stem $from 0] \
++				[bit $label-capture emu|present audio_status_s1 2 $index] $audio $sys $short
++		}
++	}
++	install
++}

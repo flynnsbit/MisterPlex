@@ -1,0 +1,1316 @@
+{
+  "R4_runtime_policy_JSON_not_media_or_captured_fixtures": [
+    "tests/fixtures/critical_fit_hierarchy.json",
+    "tests/fixtures/timing_exclusion_baseline.json"
+  ],
+  "effective_sha256": "2ac8dae8355a97697803b7e023bf0742662d5f3ed1d83ecfd2f6babc7db6bc20",
+  "includes": [
+    {
+      "file": "project/tests/frozen-host/audio_session.hpp",
+      "include": "mailbox_abi_spec.hpp",
+      "resolution": [
+        "project/tests/cavlc-host/libmisterplex/mailbox_abi_spec.hpp",
+        "project/tests/frozen-host/mailbox_abi_spec.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/frozen-host/ddr_bitstream_ring.hpp",
+      "include": "mailbox_abi_spec.hpp",
+      "resolution": [
+        "project/tests/cavlc-host/libmisterplex/mailbox_abi_spec.hpp",
+        "project/tests/frozen-host/mailbox_abi_spec.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/frozen-overlay/fpga_playback_overlay.hpp",
+      "include": "playback_overlay.hpp",
+      "resolution": [
+        "project/tests/frozen-overlay/playback_overlay.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/frozen-rtl/h264_cavlc_residual_reference.sv",
+      "include": "h264_cavlc_fast_vlc.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/h264_cavlc_fast_vlc.svh"
+      ]
+    },
+    {
+      "file": "project/tests/frozen-rtl/h264_cavlc_residual_reference_v12.sv",
+      "include": "h264_cavlc_fast_vlc.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/h264_cavlc_fast_vlc.svh"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/audio_session_tb.cpp",
+      "include": "Vaudio_session_tb_top.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/audio_session_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/audio_session_tb.cpp",
+      "include": "audio_session.hpp",
+      "resolution": [
+        "project/tests/frozen-host/audio_session.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/audio_session_tb.cpp",
+      "include": "ddr_bitstream_ring.hpp",
+      "resolution": [
+        "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp",
+        "project/tests/frozen-host/ddr_bitstream_ring.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp",
+      "include": "Vddr_bitstream_reader_transport_tb_top.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp",
+      "include": "ddr_bitstream_ring.hpp",
+      "resolution": [
+        "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp",
+        "project/tests/frozen-host/ddr_bitstream_ring.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp",
+      "include": "audio_session.hpp",
+      "resolution": [
+        "project/tests/frozen-host/audio_session.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/ddr_bitstream_reader_transport_tb.cpp",
+      "include": "ddr_bitstream_ring_bfm.hpp",
+      "resolution": [
+        "project/tests/rtl/ddr_bitstream_ring_bfm.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/ddr_bitstream_ring_bfm.hpp",
+      "include": "ddr_bitstream_ring.hpp",
+      "resolution": [
+        "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp",
+        "project/tests/frozen-host/ddr_bitstream_ring.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/ddr_bus_arbiter_transport_tb.cpp",
+      "include": "Vddr_bus_arbiter.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_bus_arbiter_transport_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_frame_store_warm_reset_tb.cpp",
+      "include": "Vddr_frame_store_warm_reset_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_frame_store_warm_reset_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_reader_cdc_reset_tb.cpp",
+      "include": "Vddr_reader_cdc_reset_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_reader_cdc_reset_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/ddr_reader_cdc_reset_tb.cpp",
+      "include": "ddr_bitstream_ring_bfm.hpp",
+      "resolution": [
+        "project/tests/rtl/ddr_bitstream_ring_bfm.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/decode_stub_recon_tb.cpp",
+      "include": "Vdecode_stub_recon_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/decode_stub_recon_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/fpga_video_publish_tb.cpp",
+      "include": "Vfpga_video_publish_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/fpga_video_publish_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/fpga_video_publish_tb.cpp",
+      "include": "ddr_bitstream_ring.hpp",
+      "resolution": [
+        "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp",
+        "project/tests/frozen-host/ddr_bitstream_ring.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/fpga_video_publish_tb_top.sv",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/gop12_oracle_tb.cpp",
+      "include": "Vgop12_oracle_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/gop12_oracle_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_cavlc_residual_tb.cpp",
+      "include": "Vh264_cavlc_residual_tb_top.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_cavlc_residual_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_cavlc_residual_tb.cpp",
+      "include": "libmisterplex/h264_cavlc.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_cavlc.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_cavlc.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/h264_deblock_frame_tb.cpp",
+      "include": "Vh264_deblock_frame.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_deblock_frame_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_deblock_frame_tb.cpp",
+      "include": "libmisterplex/h264_recon.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_recon.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/h264_inter_reference_tb.cpp",
+      "include": "Vh264_inter_reference_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_inter_reference_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_iq_idct_4x4_tb.cpp",
+      "include": "Vh264_iq_idct_4x4.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_iq_idct_4x4_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/h264_iq_idct_4x4_tb_top.sv",
+      "include": "h264_qp_math.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/h264_qp_math.svh"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/p2_chroma_pred_tb.cpp",
+      "include": "Vp2_chroma_pred_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/p2_chroma_pred_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/p2_intra_controller_tb.cpp",
+      "include": "Vp2_intra_controller_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/p2_intra_controller_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/p2_intra_controller_tb.cpp",
+      "include": "libmisterplex/h264_sps.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_sps.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_sps.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/playback_overlay_plane_tb.cpp",
+      "include": "Vplayback_overlay_plane.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/playback_overlay_plane_tb.cpp",
+      "include": "fpga_playback_overlay.hpp",
+      "resolution": [
+        "project/tests/frozen-overlay/fpga_playback_overlay.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/rtl/playback_overlay_plane_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/stream_au_frontend_tb.cpp",
+      "include": "Vstream_au_frontend_tb.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/rtl/stream_au_frontend_tb.cpp",
+      "include": "verilated.h",
+      "resolution": "External Verilator runtime/generated model; not bundled or executed"
+    },
+    {
+      "file": "project/tests/cavlc-host/libmisterplex/ddr_bitstream_ring.hpp",
+      "include": "mailbox_abi_spec.hpp",
+      "resolution": [
+        "project/tests/cavlc-host/libmisterplex/mailbox_abi_spec.hpp",
+        "project/tests/frozen-host/mailbox_abi_spec.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/cavlc-host/libmisterplex/h264_cavlc.hpp",
+      "include": "libmisterplex/h264_nal.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_nal.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_nal.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/cavlc-host/libmisterplex/h264_cavlc.hpp",
+      "include": "libmisterplex/h264_residual_gold.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_residual_gold.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_residual_gold.hpp"
+      ]
+    },
+    {
+      "file": "project/tests/cavlc-host/libmisterplex/h264_nal.hpp",
+      "include": "libmisterplex/h264_sps.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_sps.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_sps.hpp"
+      ]
+    },
+    {
+      "file": "project/host/libmisterplex/h264_cavlc.hpp",
+      "include": "libmisterplex/h264_nal.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_nal.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_nal.hpp"
+      ]
+    },
+    {
+      "file": "project/host/libmisterplex/h264_cavlc.hpp",
+      "include": "libmisterplex/h264_residual_gold.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_residual_gold.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_residual_gold.hpp"
+      ]
+    },
+    {
+      "file": "project/host/libmisterplex/h264_nal.hpp",
+      "include": "libmisterplex/h264_sps.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_sps.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_sps.hpp"
+      ]
+    },
+    {
+      "file": "project/host/libmisterplex/h264_recon.hpp",
+      "include": "libmisterplex/h264_slice_walk.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_slice_walk.hpp"
+      ]
+    },
+    {
+      "file": "project/host/libmisterplex/h264_slice_walk.hpp",
+      "include": "libmisterplex/h264_cavlc.hpp",
+      "resolution": [
+        "project/host/libmisterplex/h264_cavlc.hpp",
+        "project/tests/cavlc-host/libmisterplex/h264_cavlc.hpp"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/Plex.sv",
+      "include": "sys/emu_ports.vh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/sys/emu_ports.vh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/Plex.sv",
+      "include": "build_id.v",
+      "resolution": "Effective generated build identity or explicitly selected bench identity"
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/Plex.sv",
+      "include": "rtl/plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/audio_session_mailbox.sv",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/audio_session_mailbox.sv",
+      "include": "audio_session_abi.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/audio_session_abi.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/colorbars.sv",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv",
+      "include": "ddr_frame_layout_params.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv",
+      "include": "h264_cavlc_fast_vlc.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/h264_cavlc_fast_vlc.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/h264_mb_ctrl.sv",
+      "include": "h264_chroma_nc.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/h264_chroma_nc.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/h264_mb_ctrl.sv",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/h264_mb_ctrl.sv",
+      "include": "h264_qp_math.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/h264_qp_math.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/h264_recon.sv",
+      "include": "h264_qp_math.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/h264_qp_math.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/pll.v",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/present_core.sv",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/present_core.sv",
+      "include": "ddr_frame_layout_params.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv",
+      "include": "slice_hdr_parser_bounded.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/slice_hdr_parser_bounded.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv",
+      "include": "slice_hdr_parser_legacy.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/slice_hdr_parser_legacy.svh"
+      ]
+    },
+    {
+      "file": "project/fpga/Plex_MiSTer/rtl/pll/pll_0002.v",
+      "include": "plex_performance_clock.svh",
+      "resolution": [
+        "project/fpga/Plex_MiSTer/rtl/plex_performance_clock.svh"
+      ]
+    }
+  ],
+  "license_notices_preserved": true,
+  "limits": "Static references/import availability and exact-byte restoration only. No simulator, Tcl, archived Python module, compiler, build driver, or timing checker executed.",
+  "no_private_locations_credentials_or_forbidden_payloads_found": true,
+  "old_git_objects_preserved": 2093,
+  "original_archive_members_scanned": {
+    "effective": 156,
+    "source": 155,
+    "support": 111,
+    "tool": 25
+  },
+  "public_text_and_archive_bytes_scanned": 9432035,
+  "python_local_imports": [
+    {
+      "file": "tooling/accepted-r4/scripts/check_quartus_timing.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/quartus_sta_report.py"
+      ],
+      "module": "quartus_sta_report"
+    },
+    {
+      "file": "tooling/accepted-r4/scripts/check_quartus_timing.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/quartus_timing_observer.py"
+      ],
+      "module": "quartus_timing_observer"
+    },
+    {
+      "file": "tooling/accepted-r4/scripts/check_timing_exclusions.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/quartus_sta_report.py"
+      ],
+      "module": "quartus_sta_report"
+    },
+    {
+      "file": "tooling/accepted-r4/scripts/check_timing_exclusions.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/quartus_timing_observer.py"
+      ],
+      "module": "quartus_timing_observer"
+    },
+    {
+      "file": "tooling/accepted-r4/scripts/check_timing_exclusions.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/check_quartus_timing.py"
+      ],
+      "module": "check_quartus_timing"
+    },
+    {
+      "file": "tooling/accepted-r4/scripts/quartus_timing_observer.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/quartus_hdl_source.py"
+      ],
+      "module": "quartus_hdl_source"
+    },
+    {
+      "file": "tooling/accepted-r4/scripts/quartus_timing_observer.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/quartus_timing_sdk.py"
+      ],
+      "module": "quartus_timing_sdk"
+    },
+    {
+      "file": "tooling/accepted-r4/scripts/quartus_timing_sdk.py",
+      "matching_source": [
+        "tooling/accepted-r4/scripts/quartus_hdl_source.py"
+      ],
+      "module": "quartus_hdl_source"
+    },
+    {
+      "file": "project/scripts/rtl_lint.py",
+      "matching_source": [
+        "project/scripts/check_define_parity.py"
+      ],
+      "module": "check_define_parity"
+    },
+    {
+      "file": "project/tests/run_reset_boundary.py",
+      "matching_source": [
+        "project/tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py"
+      ],
+      "module": "sys_top_elaboration_helpers"
+    },
+    {
+      "file": "project/tests/unit/test_fpga_audio_routing.py",
+      "matching_source": [
+        "project/scripts/check_define_parity.py"
+      ],
+      "module": "check_define_parity"
+    },
+    {
+      "file": "project/tests/unit/test_fpga_audio_routing.py",
+      "matching_source": [
+        "project/scripts/rtl_lint.py"
+      ],
+      "module": "rtl_lint"
+    },
+    {
+      "file": "project/tests/unit/test_fpga_sys_top_elaboration.py",
+      "matching_source": [
+        "project/scripts/check_define_parity.py"
+      ],
+      "module": "check_define_parity"
+    },
+    {
+      "file": "project/tests/unit/test_fpga_sys_top_elaboration.py",
+      "matching_source": [
+        "project/scripts/rbf_build.py",
+        "tooling/accepted-r4/scripts/rbf_build.py"
+      ],
+      "module": "rbf_build"
+    },
+    {
+      "file": "project/tests/unit/test_fpga_sys_top_elaboration.py",
+      "matching_source": [
+        "project/scripts/rtl_lint.py"
+      ],
+      "module": "rtl_lint"
+    },
+    {
+      "file": "project/tests/unit/test_fpga_sys_top_elaboration.py",
+      "matching_source": [
+        "project/tests/rtl/fpga_sys_top_elaboration/sys_top_elaboration_helpers.py"
+      ],
+      "module": "sys_top_elaboration_helpers"
+    }
+  ],
+  "registered_file_references": [
+    {
+      "file": "files.qip",
+      "line": 1,
+      "target": "rtl/present_cadence.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 4,
+      "target": "rtl/present_video_timing_720p.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 5,
+      "target": "rtl/present_video_timing_960.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 6,
+      "target": "rtl/present_beam_content_de.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 7,
+      "target": "rtl/present_beam_ppc.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 8,
+      "target": "rtl/present_npx_path.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 9,
+      "target": "rtl/present_pix_rate_match.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 10,
+      "target": "rtl/present_content_window.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 11,
+      "target": "rtl/present_geom_latch.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 12,
+      "target": "rtl/present_vtotal_bresenham.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 13,
+      "target": "rtl/yuv_bt601_npx.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 14,
+      "target": "rtl/plex_present_geom_mux.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 15,
+      "target": "rtl/colorbars.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 16,
+      "target": "rtl/audio_tone.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 17,
+      "target": "rtl/audio_fifo.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 18,
+      "target": "rtl/audio_control_cdc.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 19,
+      "target": "rtl/async_fifo.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 20,
+      "target": "rtl/audio_ingest.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 21,
+      "target": "rtl/line_buf_ram.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 22,
+      "target": "rtl/frame_store.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 23,
+      "target": "rtl/ddr_frame_store.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 24,
+      "target": "rtl/mplex_hold_lcell.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 25,
+      "target": "rtl/ddr_frame_base_mux.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 26,
+      "target": "rtl/source_aspect_ack.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 27,
+      "target": "rtl/frame_ingest.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 28,
+      "target": "rtl/ddram_frame_rd.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 29,
+      "target": "rtl/sdram.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 30,
+      "target": "rtl/sdram_memtest.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 31,
+      "target": "rtl/ddr_bus_arbiter.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 32,
+      "target": "rtl/ddr_transport_mux.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 33,
+      "target": "rtl/audio_session_mailbox.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 34,
+      "target": "rtl/audio_session_ddr_mux.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 35,
+      "target": "rtl/fpga_video_publish.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 36,
+      "target": "rtl/playback_overlay_plane.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 37,
+      "target": "rtl/ddr_bitstream_reader.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 38,
+      "target": "rtl/bitstream_fifo.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 39,
+      "target": "rtl/stream_ingest.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 40,
+      "target": "rtl/nalu_scanner.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 41,
+      "target": "rtl/sps_parser.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 42,
+      "target": "rtl/pps_parser.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 44,
+      "target": "rtl/slice_hdr_parser.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 45,
+      "target": "rtl/h264_cavlc_residual.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 46,
+      "target": "rtl/h264_iq_idct_4x4.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 47,
+      "target": "rtl/h264_intra_pred.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 48,
+      "target": "rtl/h264_syntax_primitives.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 49,
+      "target": "rtl/h264_deblock.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 50,
+      "target": "rtl/h264_deblock_frame.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 51,
+      "target": "rtl/h264_p_slice_modes.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 52,
+      "target": "rtl/h264_dpb.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 53,
+      "target": "rtl/h264_inter_pred.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 54,
+      "target": "rtl/h264_coeff_sat9.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 55,
+      "target": "rtl/h264_i16_dc_hadamard.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 56,
+      "target": "rtl/h264_recon.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 57,
+      "target": "rtl/h264_bit_reader.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 58,
+      "target": "rtl/h264_residual_seq.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 59,
+      "target": "rtl/h264_slice_rbsp_ram.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 60,
+      "target": "rtl/h264_mb_ctrl.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 61,
+      "target": "rtl/decode_stub.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 62,
+      "target": "rtl/stream_path.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 63,
+      "target": "rtl/present_core.sv"
+    },
+    {
+      "file": "files.qip",
+      "line": 64,
+      "target": "Plex.sdc"
+    },
+    {
+      "file": "files.qip",
+      "line": 65,
+      "target": "sys/framework_cdc.sdc"
+    },
+    {
+      "file": "files.qip",
+      "line": 66,
+      "target": "sys/audio_cdc.sdc"
+    },
+    {
+      "file": "files.qip",
+      "line": 67,
+      "target": "Plex.sv"
+    },
+    {
+      "file": "rtl/pll.qip",
+      "line": 331,
+      "target": "rtl/pll.v"
+    },
+    {
+      "file": "rtl/pll.qip",
+      "line": 332,
+      "target": "rtl/pll/pll_0002.v"
+    },
+    {
+      "file": "rtl/pll.qip",
+      "line": 333,
+      "target": "rtl/pll/pll_0002.qip"
+    },
+    {
+      "file": "sys/pll.13.qip",
+      "line": 7,
+      "target": "rtl/pll.v"
+    },
+    {
+      "file": "sys/pll.13.qip",
+      "line": 8,
+      "target": "rtl/pll/pll_0002.v"
+    },
+    {
+      "file": "sys/pll_audio.13.qip",
+      "line": 7,
+      "target": "sys/pll_audio.v"
+    },
+    {
+      "file": "sys/pll_audio.13.qip",
+      "line": 8,
+      "target": "sys/pll_audio/pll_audio_0002.v"
+    },
+    {
+      "file": "sys/pll_audio.qip",
+      "line": 331,
+      "target": "sys/pll_audio.v"
+    },
+    {
+      "file": "sys/pll_audio.qip",
+      "line": 332,
+      "target": "sys/pll_audio/pll_audio_0002.v"
+    },
+    {
+      "file": "sys/pll_audio.qip",
+      "line": 333,
+      "target": "sys/pll_audio/pll_audio_0002.qip"
+    },
+    {
+      "file": "sys/pll_cfg.qip",
+      "line": 2,
+      "target": "sys/pll_cfg/pll_cfg.v"
+    },
+    {
+      "file": "sys/pll_cfg.qip",
+      "line": 3,
+      "target": "sys/pll_cfg/pll_cfg_hdmi.v"
+    },
+    {
+      "file": "sys/pll_cfg.qip",
+      "line": 4,
+      "target": "sys/pll_cfg/altera_pll_reconfig_top.v"
+    },
+    {
+      "file": "sys/pll_cfg.qip",
+      "line": 5,
+      "target": "sys/pll_cfg/altera_pll_reconfig_core.v"
+    },
+    {
+      "file": "sys/pll_hdmi.13.qip",
+      "line": 7,
+      "target": "sys/pll_hdmi.v"
+    },
+    {
+      "file": "sys/pll_hdmi.13.qip",
+      "line": 8,
+      "target": "sys/pll_hdmi/pll_hdmi_0002.v"
+    },
+    {
+      "file": "sys/pll_hdmi.qip",
+      "line": 477,
+      "target": "sys/pll_hdmi.v"
+    },
+    {
+      "file": "sys/pll_hdmi.qip",
+      "line": 478,
+      "target": "sys/pll_hdmi/pll_hdmi_0002.v"
+    },
+    {
+      "file": "sys/pll_hdmi.qip",
+      "line": 479,
+      "target": "sys/pll_hdmi/pll_hdmi_0002.qip"
+    },
+    {
+      "file": "sys/pll_q13.qip",
+      "line": 1,
+      "target": "sys/pll.13.qip"
+    },
+    {
+      "file": "sys/pll_q13.qip",
+      "line": 2,
+      "target": "sys/pll_hdmi.13.qip"
+    },
+    {
+      "file": "sys/pll_q13.qip",
+      "line": 3,
+      "target": "sys/pll_audio.13.qip"
+    },
+    {
+      "file": "sys/pll_q13.qip",
+      "line": 4,
+      "target": "sys/pll_cfg.qip"
+    },
+    {
+      "file": "sys/pll_q17.qip",
+      "line": 1,
+      "target": "rtl/pll.qip"
+    },
+    {
+      "file": "sys/pll_q17.qip",
+      "line": 2,
+      "target": "sys/pll_hdmi.qip"
+    },
+    {
+      "file": "sys/pll_q17.qip",
+      "line": 3,
+      "target": "sys/pll_audio.qip"
+    },
+    {
+      "file": "sys/pll_q17.qip",
+      "line": 4,
+      "target": "sys/pll_cfg.qip"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 1,
+      "target": "sys/pll_q17.qip"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 2,
+      "target": "sys/sys_top.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 3,
+      "target": "sys/sys_top.sdc"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 4,
+      "target": "sys/ascal.vhd"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 5,
+      "target": "sys/scaler_config.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 6,
+      "target": "sys/scaler_palette.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 7,
+      "target": "sys/pll_hdmi_adj.vhd"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 8,
+      "target": "sys/math.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 9,
+      "target": "sys/hq2x.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 10,
+      "target": "sys/scandoubler.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 11,
+      "target": "sys/scanlines.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 12,
+      "target": "sys/shadowmask.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 13,
+      "target": "sys/video_cleaner.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 14,
+      "target": "sys/gamma_corr.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 15,
+      "target": "sys/video_mixer.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 16,
+      "target": "sys/video_freak.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 17,
+      "target": "sys/video_freezer.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 18,
+      "target": "sys/arcade_video.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 19,
+      "target": "sys/osd.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 20,
+      "target": "sys/vga_out.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 21,
+      "target": "sys/yc_out.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 22,
+      "target": "sys/i2c.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 23,
+      "target": "sys/alsa.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 24,
+      "target": "sys/i2s.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 25,
+      "target": "sys/spdif.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 26,
+      "target": "sys/audio_out.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 27,
+      "target": "sys/iir_filter.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 28,
+      "target": "sys/ltc2308.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 29,
+      "target": "sys/sigma_delta_dac.v"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 30,
+      "target": "sys/mt32pi.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 31,
+      "target": "sys/mcp23009.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 32,
+      "target": "sys/f2sdram_safe_terminator.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 33,
+      "target": "sys/ddr_svc.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 34,
+      "target": "sys/sysmem.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 35,
+      "target": "sys/sd_card.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 36,
+      "target": "sys/hps_io.sv"
+    },
+    {
+      "file": "sys/sys.qip",
+      "line": 37,
+      "target": "sys/emu_ports.vh"
+    }
+  ],
+  "restoration": {
+    "effective": {
+      "archive": "inputs.tar",
+      "hashes_and_modes_exact": true,
+      "members": 156
+    },
+    "source": {
+      "archive": "source.tar",
+      "hashes_and_modes_exact": true,
+      "members": 155
+    },
+    "support": {
+      "archive": "support-public-source.tar",
+      "hashes_and_modes_exact": true,
+      "members": 95
+    },
+    "tool": {
+      "archive": "r4-public-source.tar",
+      "hashes_and_modes_exact": true,
+      "members": 17
+    }
+  },
+  "runtime_R4_dependencies_and_original_policy_floors_present": true,
+  "scope": "HOST_ONLY_PUBLICATION_CONGRUENCE_NOT_RTL_EXECUTION",
+  "source_effective_changes": {
+    "added": [
+      "build_id.v"
+    ],
+    "modified": [
+      "Plex.qsf",
+      "sys/build_id.tcl"
+    ],
+    "only_normal_build_identity_and_date": true
+  },
+  "source_sha256": "f2bdd413c7ee8c2415545410af06f23c36f14ea2b94d7a8affb2c61011c12ed2",
+  "source_tests_SDK_builds_hardware_operations": 0
+}

@@ -1,0 +1,714 @@
+{
+  "GPL-2.0.txt": {
+    "origin": "Existing repository fpga/Plex_MiSTer/LICENSE",
+    "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+    "source_git_blob": "d159169d1050894d3ea3b98e1c965c4058208fe1"
+  },
+  "GPL-3.0.txt": {
+    "origin": "https://www.gnu.org/licenses/gpl-3.0.txt",
+    "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+  },
+  "notice_members": [
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 12,
+          "text": "//  Copyright (C) 2026 MiSTerPlex contributors"
+        }
+      ],
+      "member": "Plex.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 8,
+          "text": "//  Copyright (C) 2026 MiSTerPlex contributors"
+        }
+      ],
+      "member": "rtl/h264_mb_ctrl.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 5,
+          "text": "//  Copyright (C) 2026 MiSTerPlex contributors"
+        }
+      ],
+      "member": "rtl/h264_slice_rbsp_ram.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 9,
+          "text": "//   Copyright (c) MiSTer-devel / Sorgelig, GPL-2.0-or-later as distributed in"
+        }
+      ],
+      "member": "rtl/sdram.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 7,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 8,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 13,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 16,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/alsa.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 3,
+          "text": "//  Copyright (C) 2017-2020 Sorgelig"
+        },
+        {
+          "line": 5,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 6,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 7,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 12,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 15,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        },
+        {
+          "line": 150,
+          "text": "//  Copyright (C) 2020 Sorgelig"
+        },
+        {
+          "line": 152,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 153,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 154,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 159,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 162,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/arcade_video.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 7,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 8,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 13,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 16,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/audio_out.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 2,
+          "text": "// Copyright (c) 2020 Alexey Melnikov"
+        },
+        {
+          "line": 5,
+          "text": "// This source file is free software: you can redistribute it and/or modify"
+        },
+        {
+          "line": 6,
+          "text": "// it under the terms of the GNU General Public License as published"
+        },
+        {
+          "line": 7,
+          "text": "// by the Free Software Foundation, either version 3 of the License, or"
+        },
+        {
+          "line": 13,
+          "text": "// GNU General Public License for more details."
+        },
+        {
+          "line": 15,
+          "text": "// You should have received a copy of the GNU General Public License "
+        },
+        {
+          "line": 16,
+          "text": "// along with this program.  If not, see <http://www.gnu.org/licenses/>."
+        }
+      ],
+      "member": "sys/ddr_svc.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "// Copyright (c) 2021 bellwood420"
+        }
+      ],
+      "member": "sys/f2sdram_safe_terminator.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 4,
+          "text": "// Copyright (c) 2014 Till Harbaum <till@harbaum.org>"
+        },
+        {
+          "line": 5,
+          "text": "// Copyright (c) 2017-2026 Alexey Melnikov"
+        },
+        {
+          "line": 7,
+          "text": "// This source file is free software: you can redistribute it and/or modify"
+        },
+        {
+          "line": 8,
+          "text": "// it under the terms of the GNU General Public License as published"
+        },
+        {
+          "line": 9,
+          "text": "// by the Free Software Foundation, either version 3 of the License, or"
+        },
+        {
+          "line": 15,
+          "text": "// GNU General Public License for more details."
+        },
+        {
+          "line": 17,
+          "text": "// You should have received a copy of the GNU General Public License"
+        },
+        {
+          "line": 18,
+          "text": "// along with this program.  If not, see <http://www.gnu.org/licenses/>."
+        }
+      ],
+      "member": "sys/hps_io.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 3,
+          "text": "// Copyright (c) 2012-2013 Ludvig Strigeus"
+        },
+        {
+          "line": 4,
+          "text": "// Copyright (c) 2017,2018 Sorgelig"
+        },
+        {
+          "line": 6,
+          "text": "// This program is GPL Licensed. See COPYING for the full license."
+        }
+      ],
+      "member": "sys/hq2x.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 3,
+          "text": "//  Copyright (C) 2020 Sorgelig"
+        },
+        {
+          "line": 5,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 6,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 7,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 12,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 15,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/iir_filter.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 4,
+          "text": "//  Copyright (C) 2019 Sorgelig"
+        },
+        {
+          "line": 7,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 8,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 9,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 14,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 17,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/ltc2308.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 28,
+          "text": "//\tCopyright (C) 1991-2020 Altera Corporation"
+        },
+        {
+          "line": 38,
+          "text": "//\tany other silicon devices, unless such use is explicitly licensed under"
+        },
+        {
+          "line": 40,
+          "text": "//\tthe intellectual property, including patents, copyrights, trademarks,"
+        },
+        {
+          "line": 45,
+          "text": "//\ttheir respective licensors.  No other licenses, including any licenses"
+        }
+      ],
+      "member": "sys/pll_audio.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "// to the terms and conditions of the Intel Program License Subscription "
+        },
+        {
+          "line": 7,
+          "text": "// Agreement, Intel MegaCore Function License Agreement, or other applicable "
+        },
+        {
+          "line": 8,
+          "text": "// license agreement, including, without limitation, that your use is for the "
+        }
+      ],
+      "member": "sys/pll_cfg/altera_pll_reconfig_core.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "// to the terms and conditions of the Intel Program License Subscription "
+        },
+        {
+          "line": 7,
+          "text": "// Agreement, Intel MegaCore Function License Agreement, or other applicable "
+        },
+        {
+          "line": 8,
+          "text": "// license agreement, including, without limitation, that your use is for the "
+        }
+      ],
+      "member": "sys/pll_cfg/altera_pll_reconfig_top.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 59,
+          "text": "//\tCopyright (C) 1991-2018 Altera Corporation"
+        },
+        {
+          "line": 69,
+          "text": "//\tany other silicon devices, unless such use is explicitly licensed under"
+        },
+        {
+          "line": 71,
+          "text": "//\tthe intellectual property, including patents, copyrights, trademarks,"
+        },
+        {
+          "line": 76,
+          "text": "//\ttheir respective licensors.  No other licenses, including any licenses"
+        }
+      ],
+      "member": "sys/pll_cfg/pll_cfg.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "// to the terms and conditions of the Intel Program License Subscription "
+        },
+        {
+          "line": 7,
+          "text": "// Agreement, Intel MegaCore Function License Agreement, or other applicable "
+        },
+        {
+          "line": 8,
+          "text": "// license agreement, including, without limitation, that your use is for the "
+        }
+      ],
+      "member": "sys/pll_cfg/pll_cfg_hdmi.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 32,
+          "text": "//\tCopyright (C) 1991-2018 Altera Corporation"
+        },
+        {
+          "line": 42,
+          "text": "//\tany other silicon devices, unless such use is explicitly licensed under"
+        },
+        {
+          "line": 44,
+          "text": "//\tthe intellectual property, including patents, copyrights, trademarks,"
+        },
+        {
+          "line": 49,
+          "text": "//\ttheir respective licensors.  No other licenses, including any licenses"
+        }
+      ],
+      "member": "sys/pll_hdmi.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 4,
+          "text": "// Copyright (c) 2015 Till Harbaum <till@harbaum.org> "
+        },
+        {
+          "line": 5,
+          "text": "// Copyright (c) 2017-2021 Alexey Melnikov"
+        },
+        {
+          "line": 7,
+          "text": "// This source file is free software: you can redistribute it and/or modify "
+        },
+        {
+          "line": 8,
+          "text": "// it under the terms of the GNU General Public License as published "
+        },
+        {
+          "line": 9,
+          "text": "// by the Free Software Foundation, either version 3 of the License, or "
+        },
+        {
+          "line": 15,
+          "text": "// GNU General Public License for more details."
+        },
+        {
+          "line": 17,
+          "text": "// You should have received a copy of the GNU General Public License "
+        },
+        {
+          "line": 18,
+          "text": "// along with this program.  If not, see <http://www.gnu.org/licenses/>. "
+        }
+      ],
+      "member": "sys/scandoubler.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 4,
+          "text": "// Copyright (c) 2014 Till Harbaum <till@harbaum.org>"
+        },
+        {
+          "line": 5,
+          "text": "// Copyright (c) 2015-2018 Sorgelig"
+        },
+        {
+          "line": 7,
+          "text": "// This source file is free software: you can redistribute it and/or modify"
+        },
+        {
+          "line": 8,
+          "text": "// it under the terms of the Lesser GNU General Public License as published"
+        },
+        {
+          "line": 9,
+          "text": "// by the Free Software Foundation, either version 3 of the License, or"
+        },
+        {
+          "line": 15,
+          "text": "// GNU General Public License for more details."
+        },
+        {
+          "line": 17,
+          "text": "// You should have received a copy of the GNU General Public License"
+        },
+        {
+          "line": 18,
+          "text": "// along with this program.  If not, see <http://www.gnu.org/licenses/>."
+        }
+      ],
+      "member": "sys/sd_card.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 5,
+          "text": "//                          Copyright 2012"
+        },
+        {
+          "line": 9,
+          "text": "//                         License: GPL"
+        },
+        {
+          "line": 10,
+          "text": "// If you would like a version with a more permissive license for"
+        },
+        {
+          "line": 15,
+          "text": "// This file is open source HDL; you can redistribute it and/or "
+        },
+        {
+          "line": 16,
+          "text": "// modify it under the terms of the GNU General Public License as "
+        },
+        {
+          "line": 18,
+          "text": "// the License, or (at your option) any later version."
+        },
+        {
+          "line": 23,
+          "text": "// GNU General Public License for more details."
+        },
+        {
+          "line": 25,
+          "text": "// You should have received a copy of the GNU General Public "
+        },
+        {
+          "line": 26,
+          "text": "// License along with this file; if not, write to the Free Software"
+        }
+      ],
+      "member": "sys/spdif.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 7,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 8,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 13,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 16,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/sys_top.v"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 3,
+          "text": "// Copyright (c) 2018 Sorgelig"
+        },
+        {
+          "line": 5,
+          "text": "// This program is GPL Licensed. See COPYING for the full license."
+        }
+      ],
+      "member": "sys/video_cleaner.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 4,
+          "text": "// Copyright (c) 2020 Grabulosaure, (c) 2021 Alexey Melnikov"
+        },
+        {
+          "line": 7,
+          "text": "// Copyright (c) 2021 Alexey Melnikov"
+        },
+        {
+          "line": 9,
+          "text": "// This program is GPL Licensed. See COPYING for the full license."
+        }
+      ],
+      "member": "sys/video_freak.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 6,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 7,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 8,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 13,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 16,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/video_freezer.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 3,
+          "text": "// Copyright (c) 2017,2021 Alexey Melnikov"
+        },
+        {
+          "line": 5,
+          "text": "// This program is GPL Licensed. See COPYING for the full license."
+        }
+      ],
+      "member": "sys/video_mixer.sv"
+    },
+    {
+      "category": "license",
+      "kind": "source",
+      "matches": [
+        {
+          "line": 3,
+          "text": "//  Copyright (C) 2022 Mike Simone"
+        },
+        {
+          "line": 5,
+          "text": "//  This program is free software; you can redistribute it and/or modify it"
+        },
+        {
+          "line": 6,
+          "text": "//  under the terms of the GNU General Public License as published by the Free"
+        },
+        {
+          "line": 7,
+          "text": "//  Software Foundation; either version 2 of the License, or (at your option)"
+        },
+        {
+          "line": 12,
+          "text": "//  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for"
+        },
+        {
+          "line": 15,
+          "text": "//  You should have received a copy of the GNU General Public License along"
+        }
+      ],
+      "member": "sys/yc_out.sv"
+    }
+  ],
+  "notices": "All per-file notices remain unchanged and authoritative. Existing generated project RTL retains Intel notices; no licensed SDK or simulation-library payload is distributed."
+}

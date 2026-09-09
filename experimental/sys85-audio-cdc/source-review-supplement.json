@@ -1,0 +1,63 @@
+{
+  "disposition": "APPROVED_FOR_PHYSICAL_TRIAL",
+  "effective_sha256": "2ac8dae8355a97697803b7e023bf0742662d5f3ed1d83ecfd2f6babc7db6bc20",
+  "executed_for_publication": "No source tests, compilation, SDK, fit or hardware actions.",
+  "findings": [],
+  "meaning": "Independent source/CDC readiness only, not physical/timing/FPS/glass approval.",
+  "original_manifest_sha256": "637bf8c73c14123bd5754f78aceb40820f4360465fdd233c023185f5bae4f1a7",
+  "original_review_sha256": "0edd9060357acc914380430cbbb57fffa6ac757d1058cd4bc2cb42aac2b5c003",
+  "physical_obligations": {
+    "baseline_Gray_hold_slack_ns": -39.491,
+    "baseline_meaning": "Post-map values differ from approximate100ns failed-router repair estimates.",
+    "baseline_relationship_ns": 43.614,
+    "post_map_FIFO_read_reset_recovery_ns": -0.501,
+    "recovery_meaning": "Negative post-map recovery is not PASS; actual physical recovery/removal and pulse/distribution qualification required.",
+    "recovery_report_line": 44,
+    "unproven": "Actual capacity/routability/rawskew/MTBF/all4 timing; optimized endpoints/clocks/constants/duplicates/hierarchy floors/local/exclusion/zero-logic/observer-HDL noninterference and exact reference identity.",
+    "warning330000": "Timing-driven synthesis still skipped; ignored ASYNC_REG is not implementation proof."
+  },
+  "recovery_report_provenance": {
+    "basename": "bound-fifo-read-reset.recovery.rpt",
+    "line": 44,
+    "meaning": "Negative recovery is not PASS.",
+    "not_published": true,
+    "post_map_recovery_ns": -0.501
+  },
+  "source_disposition": [
+    "Held tuple/second-idle-edge commit/outstandingREQ-ACK ownership/retained reset intent have no identified correctness blocker; runtime reset does not abandon or alias channel phases.",
+    "FIFO common asynchronous assertion/independent synchronized release/peer-ready gating separate reset epochs, preserving registered RAM latency/depth2048/divider512. No dropped/reordered accepted samples or stale-read scenario established within the reviewed contract.",
+    "All13 new groups and202 retained capture-bit checks account for mapped endpoints, including qualifiedwr_gray[11]->wr_ptr[11] merge. Missing controls have specific constant/unused-consumer provenance. Local/later-stage timing and41 inherited framework groups remain exposed.",
+    "CLK100-init/CLK50-request/unclockedHPS exclusions are acceptable as asynchronous assertion boundaries with local synchronized release, not as proof of newly bounded external-path delay. Physical pulse width/reset distribution/recovery-removal remain mandatory."
+  ],
+  "source_sha256": "f2bdd413c7ee8c2415545410af06f23c36f14ea2b94d7a8affb2c61011c12ed2",
+  "verified": {
+    "AandS_errors": 0,
+    "AandS_warnings": 237,
+    "QSF_source_unchanged_effective_diff_only_normal_build_ID": true,
+    "SDK_members": 5921,
+    "accepted_samples": 8406,
+    "actual_final_probe_and_attempt02_inputs_bound": true,
+    "control_updates_per_rate": 10,
+    "copied_final_attempt02_database_files": 542,
+    "earlier_failed_probes_and_insufficient_attempt01_preserved": true,
+    "effective_members": 156,
+    "evidence_members": 1034,
+    "final_common_project_map": 264,
+    "fixture_members": 15,
+    "frozen_QSF_false_flag_preserved_addendum_outside_manifest": true,
+    "inherited_c31_artifact_pins": 77,
+    "manifest_pins": 38,
+    "modified_product_files": 5,
+    "native_scaler_pixel_matrices": "INHERITED_NOT_RERUN",
+    "new_product_files": 2,
+    "rendered_samples": 8378,
+    "reset_aborted_samples": 28,
+    "reset_edges_per_rate": 6,
+    "retained_framework_emu_modes_R3_feedback_bound": true,
+    "same_oracle_exact_c31_negatives": true,
+    "source_effective_restoration_bytes_modes_patch": true,
+    "source_members": 155,
+    "support_members": 111,
+    "unchanged_old_product_members": 148
+  }
+}
