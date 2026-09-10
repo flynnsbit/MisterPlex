@@ -1,0 +1,28 @@
+{
+  "all_original_member_occurrences": 1477,
+  "byte_exact_archive_member_mode_and_complete_subset_equality": true,
+  "complete_original_product_archives": 8,
+  "explicit_omitted_original_member_occurrences": 7,
+  "full_product_effective_members": 628,
+  "full_product_source_members": 624,
+  "full_source_and_effective_digests_recomputed_from_complete_original_sets": true,
+  "image_playback_FPS_clean_audio_acceptance": false,
+  "materialized_product_support_runtime_files": 744,
+  "no_unapproved_orchestration_published": true,
+  "normal_effective_injection": [
+    "QSF source-derived build ID",
+    "sys/build_id.tcl fixed260906",
+    "build_id.v"
+  ],
+  "policy_and_sibling_module_dependencies_present": true,
+  "prepared_and_executed_support": "Two distinct98/100 source subsets, with exact original100-member maps each.",
+  "privacy_and_license_boundary_inspected": true,
+  "public_file_map_self_exclusion": "public-file-map.json is bound by its Git subtree, not recursively by itself.",
+  "public_portability_adaptations": [],
+  "qualified_R3": "22/25 public source, complete original member map,3 explicitly capture-derived omissions.",
+  "result": "PASS",
+  "scope": "HOST_ONLY_PUBLICATION_INTEGRITY",
+  "selected_original_member_occurrences": 1470,
+  "source_tool_policy_semantic_changes": 0,
+  "tests_RTL_SDK_compiler_fit_hardware_executed": 0
+}

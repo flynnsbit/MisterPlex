@@ -1,0 +1,126 @@
+{
+  "accounting_historical_explanation": "The first adapter charged five observed ELF processes as five A&S invocations. It was then changed to count complete A&S initialization/command/report records, which yielded one per cohort. Later argv evidence identifies child map processes using --ipc_mode, --parallel=1, --disable_all_banners, --helper_type=rtl or mls. Therefore four complete A&S commands is NOT the total map-process/command observation count. A strict budget interpretation including IPC helper invocations exceeds six; unqualified compliance is not claimed. The reclassification and original five-count receipt are retained, not rewritten.",
+  "accounting_limitation": {
+    "c111_orchestration_admission": false,
+    "children": 16,
+    "complete_A_and_S_command_report_records": 4,
+    "directly_retained_IPC_child_argv": 12,
+    "exec_event_trace_exists": false,
+    "observed_map_ELF_processes": 20,
+    "original_five_process_charge_and_reclassification_preserved": true,
+    "retroactive_budget_waiver": false,
+    "strict_six_invocation_compliance": "NOT_CLAIMED",
+    "unretained_first_child_argv": 4
+  },
+  "accounting_observation_limits": "No exec-event trace was captured. First four child roles are inferred from parentage/two paired phases, not directly confirmed by argv. No extra independent full A&S/STA/fit/asm flow was observed. All four top-level maps and eight RTL batches completed successfully with unchanged product inputs.",
+  "disposition": "APPROVED_MERGED_SOURCE_AND_EXECUTION_WITH_ACCOUNTING_LIMITATION",
+  "guarded_RTL_batches": 8,
+  "limits": [
+    "Model cycles and reset pulses are not live FPS, physical reset distribution or timing.",
+    "Checker-paced SYS20 display intervals remain 1671560 cycles; savings are copy work, not an end-to-end frame-rate claim.",
+    "81920 logical bits and 96-M10K source floor plus estimated ALMs are not routed allocation.",
+    "Unsupported I4 remains unsupported; original timing, reader, HDMI and reset gates remain open.",
+    "Original RGB/runtime gaps remain historical. Produced runtime, media, ELF and SDK archives are not published.",
+    "Original c111 orchestration is neither included as an operational tool nor admitted.",
+    "No image, LAN Plex Web cast, 24fps, clean audio, routed or physical acceptance."
+  ],
+  "model_reset_minimum_ns": {
+    "sys20-default": 50.004,
+    "sys85-default": 11.768
+  },
+  "ordinary_reference_YUV_model_pictures": 26,
+  "original_execution_manifest_sha256": "3a7c57bfa97cd2ba09566445879c2a215ec2ade967e410719cc199c9fac5c5d3",
+  "picture_count_derivation": "Sum of reviewed integrated-case row counts; actual/reference I420 identities match. Media and raw rows omitted.",
+  "preserved": [
+    "Both native and RGB565 painters and real retirement, readback, error and ownership fences.",
+    "Shared R2 model read latency2 and initiation interval2; no special copy fast RAM.",
+    "P/reference/deblock, default 8KiB AU and separate VCL limit, R3/E1FF and native DAR.",
+    "All source clock selections and default-off versus explicit native-copy selection."
+  ],
+  "publication_execution": {
+    "SDK": 0,
+    "compiler": 0,
+    "fit": 0,
+    "hardware": 0,
+    "tests": 0
+  },
+  "resource_estimates_not_routed_proof": {
+    "sys20-default": {
+      "actual_fitted_M10K_count": null,
+      "estimated_ALMs_needed": 38330,
+      "floor_basis": "Unchanged frame-store source;48 actual A&S SDP logical RAM rows,64-bit ports,81920 logical bits.96M10K requirement retained; no routed allocation claimed.",
+      "frame_store_logical_RAMs": 48,
+      "frame_store_logical_bits": 81920,
+      "input_sha256": "be3081d7d9536f5c6e22e772e7a565f56fd1bfb76617c536b5683126d706d9d0",
+      "resource_values_are_estimates_not_routed_ALMs": true,
+      "retained_source_M10K_floor": 96,
+      "source_sha256": "ffcb6cf745bacca39fdd15d3ba4508bcbff529feab7de1f0675a5467057b53db"
+    },
+    "sys20-pipeline": {
+      "actual_fitted_M10K_count": null,
+      "estimated_ALMs_needed": 38432,
+      "floor_basis": "Unchanged frame-store source;48 actual A&S SDP logical RAM rows,64-bit ports,81920 logical bits.96M10K requirement retained; no routed allocation claimed.",
+      "frame_store_logical_RAMs": 48,
+      "frame_store_logical_bits": 81920,
+      "input_sha256": "b4dabf62f433e807ab63f6d2a901e03bea56c5bf512394682c0c82a374c74604",
+      "resource_values_are_estimates_not_routed_ALMs": true,
+      "retained_source_M10K_floor": 96,
+      "source_sha256": "5ab65619a0610a00f07e80161e2c7666fe16ac8e511c37e33472e7e1a47f1f68"
+    },
+    "sys85-default": {
+      "actual_fitted_M10K_count": null,
+      "estimated_ALMs_needed": 38286,
+      "floor_basis": "Unchanged frame-store source;48 actual A&S SDP logical RAM rows,64-bit ports,81920 logical bits.96M10K requirement retained; no routed allocation claimed.",
+      "frame_store_logical_RAMs": 48,
+      "frame_store_logical_bits": 81920,
+      "input_sha256": "f59a79dd0b9b8c4f111431787a2d48862b873297298ff184a98ea40d3c5ce237",
+      "resource_values_are_estimates_not_routed_ALMs": true,
+      "retained_source_M10K_floor": 96,
+      "source_sha256": "60fb625078fc4651a238bb9803af2f30faf5c8ce9e67b165600b9b57cd617a89"
+    },
+    "sys85-pipeline": {
+      "actual_fitted_M10K_count": null,
+      "estimated_ALMs_needed": 38476,
+      "floor_basis": "Unchanged frame-store source;48 actual A&S SDP logical RAM rows,64-bit ports,81920 logical bits.96M10K requirement retained; no routed allocation claimed.",
+      "frame_store_logical_RAMs": 48,
+      "frame_store_logical_bits": 81920,
+      "input_sha256": "ae6af0d17928eb6a6107751e6efe0a741dbd3621471d6326e55e9b972fb101d9",
+      "resource_values_are_estimates_not_routed_ALMs": true,
+      "retained_source_M10K_floor": 96,
+      "source_sha256": "4bef165d0c9242e25ca938ff17f6ead882aacc7842b44e3c497e7bb64e1d357a"
+    }
+  },
+  "retention_delta": {
+    "changed_member": "project/tests/rtl/fpga_video_publish_tb.cpp",
+    "meaning": "Only actual native RGB24 and accepted legacy RGB565 retention changed; no model tick, product or existing correctness-assertion changes.",
+    "patch": "test-runtime-retention.patch",
+    "patch_sha256": "1f79034a9e2312498541dcf99154f37898aec1341acfa0ab3a560d7b130770cf",
+    "product_changes": []
+  },
+  "review_sha256": "485fa0e09ba744e07b5b62c9fbf00dc09221df890754f7a55b7b1bf42b0c0a33",
+  "same_model_full240_SYS20": [
+    {
+      "copy_to_final_accept_cycles_saved": 117299,
+      "copy_to_final_accept_ms_saved_at_20MHz": 5.86495,
+      "default_display_interval_cycles": 0,
+      "pipeline_display_interval_cycles": 0,
+      "sequence": 0
+    },
+    {
+      "copy_to_final_accept_cycles_saved": 117359,
+      "copy_to_final_accept_ms_saved_at_20MHz": 5.86795,
+      "default_display_interval_cycles": 1671560,
+      "pipeline_display_interval_cycles": 1671560,
+      "sequence": 1
+    },
+    {
+      "copy_to_final_accept_cycles_saved": 117342,
+      "copy_to_final_accept_ms_saved_at_20MHz": 5.8671,
+      "default_display_interval_cycles": 1671560,
+      "pipeline_display_interval_cycles": 1671560,
+      "sequence": 2
+    }
+  ],
+  "significant_review_findings": [],
+  "source_manifest_sha256": "8c9ca88c845cf8dd2147f2f4d0bb192478f52f8440c54e71c06508b5acfa10a7"
+}

@@ -1,0 +1,21 @@
+{
+  "Plex_sha256": "2ce1353fdf57826ef2176a708b65044ae57b6c36cd2e89e2a645a71b187a54cc",
+  "QSF_sha256": "408c4e5294b73b0fce7dfb726da3e141c78f96ac7dd69c2a3e0ccaa0a43e87b4",
+  "SDC_bytes_unchanged_from_same_0209_profile": true,
+  "SDC_nonempty_and_ownership_guards_preserved": true,
+  "SYS85_selected_body_identical": true,
+  "SYS_MHz": 85,
+  "actual_preprocessed_or_synthesized_endpoint_evidence": null,
+  "root_body_sha256": "fab737a6041b833851a91cb5e8906bf7c3066e16beaa4026750874ab91626fc3",
+  "root_request": "RESET | status[0] | buttons[1] | ~pll_locked",
+  "root_reset_output": "emu|reset_sys_sync[1]",
+  "root_state": "emu|reset_sys_sync[0:1]",
+  "root_to_audio_output": "MPX_AUDIO_RESET = reset",
+  "routed_SDC_sha256": "d576f8d06766477bf522973e232a921c37c618803d30adc7b2a41f3e1eab4ed9",
+  "second_stage_gate_local_consumer_and_distribution_paths_remain_timed": true,
+  "selected_condition": "PLEX_CLK_SYS_85",
+  "selected_root": "existing asynchronous-assertion/local-two-edge release",
+  "selection_basis": "Exact known local preprocessor guard shape plus actual active QSF selectors; source inspection only, not an executed preprocessor/compiler",
+  "unrelated_profiles": "Raw-reset branch unchanged unless the explicit SYS20 reset opt-in is selected",
+  "variant": "sys85-default"
+}

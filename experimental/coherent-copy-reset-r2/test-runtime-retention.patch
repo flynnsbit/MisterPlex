@@ -1,0 +1,60 @@
+--- a/tests/rtl/fpga_video_publish_tb.cpp
++++ b/tests/rtl/fpga_video_publish_tb.cpp
+@@ -70,6 +70,7 @@
+     const std::vector<uint8_t>* legacy_oracle = nullptr;
+     unsigned legacy_width = 0, legacy_height = 0;
+     std::array<uint64_t, FULL_AU_FRAMES> legacy_pixels{};
++    std::array<std::vector<uint16_t>, FULL_AU_FRAMES> legacy_rgb_payload;
+     unsigned metric_frame = 0;
+     bool metrics_active = false;
+     bool previous_metric_au = false;
+@@ -263,6 +264,7 @@
+                           << " expected=" << expected << '\n';
+             check(d.legacy_rgb565 == expected, "legacy RGB565 drain differs from ordinary decoded pixels");
+             ++legacy_pixels[d.observed_au_seq];
++            legacy_rgb_payload[d.observed_au_seq].push_back(d.legacy_rgb565);
+         }
+         if (FULL_AU && sys_rise && !d.reset && !negative_guard) {
+             if (d.observed_au_active) {
+@@ -270,6 +272,7 @@
+                 if (!previous_metric_au || metric_frame != d.observed_au_seq) {
+                     metrics[d.observed_au_seq] = FrameMetrics{};
+                     legacy_pixels[d.observed_au_seq] = 0;
++                    legacy_rgb_payload[d.observed_au_seq].clear();
+                 }
+                 metric_frame = d.observed_au_seq;
+                 if (d.observed_vcl) metrics[metric_frame].vcl = time / kSysPeriod;
+@@ -919,6 +922,15 @@
+                               << std::dec << '\n';
+                     throw std::runtime_error("actual present_core CE/RGB differs from decoded reference");
+                 }
++            std::ofstream rgb_output(actual_path + ".frame-" + std::to_string(frame) + ".native-rgb24",
++                                     std::ios::binary);
++            check(bool(rgb_output), "cannot retain actual native RGB payload");
++            for (const auto pixel : s.native_pixels[frame]) {
++                const char rgb[] = {char(pixel >> 16), char(pixel >> 8), char(pixel)};
++                rgb_output.write(rgb, sizeof(rgb));
++            }
++            rgb_output.close();
++            check(bool(rgb_output), "cannot finish actual native RGB payload");
+             std::cout << "NATIVE_PASS seq=" << frame << " DE=" << line_width << "x"
+                       << s.native_lines[frame].size() << " RGB_samples=" << expected.size()
+                       << " scandouble=" << FULL_AU_SCANDOUBLE << " source_DAR=content-only\n";
+@@ -947,6 +959,17 @@
+         ++s.verified_frames;
+         check(s.legacy_pixels[frame] == uint64_t(visible_w) * visible_h,
+               "legacy RGB drain did not accept every visible source pixel exactly once");
++        check(s.legacy_rgb_payload[frame].size() == s.legacy_pixels[frame],
++              "legacy RGB payload lost an accepted sample");
++        std::ofstream legacy_output(actual_path + ".frame-" + std::to_string(frame) + ".legacy-rgb565le",
++                                    std::ios::binary);
++        check(bool(legacy_output), "cannot retain accepted legacy RGB payload");
++        for (const auto pixel : s.legacy_rgb_payload[frame]) {
++            const char rgb[] = {char(pixel), char(pixel >> 8)};
++            legacy_output.write(rgb, sizeof(rgb));
++        }
++        legacy_output.close();
++        check(bool(legacy_output), "cannot finish accepted legacy RGB payload");
+         std::cout << "LEGACY_RGB_PASS seq=" << frame << " pixels=" << s.legacy_pixels[frame] << '\n';
+         const auto& metric = s.metrics[frame];
+         check(metric.vcl && metric.promoted >= metric.vcl && metric.copy >= metric.promoted &&

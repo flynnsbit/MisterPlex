@@ -1,0 +1,358 @@
+--- a/project/tests/unit/test_fpga_audio_routing.py
++++ b/project/tests/unit/test_fpga_audio_routing.py
+@@ -8,8 +8,9 @@
+ import shutil
+ import subprocess
+ import sys
++import tarfile
+ import unittest
+-from pathlib import Path
++from pathlib import Path, PurePosixPath
+ 
+ ROOT = Path(__file__).resolve().parents[2]
+ sys.path.insert(0, str(ROOT / "scripts"))
+@@ -18,34 +19,155 @@
+ 
+ 
+ class AudioRoutingTests(unittest.TestCase):
+-    def _actual_sys_mhz(self):
+-        macros = check_define_parity.discover_quartus_macros()
++    def _product_macros(self, qsf):
++        # Reuse the existing parser without its project-relative lint/date
++        # assumptions: the pinned negative may be restored outside this ROOT.
++        macros = {}
++        for line in qsf.read_text().splitlines():
++            line = check_define_parity.strip_hash_comment(line)
++            match = re.search(r"\bset_global_assignment\b.*?-name\s+VERILOG_MACRO\s+(.+)$", line)
++            if match:
++                macro = check_define_parity.parse_verilog_macro(match[1], str(qsf))
++                self.assertIsNotNone(macro, "unparseable product macro")
++                self.assertNotIn(macro.name, macros, "duplicate/ambiguous product macro")
++                macros[macro.name] = macro
++        return macros
++
++    def _actual_sys_mhz(self, qsf=None):
++        qsf = qsf or ROOT / "fpga/Plex_MiSTer/Plex.qsf"
++        macros = self._product_macros(qsf)
++        for name in ("FPGA_VIDEO_320", "DDR_FRAME_STORE", "SDRAM_CLK_142"):
++            self.assertIn(name, macros, "missing staged product profile")
++            self.assertEqual(macros[name].value, "1", "unsupported staged product profile")
++        self.assertNotIn("PLEX_SELECTED_ROOT_RESET_SYNC", macros, "private RTL selection is not a QSF override")
+         clocks = {name for name in macros if name.startswith("PLEX_CLK_SYS_")}
+         self.assertLessEqual(clocks, {"PLEX_CLK_SYS_85"},
+                              "reset/routing cases support only the staged SYS20/SYS85 family")
+         if "PLEX_CLK_SYS_85" in macros:
+             self.assertEqual(macros["PLEX_CLK_SYS_85"].value, "1")
++            self.assertNotIn("PLEX_SYS20_RESET_SYNC", macros, "contradictory SYS85/SYS20 reset selectors")
+             return 85
++        if "PLEX_SYS20_RESET_SYNC" in macros:
++            self.assertEqual(macros["PLEX_SYS20_RESET_SYNC"].value, "1")
+         return 20
++
++    def _selected_source(self, product, relative, output):
++        qsf = product / "Plex.qsf"
++        self._actual_sys_mhz(qsf)
++        destination = output / relative.replace("/", "__")
++        destination.mkdir(parents=True)
++        defines = [f"-D{name}={macro.value}"
++                   for name, macro in sorted(self._product_macros(qsf).items())]
++        stub = ROOT / "tests/rtl/fpga_audio_routing/build_id.v"
++        self.assertTrue(stub.is_file(), "existing build-date stub is required")
++        command = [str(ROOT / "scripts/run_verilator.sh"), "-E",
++                   f"-I{product}", f"-I{product / 'rtl'}", f"-I{product / 'sys'}",
++                   f"-I{stub.parent}", *defines, str(product / relative)]
++        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=180)
++        (destination / "command.json").write_text(json.dumps(command) + "\n")
++        (destination / "selected.sv").write_text(result.stdout)
++        (destination / "preprocess.log").write_text(result.stderr)
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        selected = re.sub(r"(?m)^[ \t]*`line[^\n]*\n?", "", result.stdout)
++        self.assertNotRegex(selected, r"(?m)^[ \t]*`(?:ifdef|ifndef|elsif|else|endif|include)\b",
++                            "product selection was not preprocessed")
++        binding = {
++            "product": str(product), "source": relative, "production_defines": defines,
++            "input_files": {str(p.relative_to(product)): hashlib.sha256(p.read_bytes()).hexdigest()
++                            for p in sorted(product.rglob("*")) if p.is_file()},
++            "qsf_sha256": hashlib.sha256(qsf.read_bytes()).hexdigest(),
++            "stub_sha256": hashlib.sha256(stub.read_bytes()).hexdigest(),
++            "selected_source_sha256": hashlib.sha256(selected.encode()).hexdigest(),
++            "preprocessor_exit": result.returncode,
++        }
++        (destination / "binding.json").write_text(json.dumps(binding, indent=2) + "\n")
++        return selected, binding
++
++    def _one_selected(self, source, pattern, label):
++        matches = list(re.finditer(pattern, source, re.M | re.S))
++        self.assertEqual(len(matches), 1, f"selected product has missing/ambiguous {label}")
++        return matches[0].group(0)
++
++    def _selected_process(self, source, clock, reset):
++        return self._one_selected(source, r"^([ \t]*)always @\(posedge " + clock +
++            r" or posedge " + reset + r"\) begin.*?^\1end\b", clock + "/" + reset)
++
++    def _selected_root(self, product, output):
++        selected, binding = self._selected_source(product, "Plex.sv", output)
++        self.assertRegex(selected, r"(?m)^[ \t]*assign\s+MPX_AUDIO_RESET\s*=\s*reset\s*;",
++                         "actual root-to-audio reset connection is absent")
++        wire = self._one_selected(selected, r"^[ \t]*wire\s+reset\s*=[^;]+;", "root reset output")
++        compact = "".join(wire.split())
++        root = wire
++        if compact == "wirereset=reset_sys_sync[1];":
++            request = self._one_selected(selected, r"^[ \t]*wire\s+reset_request\s*=[^;]+;", "root request")
++            declaration = self._one_selected(selected,
++                r"^[ \t]*reg\s+\[1:0\]\s+reset_sys_sync\s*=[^;]+;", "root state")
++            process = self._selected_process(selected, "clk_sys", "reset_request")
++            self.assertEqual("".join(request.split()),
++                "wirereset_request=RESET|status[0]|buttons[1]|~pll_locked;")
++            self.assertEqual("".join(declaration.split()), "reg[1:0]reset_sys_sync=2'b11;")
++            self.assertEqual("".join(process.split()),
++                "always@(posedgeclk_sysorposedgereset_request)begin"
++                "if(reset_request)reset_sys_sync<=2'b11;"
++                "elsereset_sys_sync<={reset_sys_sync[0],1'b0};end")
++            root = "\n".join((request, declaration, process, wire))
++            kind = "synchronized"
++        elif compact == "wirereset=RESET|status[0]|buttons[1];":
++            self.assertNotRegex(selected, r"\b(?:reg|wire)[^;\n]*\b(?:reset_sys_sync|reset_request)\b",
++                                "raw output coexists with unexpected root state")
++            kind = "raw"
++        else:
++            self.fail("unknown selected root reset expression: " + compact)
++        macros = self._product_macros(product / "Plex.qsf")
++        expected_sync = "PLEX_CLK_SYS_85" in macros or "PLEX_SYS20_RESET_SYNC" in macros
++        self.assertEqual(kind == "synchronized", expected_sync,
++                         "actual selected root does not match the explicit product reset profile")
++        binding.update(selected_root=kind, selected_root_sha256=hashlib.sha256(root.encode()).hexdigest(),
++                       SYS_MHz=self._actual_sys_mhz(product / "Plex.qsf"),
++                       two_edge_retention_supported=kind == "synchronized")
++        (output / "root-selection.json").write_text(json.dumps(binding, indent=2) + "\n")
++        return root, binding
++
++    def _require_root_retention(self, binding):
++        self.assertEqual(binding["selected_root"], "synchronized",
++                         "selected raw root cannot claim two-edge retention")
++
++    def _run_reset_harness(self, output, name, harness):
++        source = output / (name + ".sv")
++        source.write_text(harness)
++        command = [str(ROOT / "scripts/run_verilator.sh"), "--binary", "--timing", "--assert",
++                   "-j", "1", "--Mdir", str(output / "obj"), "--top-module", name,
++                   "-Wno-fatal", str(source)]
++        (output / "command.json").write_text(json.dumps(command) + "\n")
++        with (output / "build.log").open("w") as log:
++            result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=180)
++        self.assertEqual(result.returncode, 0, (output / "build.log").read_text())
++        result = subprocess.run([output / ("obj/V" + name)], text=True, capture_output=True, timeout=60)
++        (output / "result.log").write_text(result.stdout + result.stderr)
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++        return result.stdout
+ 
+     def test_routed_reset_boundaries(self):
+         output = Path(os.environ["AUDIO_BOUNDARY_OUTPUT"]) / "routed-reset"
+         output.mkdir(parents=True)
+         product = ROOT / "fpga/Plex_MiSTer"
+-        plex = (product / "Plex.sv").read_text()
+-        top = (product / "sys/sys_top.v").read_text()
+-        store = (product / "rtl/ddr_frame_store.sv").read_text()
++        root, root_binding = self._selected_root(product, output)
++        self._require_root_retention(root_binding)
++        top, _ = self._selected_source(product, "sys/sys_top.v", output)
++        store, _ = self._selected_source(product, "rtl/ddr_frame_store.sv", output)
+         blocks = []
+-        for source, clock, reset in ((plex, "clk_sys", "reset_request"),
+-                                     (top, "clk_sys", "reset_req"),
++        for source, clock, reset in ((top, "clk_sys", "reset_req"),
+                                      (top, "clk_audio", "mpx_audio_reset"),
+                                      (store, "clk_ddr", "reset")):
+-            match = re.search(r"^([ \t]*)always @\(posedge " + clock + r" or posedge " + reset +
+-                              r"\) begin.*?^\1end\b", source, re.S | re.M)
+-            self.assertIsNotNone(match)
+-            blocks.append(match[0])
+-        blocks.append(re.search(r"always @\(posedge clk_hdmi\) begin\n"
+-                               r"\s*scaler_out_meta.*?\nend", top, re.S)[0])
++            blocks.append(self._selected_process(source, clock, reset))
++        blocks.append(self._one_selected(top, r"^([ \t]*)always @\(posedge clk_hdmi\) begin\n"
++                                        r"\s*scaler_out_meta.*?^\1end\b", "local HDMI enable"))
++        declarations = []
++        for source, member in ((top, "mpx_audio_reset_sync"), (top, "scaler_reset_sync"),
++                               (store, "reset_ddr_s1"), (top, "scaler_out_meta")):
++            declarations.append(self._one_selected(source,
++                r"^[ \t]*reg\b[^;\n]*\b" + member + r"\b[^;\n]*;", member + " declaration"))
+         harness = r"""
+ `timescale 1ns/1ps
+ module routed_reset_tb;
+@@ -55,30 +177,41 @@
+ always #20.341 if(audio_run) clk_audio=~clk_audio;
+ always #5.556 if(ddr_run) clk_ddr=~clk_ddr;
+ always #3.366 clk_hdmi=~clk_hdmi;
+-reg reset_request=0,reset_req=0,scaler_out=0;
+-reg [1:0] reset_sys_sync=3,mpx_audio_reset_sync=3,scaler_reset_sync=3;
+-reg reset_ddr_s1=1,reset_ddr_s2=1;
+-reg scaler_out_meta=0,scaler_out_hdmi=0;
+-wire reset=reset_sys_sync[1],mpx_audio_reset=reset;
++reg RESET=0,reset_req=0,scaler_out=0,pll_locked=1;
++reg [127:0] status=0;
++reg [1:0] buttons=0;
++__ACTUAL_ROOT__
++__ACTUAL_DECLARATIONS__
++wire mpx_audio_reset=reset;
+ __ACTUAL_BLOCKS__
+ localparam realtime SYS_PERIOD_NS=11.764;
+ realtime minimum_root_width=1000.0;
+-task automatic root_pulse_phase(input realtime offset);
++task automatic drive_request(input bit value, input integer cause);
++ case(cause)
++  0: RESET=value;
++  1: status[0]=value;
++  2: buttons[1]=value;
++  3: pll_locked=!value;
++  default: $fatal(1,"unknown real root request input");
++ endcase
++endtask
++task automatic root_pulse_phase(input realtime offset,
++                                input realtime request_ns=0.002, input integer cause=0);
+  realtime asserted_at, deasserted_at, width;
+  begin
+   @(posedge clk_sys); #(offset);
+-  reset_request=1; asserted_at=$realtime;
+-  #0.002; reset_request=0; deasserted_at=$realtime;
++  drive_request(1,cause); asserted_at=$realtime;
++  #(request_ns); drive_request(0,cause); deasserted_at=$realtime;
+   @(posedge clk_sys); #0.001;
+   assert(reset) else $fatal(1,"root released on first release edge");
+   @(negedge reset); width=$realtime-asserted_at;
+-  assert(width >= SYS_PERIOD_NS-0.001 &&
+-         width <= 2.0*SYS_PERIOD_NS+0.003)
++  assert(width >= request_ns+SYS_PERIOD_NS-0.001 &&
++         width <= request_ns+2.0*SYS_PERIOD_NS+0.001)
+    else $fatal(1,"root pulse differs from Wrequest + phase wait + one period");
+   assert($realtime-deasserted_at >= SYS_PERIOD_NS-0.001)
+    else $fatal(1,"root lost one complete release-edge interval");
+   if(width<minimum_root_width) minimum_root_width=width;
+-  $display("ROOT_PULSE offset_ns=%0.3f width_ns=%0.3f release_edges=2",offset,width);
++  $display("ROOT_PULSE offset_ns=%0.3f width_ns=%0.3f release_edges=2 request_ns=%0.3f cause=%0d",offset,width,request_ns,cause);
+   #200;
+  end
+ endtask
+@@ -87,10 +220,12 @@
+  assert(!reset && !mpx_audio_reset_sync[1] && !reset_ddr_s2 && !scaler_reset_sync[1])
+   else $fatal(1,"initial release");
+  @(negedge clk_sys); sys_run=0;
+- reset_request=1; reset_req=1; #1;
++ RESET=1; reset_req=1; #1;
+  assert(reset && mpx_audio_reset_sync==3 && reset_ddr_s2 && scaler_reset_sync==3)
+   else $fatal(1,"short asynchronous assertion");
+- reset_request=0; reset_req=0; #400;
++ RESET=0; reset_req=0; #100;
++ status[0]=1; #0.002; status[0]=0; #100;
++ buttons[1]=1; #0.002; buttons[1]=0; #200;
+  assert(reset && mpx_audio_reset_sync==3 && reset_ddr_s2 && scaler_reset_sync==3)
+   else $fatal(1,"stopped SYS lost reset intent");
+  sys_run=1; #500;
+@@ -98,7 +233,7 @@
+   else $fatal(1,"SYS restart release");
+  @(negedge clk_audio); audio_run=0;
+  @(negedge clk_ddr); ddr_run=0;
+- reset_request=1; #1; reset_request=0; #500;
++ RESET=1; #1; RESET=0; #500;
+  assert(!reset && mpx_audio_reset_sync==3 && reset_ddr_s2)
+   else $fatal(1,"stopped destination lost reset intent");
+  audio_run=1; ddr_run=1;
+@@ -116,6 +251,9 @@
+  root_pulse_phase(5.880);
+  root_pulse_phase(8.800);
+  root_pulse_phase(11.760);
++ root_pulse_phase(SYS_PERIOD_NS-0.001,0.004,1);
++ root_pulse_phase(0.010,SYS_PERIOD_NS+0.010,2);
++ root_pulse_phase(SYS_PERIOD_NS*0.5,0.002,3);
+  assert(minimum_root_width < SYS_PERIOD_NS+0.010)
+   else $fatal(1,"phase sweep missed the one-period root-pulse corner");
+  assert(minimum_root_width < 2.0*SYS_PERIOD_NS-1.0)
+@@ -138,19 +276,75 @@
+             "simulation_period_ns": 11.764 if sys_mhz == 85 else 50.0,
+             "physical_pulse_guarantee": False,
+         }, indent=2) + "\n")
+-        source = output / "routed_reset_tb.sv"
+-        source.write_text(harness.replace("__ACTUAL_BLOCKS__", "\n".join(blocks)))
+-        command = [str(ROOT / "scripts/run_verilator.sh"), "--binary", "--timing", "--assert",
+-                   "-j", "1", "--Mdir", str(output / "obj"), "--top-module", "routed_reset_tb",
+-                   "-Wno-fatal", str(source)]
+-        (output / "command.json").write_text(json.dumps(command) + "\n")
+-        with (output / "build.log").open("w") as log:
+-            result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+-        self.assertEqual(result.returncode, 0, (output / "build.log").read_text())
+-        result = subprocess.run([output / "obj/Vrouted_reset_tb"], text=True, capture_output=True, timeout=60)
+-        (output / "result.log").write_text(result.stdout + result.stderr)
+-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+-        self.assertIn("PASS routed reset:", result.stdout)
++        harness = harness.replace("__ACTUAL_ROOT__", root)
++        harness = harness.replace("__ACTUAL_DECLARATIONS__", "\n".join(declarations))
++        harness = harness.replace("__ACTUAL_BLOCKS__", "\n".join(blocks))
++        self.assertIn("PASS routed reset:", self._run_reset_harness(output, "routed_reset_tb", harness))
++
++    def test_frozen_sys20_raw_reset_negative(self):
++        output = Path(os.environ["AUDIO_BOUNDARY_OUTPUT"]) / "frozen0209-raw-reset"
++        output.mkdir(parents=True)
++        fixture = ROOT / "tests/fixtures/coherent-reset-0209"
++        meta = json.loads((fixture / "inputs.json").read_text())
++        self.assertEqual(meta["source_sha256"], "0e2b1bd10bb2e6ae3e0833abb647296989977e10a5e7352c2f213e860168ada4")
++        self.assertEqual(meta["input_sha256"], "212ed703b16c8c82c60ca59772133b831de0bba6fa35a16b9c00cffa9f06723d")
++        self.assertEqual(hashlib.sha256(json.dumps(meta["input_files"], sort_keys=True).encode()).hexdigest(),
++                         meta["input_sha256"])
++        archive = fixture / "inputs.tar"
++        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), meta["archive_sha256"])
++        product = output / "source"
++        product.mkdir()
++        restored = {}
++        with tarfile.open(archive) as source:
++            for member in source:
++                relative = PurePosixPath(member.name)
++                self.assertTrue(member.isfile() and not relative.is_absolute() and ".." not in relative.parts)
++                self.assertNotIn(member.name, restored)
++                body = source.extractfile(member).read()
++                restored[member.name] = hashlib.sha256(body).hexdigest()
++                self.assertEqual(restored[member.name], meta["input_files"][member.name])
++                path = product / member.name
++                path.parent.mkdir(parents=True, exist_ok=True)
++                with path.open("xb") as out:
++                    out.write(body)
++                path.chmod(0o444)
++        self.assertEqual(restored, meta["input_files"])
++        root, binding = self._selected_root(product, output)
++        self.assertEqual(binding["SYS_MHz"], 20)
++        self.assertEqual(binding["selected_root"], "raw")
++        self.assertNotIn("reset_sys_sync", root)
++        harness = r"""
++`timescale 1ns/1ps
++module raw_reset_0209_tb;
++reg clk_sys=0,sys_run=1,RESET=0,pll_locked=1;
++reg [127:0] status=0;
++reg [1:0] buttons=0;
++always #25 if(sys_run) clk_sys=~clk_sys;
++__ACTUAL_ROOT__
++initial begin
++ #100; @(negedge clk_sys); sys_run=0;
++ RESET=1; #0.002;
++ assert(reset) else $fatal(1,"frozen selected raw reset failed assertion");
++ RESET=0; #0.001;
++ assert(!reset) else $fatal(1,"frozen raw reset unexpectedly retained stopped-clock request");
++ status[0]=1; #0.002; status[0]=0; #0.001;
++ assert(!reset) else $fatal(1,"frozen raw status reset unexpectedly retained");
++ buttons[1]=1; #0.002; buttons[1]=0; #100;
++ assert(!reset) else $fatal(1,"frozen raw button reset unexpectedly retained");
++ $display("RAW_RESET_OBSERVED selected0209=1 stopped_SYS=1 retained_request=0");
++ $finish;
++end
++endmodule
++"""
++        stdout = self._run_reset_harness(output, "raw_reset_0209_tb", harness.replace("__ACTUAL_ROOT__", root))
++        self.assertIn("RAW_RESET_OBSERVED selected0209=1 stopped_SYS=1 retained_request=0", stdout)
++        with self.assertRaisesRegex(AssertionError, "selected raw root cannot claim two-edge retention"):
++            self._require_root_retention(binding)
++        (output / "negative-control.json").write_text(json.dumps({
++            "source_sha256": meta["source_sha256"], "input_sha256": meta["input_sha256"],
++            "selected_root": binding["selected_root"], "two_edge_retention_claim_rejected": True,
++            "compile_and_simulation_succeeded": True, "compile_failure_used_as_negative": False,
++        }, indent=2) + "\n")
+ 
+     def _audio_boundary_binary(self, name, source):
+         output = Path(os.environ["AUDIO_BOUNDARY_OUTPUT"]) / name

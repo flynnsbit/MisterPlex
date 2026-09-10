@@ -1,0 +1,32 @@
+--- a/Plex.qsf
++++ b/Plex.qsf
+@@ -141,3 +141,5 @@
+ 
+ # Explicit experimental native-copy opt-in; all clocks and fences unchanged.
+ set_global_assignment -name VERILOG_MACRO "PLEX_NATIVE_COPY_PIPELINE=1"
++
++set_global_assignment -name VERILOG_MACRO "PLEX_SYS20_RESET_SYNC=1"
+--- a/Plex.sv
++++ b/Plex.sv
+@@ -282,7 +282,13 @@
+ 	.locked(pll_locked)
+ );
+ 
++`undef PLEX_SELECTED_ROOT_RESET_SYNC
+ `ifdef PLEX_CLK_SYS_85
++`define PLEX_SELECTED_ROOT_RESET_SYNC
++`elsif PLEX_SYS20_RESET_SYNC
++`define PLEX_SELECTED_ROOT_RESET_SYNC
++`endif
++`ifdef PLEX_SELECTED_ROOT_RESET_SYNC
+ wire reset_request = RESET | status[0] | buttons[1] | ~pll_locked;
+ (* preserve, altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED" *)
+ reg [1:0] reset_sys_sync = 2'b11;
+@@ -294,6 +300,7 @@
+ `else
+ wire reset = RESET | status[0] | buttons[1];
+ `endif
++`undef PLEX_SELECTED_ROOT_RESET_SYNC
+ `ifdef FPGA_VIDEO_320
+ assign MPX_AUDIO_RESET = reset;
+ `endif

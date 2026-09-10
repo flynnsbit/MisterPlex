@@ -1,0 +1,156 @@
+--- a/docs/rtl-simulation.md
++++ b/docs/rtl-simulation.md
+@@ -225,6 +225,15 @@
+ listed file or branch executed. The exclusion gate rederives the same witness
+ and checks every occurrence against the supplied frozen sources without
+ deduplicating it.
++
++The host exclusion CLI reports setter occurrences separately from file-SDC
++literal sites. Its validated observation supplies total/file-SDC/HDL occurrence
++counts and possible/unique-executed site counts; inactive sites are the difference
++between those two site counts, not missing execution evidence. Static policy
++inventory is never subtracted from runtime occurrences. Repeated, inline and
++inactive commands still undergo the same provenance and policy checks.
++This host-only summary can read an older capture without changing its reporter,
++input or compiler identity; it is not a new SDK observation or qualification.
+ 
+ R4 observer-v1 traces lack this independent witness and are explicitly rejected;
+ they cannot be upgraded by filling in missing records. The original R4 tool and
+--- a/scripts/check_timing_exclusions.py
++++ b/scripts/check_timing_exclusions.py
+@@ -363,16 +363,24 @@
+         )
+ 
+     if args.effective_dir:
++        from check_quartus_timing import read_evidence
++
+         try:
+             effective_errors, active_count, empty_count = effective_exclusions(
+                 args.effective_dir, args.project, sdc_files)
++            coverage = json.loads(read_evidence(
++                args.effective_dir / "manifest.json", 8 * 1024**2))["extended"]["observer"]
++            possible_sites = coverage["possible_source_sites"]
++            executed_sites = coverage["executed_source_sites"]
+         except (OSError, ValueError, KeyError, TypeError) as exc:
+             print(f"TIMING_EXCLUSION_REFUSED(exit=4): {exc}", file=sys.stderr)
+             return 4
+         errors.extend(effective_errors)
+-        print(f"Effective SDC coverage: {active_count} executed source exclusions; "
+-              f"{len(all_exclusions) - active_count} unsourced exclusions; "
++        print(f"Effective constraint execution: {coverage['execution']['setters']} setter occurrences "
++              f"({active_count} file-SDC, {len(coverage['hdl_sources'])} HDL); "
+               f"{empty_count} explicit empty collections retained with ignored-SDC reports")
++        print(f"File-SDC literal sites: {possible_sites} possible; {executed_sites} unique executed; "
++              f"{possible_sites - executed_sites} inactive (not missing execution evidence)")
+         print("Clock-group evidence: resolved membership; not a Spectra-Q path-report claim")
+         print("HDL constraints: native execution/frame/frozen-attribute proof required; "
+               "same resolved decoder-exclusion policy, no file-SDC whitelist substitution")
+--- a/tests/unit/test_timing_observer.py
++++ b/tests/unit/test_timing_observer.py
+@@ -19,7 +19,7 @@
+ 
+ sys.path.insert(0, str(ROOT / "scripts"))
+ from check_quartus_timing import parse_detailed_rows, read_evidence, read_table
+-from check_timing_exclusions import effective_exclusions
++from check_timing_exclusions import effective_exclusions, parse_sdc_exclusions
+ from quartus_timing_observer import bind_sdc_site, collect_observer_evidence, hdl_attributes, normal_sdc, sdc_sites
+ from quartus_timing_sdk import compiled_sources
+ 
+@@ -134,7 +134,8 @@
+                      "Plex.exception-commands.tsv", "Plex.exception-arguments.tsv",
+                      "Plex.exception-objects.tsv", "reporter.log", "collector-failure.json",
+                      "mock-semantics.tsv", "mock-collections.tsv", "host-refusal.txt", "manifest.json",
+-                     "mock-trace-state.summary", "mock-trace-queries.summary", "trace-gate-refusals.json"):
++                     "mock-trace-state.summary", "mock-trace-queries.summary", "trace-gate-refusals.json",
++                     "exclusion-cli-results.json"):
+             path = work / "timing" / name
+             if path.exists():
+                 shutil.copyfile(path, target / name)
+@@ -652,6 +653,87 @@
+                                      ([], count, 0))
+                 finally:
+                     self.retain(work, "control-flow-" + label)
++
++    def exclusion_cli(self, work, allow_source=True):
++        sdcs = sorted((work / "project").glob("*.sdc"))
++        policy = work / ("allowed-source.json" if allow_source else "empty-policy.json")
++        policy.write_text(json.dumps({
++            "exclusions": {item.fingerprint: "host fixture source policy"
++                           for path in sdcs for item in parse_sdc_exclusions(path)}
++            if allow_source else {}, "expected_sta_clocks": [], "min_sta_rows": 0}))
++        command = [sys.executable, "-I", "-B", "-c",
++                   "import runpy,sys;sys.path.insert(0,sys.argv[1]);sys.argv=sys.argv[2:];"
++                   "runpy.run_path(sys.argv[0],run_name='__main__')",
++                   str(ROOT / "scripts"), str(ROOT / "scripts/check_timing_exclusions.py"),
++                   "--baseline", str(policy), "--effective-dir", str(work / "timing"),
++                   "--project", str(work / "project"),
++                   *[value for path in sdcs for value in ("--sdc", str(path))]]
++        result = subprocess.run(command, text=True, capture_output=True, timeout=30)
++        saved = work / "timing/exclusion-cli-results.json"
++        records = json.loads(saved.read_text()) if saved.exists() else []
++        records.append({"command": command, "returncode": result.returncode,
++                        "stdout": result.stdout, "stderr": result.stderr})
++        saved.write_text(json.dumps(records, indent=2))
++        return result
++
++    def test_exclusion_cli_distinguishes_occurrences_sites_and_hdl(self):
++        mixed = ("foreach target {out_led config out_led} {set_false_path -to $target}\n"
++                 "if {1} {set_min_delay -to config 0.0}\n"
++                 "if {0} {set_false_path -to config}\n")
++        cases = (
++            ("repeated-inline-inactive", mixed, False, 4, 3, 2),
++            ("repeated-inline-inactive-hdl", mixed, True, 4, 3, 2),
++            ("inactive-only", "if {0} {set_false_path -to config}\n", False, 0, 1, 0),
++            ("no-execution", "# no literal setters\n", False, 0, 0, 0),
++            ("hdl-only", "# no literal setters\n", True, 0, 0, 0),
++        )
++        for label, sdc, hdl, occurrences, possible, executed in cases:
++            with self.subTest(case=label):
++                work, meta = self.prepare_case(sdc, hdl=hdl)
++                try:
++                    observed, _ = self.invoke(work, "hdl-attributed" if hdl else "success")
++                    self.assertEqual(observed.returncode, 0, observed.stdout + observed.stderr)
++                    self.collect(work, meta)
++                    result = self.exclusion_cli(work)
++                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++                    self.assertIn(
++                        f"Effective constraint execution: {occurrences + int(hdl)} setter occurrences "
++                        f"({occurrences} file-SDC, {int(hdl)} HDL); 0 explicit empty collections",
++                        result.stdout)
++                    self.assertIn(
++                        f"File-SDC literal sites: {possible} possible; {executed} unique executed; "
++                        f"{possible - executed} inactive (not missing execution evidence)",
++                        result.stdout)
++                    self.assertNotIn("unsourced exclusions", result.stdout)
++                    if occurrences:
++                        rejected = self.exclusion_cli(work, allow_source=False)
++                        self.assertEqual(rejected.returncode, 1, rejected.stdout + rejected.stderr)
++                        self.assertIn("TIMING_EXCLUSION_REJECTED(exit=1)", rejected.stderr)
++                        self.assertIn(f"{occurrences} file-SDC", rejected.stdout)
++                finally:
++                    self.retain(work, "cli-sites-" + label)
++
++    def test_exclusion_cli_never_summarizes_invalid_execution_as_inactive(self):
++        for variant in ("missing-witness", "no-read-execution"):
++            with self.subTest(variant=variant):
++                work, meta = self.prepare_case("if {0} {set_false_path -to config}\n")
++                try:
++                    result, _ = self.invoke(work, "success")
++                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++                    self.collect(work, meta)
++                    if variant == "missing-witness":
++                        (work / "timing/Plex.execution-events.tsv").unlink()
++                    else:
++                        summary = work / "timing/observer.summary"
++                        summary.write_text(summary.read_text().replace("read_enters=1", "read_enters=0")
++                                           .replace("read_leaves=1", "read_leaves=0"))
++                    result = self.exclusion_cli(work)
++                    self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
++                    self.assertIn("TIMING_EXCLUSION_REFUSED(exit=4)", result.stderr)
++                    self.assertNotIn("Effective constraint execution:", result.stdout)
++                    self.assertNotIn("File-SDC literal sites:", result.stdout)
++                finally:
++                    self.retain(work, "cli-invalid-" + variant)
+ 
+     def test_witness_failures_and_restored_trace_mutations_never_suppress_native_commands(self):
+         for variant in ("witness-write-error", "witness-trace-removed",

@@ -1,0 +1,17 @@
+{
+  "GPL": "Existing GPL-2.0 and GPL-3.0 texts preserved, including GPL-3.0-or-later source notices.",
+  "existing_public_base": "092e1e7a43e1c3862a95180d83a8b94ec9fa9b7c",
+  "no_new_relicense": true,
+  "rule": "Per-file original copyright/license notices remain byte-exact and authoritative.",
+  "texts": {
+    "GPL-2.0.txt": {
+      "bytes": 18092,
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    },
+    "GPL-3.0.txt": {
+      "bytes": 35149,
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    }
+  },
+  "vendor": "Existing Intel-generated project RTL retains its original notices. No SDK or vendor simulation libraries are redistributed."
+}

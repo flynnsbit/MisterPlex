@@ -1,0 +1,213 @@
+{
+  "accepted_driver": "tooling/qualified-r3/scripts/rbf_build.py",
+  "accepted_driver_sha256": "7fa758c029e00b444ff8c76695a659bac092459b6c8c5feac2d487356f45f796",
+  "build_or_hardware_authority_from_publication": false,
+  "creation_metadata_not_current_admission": {
+    "SDK_qualified": false,
+    "actual_new_SDK_operations": 0,
+    "independent_review": "PENDING",
+    "status": "R3_HOST_SUMMARY_SOURCE_CANDIDATE_REVIEW_PENDING"
+  },
+  "invocation": {
+    "default_project_path_is_not_this_cohort": true,
+    "explicit_backend_and_project_required": true,
+    "future_separate_authorization_required": true,
+    "no_reference_RBF_provided": true,
+    "project": "NEW writable isolated copy of the selected cohort; never canonical or published files.",
+    "python_no_bytecode": "SDK invocation must preserve the qualified -B/no-bytecode pattern; no writable-sidecar workaround.",
+    "reporter_mount": "read-only frozen reporter; SDK-side Python -B/no-bytecode behavior required.",
+    "snapshot": "cohorts/<explicit-cohort>/inputs.tar with adjacent original inputs.json and source.tar."
+  },
+  "original_archive_sha256": "3df12acb1f3b45e76673adef235b63bb5527b380c803c4f11a9dd5d98198f057",
+  "original_manifest_sha256": "89ae46b5b152ae50a8f7abd536d46ca4d17813c74bdb9e7b95f44e5585f80f91",
+  "original_source_sha256": "dc6b27310d5257a91e391479b5b86c99f5fe18901ae4b0fc2af1a0212bee2e1c",
+  "pinned_image": "sha256:1fba8b9347973365e9f7851d73f7cb035e38fefb827cbf0ed2ea291b48bdf6dd",
+  "policy_waiver": false,
+  "public_subset": {
+    "archive": "r3-public-source.tar",
+    "members": 22,
+    "omissions": {
+      "tests/fixtures/quartus_hdl_observer_failure.json": "Sanitized diagnostic fields derive from an actual V12 capture; not purely synthetic source.",
+      "tests/fixtures/quartus_sta_multicorner.json": "Selected table rows derive from retained a07 timing; not purely synthetic source.",
+      "tests/fixtures/quartus_timing_path_headers.json": "Headers derive from actual historical timing reports; not purely synthetic source."
+    },
+    "original_members": 25,
+    "sha256": "7d5ab41b50f26432419df990e3904f7ca0c688054ef747a61c3657d0b823e2f9"
+  },
+  "qualification_actual_SDK_evidence": {
+    "analysis_driver_sha256": "7fa758c029e00b444ff8c76695a659bac092459b6c8c5feac2d487356f45f796",
+    "captured_tool_source_sha256": "e56022e1074a42c04a0513048d36db185668fd9d347422772a3766c1e0b891f2",
+    "new_R3_SDK_execution": false,
+    "original_compile_driver_sha256": "0be637ccb53ecb6bd1335b53bec7bdef1a87bbb8671c3e1c055172ca32441e16",
+    "owner_result_sha256": "fec8522296b021a97b6512a5b8d326f4637971a9875e26290818f2a2b2d870f8",
+    "positive_manifest_sha256": "b7b8dac1137220096d933713051b36698bab5116b3a414d4516c37a153fd1c31"
+  },
+  "qualification_basis": "Both actual core SDK evidence and frozen307e R3 addon were independently reviewed and satisfied. Qualification uses genuine R5r2 captures plus exact R3 component equivalence, not a relabeled new SDK run.",
+  "qualification_disposition": "SDK_TOOLING_QUALIFIED_FOR_NEW_COHERENT_TRIAL",
+  "qualification_sha256": "6ba196e804a003710e97d3155c79c6412ba9e8c54d077e4838582be4665d78f9",
+  "required_invocation_contract": "Use the proven read-only frozen reporter mount and SDK Python-B/no-bytecode behavior. SDK3 writable-sidecar failure is not an approved invocation template. Preserve all new source/compiled/analysis identities explicitly.",
+  "required_policies": {
+    "tests/fixtures/critical_fit_hierarchy.json": {
+      "archive_mode": "0444",
+      "bytes": 1256,
+      "sha256": "197d470400dbddab7dcececdb564d026fb727ca5386d1cd095a1b522fb1db2f3",
+      "type": "regular"
+    },
+    "tests/fixtures/timing_exclusion_baseline.json": {
+      "archive_mode": "0444",
+      "bytes": 7395,
+      "sha256": "38879d76db4282a7944dca9366bde15d08d7efd2e482b54e03129dcb93958530",
+      "type": "regular"
+    },
+    "tests/unit/phase1a_rbf_ban.txt": {
+      "archive_mode": "0444",
+      "bytes": 785,
+      "sha256": "a87779fdc5ae55df346c996d3d1766344fec8e725b2bcfffec06a0e0e6f52362",
+      "type": "regular"
+    },
+    "tests/unit/test_phase1a_rbf_ban.sh": {
+      "archive_mode": "0555",
+      "bytes": 4737,
+      "sha256": "3e903af2d9b033664123b418fa9ae97381352d170848631c77f688eef4cc06f6",
+      "type": "regular"
+    }
+  },
+  "runtime_root": "tooling/qualified-r3",
+  "sibling_dependency_map": {
+    "scripts/check_quartus_fit_hierarchy.py": {
+      "imports": [
+        "__future__",
+        "argparse",
+        "dataclasses",
+        "hashlib",
+        "io",
+        "json",
+        "pathlib",
+        "re",
+        "sys",
+        "tarfile"
+      ],
+      "included_sibling_modules": []
+    },
+    "scripts/check_quartus_timing.py": {
+      "imports": [
+        "__future__",
+        "argparse",
+        "dataclasses",
+        "hashlib",
+        "json",
+        "pathlib",
+        "quartus_sta_report",
+        "quartus_timing_observer",
+        "re",
+        "stat",
+        "sys"
+      ],
+      "included_sibling_modules": [
+        "quartus_sta_report",
+        "quartus_timing_observer"
+      ]
+    },
+    "scripts/check_timing_exclusions.py": {
+      "imports": [
+        "__future__",
+        "argparse",
+        "check_quartus_timing",
+        "dataclasses",
+        "hashlib",
+        "json",
+        "pathlib",
+        "quartus_sta_report",
+        "quartus_timing_observer",
+        "re",
+        "sys"
+      ],
+      "included_sibling_modules": [
+        "check_quartus_timing",
+        "quartus_sta_report",
+        "quartus_timing_observer"
+      ]
+    },
+    "scripts/quartus_hdl_source.py": {
+      "imports": [
+        "hashlib",
+        "pathlib",
+        "re"
+      ],
+      "included_sibling_modules": []
+    },
+    "scripts/quartus_sta_report.py": {
+      "imports": [
+        "__future__",
+        "dataclasses",
+        "math",
+        "pathlib",
+        "re"
+      ],
+      "included_sibling_modules": []
+    },
+    "scripts/quartus_timing_observer.py": {
+      "imports": [
+        "__future__",
+        "hashlib",
+        "json",
+        "pathlib",
+        "quartus_hdl_source",
+        "quartus_timing_sdk",
+        "re"
+      ],
+      "included_sibling_modules": [
+        "quartus_hdl_source",
+        "quartus_timing_sdk"
+      ]
+    },
+    "scripts/quartus_timing_sdk.py": {
+      "imports": [
+        "argparse",
+        "json",
+        "os",
+        "pathlib",
+        "quartus_hdl_source",
+        "re",
+        "stat"
+      ],
+      "included_sibling_modules": [
+        "quartus_hdl_source"
+      ]
+    },
+    "scripts/rbf_build.py": {
+      "imports": [
+        "__future__",
+        "argparse",
+        "contextlib",
+        "ctypes",
+        "datetime",
+        "errno",
+        "fcntl",
+        "hashlib",
+        "io",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "shlex",
+        "shutil",
+        "signal",
+        "stat",
+        "subprocess",
+        "sys",
+        "tarfile",
+        "uuid"
+      ],
+      "included_sibling_modules": []
+    }
+  },
+  "source_preparation_driver_is_not_operational": {
+    "historical_source_enumerator": "support/project/scripts/rbf_build.py",
+    "meaning": "Byte-exact for source enumeration/imports only. Never use as an operational driver.",
+    "normalization_reference": "0be637ccb53ecb6bd1335b53bec7bdef1a87bbb8671c3e1c055172ca32441e16",
+    "sha256": "8166ff885959bf94b23effcf76cebfcd8de2bb7b356c0747abb7e694acb0f26f",
+    "snapshot_metadata_driver": "Original source-preparation helper hash; not the accepted build/analysis tool."
+  },
+  "source_semantic_changes": false
+}

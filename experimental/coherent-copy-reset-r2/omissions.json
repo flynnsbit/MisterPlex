@@ -1,0 +1,44 @@
+{
+  "qualified-r3": {
+    "omitted": {
+      "tests/fixtures/quartus_hdl_observer_failure.json": "Sanitized diagnostic fields derive from an actual V12 capture; not purely synthetic source.",
+      "tests/fixtures/quartus_sta_multicorner.json": "Selected table rows derive from retained a07 timing; not purely synthetic source.",
+      "tests/fixtures/quartus_timing_path_headers.json": "Headers derive from actual historical timing reports; not purely synthetic source."
+    },
+    "original": 25,
+    "selected": 22
+  },
+  "support": {
+    "executed-support": {
+      "omitted": {
+        "freeze.py": "Private preparation orchestration; not an operational product dependency.",
+        "prepare.py": "Private grants/paths/preparation orchestration; not an operational product dependency."
+      },
+      "original": 100,
+      "selected": 98
+    },
+    "prepared-support": {
+      "omitted": {
+        "freeze.py": "Private preparation orchestration; not an operational product dependency.",
+        "prepare.py": "Private grants/paths/preparation orchestration; not an operational product dependency."
+      },
+      "original": 100,
+      "selected": 98
+    }
+  },
+  "synthetic_static_source": "Expected-red policy, runtime JSON build policies and Tcl mocks are inspected source/configuration, not raw captured media.",
+  "test_limitations": [
+    "Shared support must be copied into a NEW writable project beside one selected cohort's fpga/ tree.",
+    "Fixture-dependent codec/ingress/full240 benches require the omitted separately supplied validation data.",
+    "Whole-top/vendor-declaration benches need the licensed Quartus simulation libraries, not redistributed here.",
+    "R3 test_quartus_timing.py and test_timing_observer.py reference omitted capture-derived JSONs; their complete suites are not publicly self-contained.",
+    "Other historical-baseline tests may require separately supplied recorded baseline inputs.",
+    "No tests were run for this publication; source/import availability is not a new portable PASS."
+  ],
+  "whole_source_release_omitted_categories": [
+    "Raw owner receipts, grants, registry/handoff/provenance/preparation-evidence archives.",
+    "Original validation fixtures/media and licensed vendor simulation declarations.",
+    "Raw execution, ingestion/runtime/evidence/external-controls archives, logs, media, ELF and SDK databases.",
+    "Original orchestration and current independently active SDK outputs."
+  ]
+}
