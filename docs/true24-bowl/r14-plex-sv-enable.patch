@@ -1,0 +1,7 @@
+--- a/fpga/Plex_MiSTer/Plex.sv
++++ b/fpga/Plex_MiSTer/Plex.sv
+@@ publisher params @@
+-	fpga_video_publish #(.ENABLE_AUDIO_CLOCK(1'b1), .RUNTIME_GEOMETRY(1'b1),
+-		.PIPELINED_COPY(1'b1)) publisher (
++	fpga_video_publish #(.ENABLE_AUDIO_CLOCK(1'b1), .RUNTIME_GEOMETRY(1'b1),
++		.PIPELINED_COPY(1'b1), .OVERLAP_DISPLAY_COPY(1'b1)) publisher (
